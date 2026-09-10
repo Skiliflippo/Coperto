@@ -1,0 +1,91 @@
+@import "tailwindcss";
+@custom-variant dark (&:where(.dark, .dark *));
+
+:root {
+  --bg: #F5F1E8;        /* carta — tema chiaro per il dehors col sole */
+  --surface: #FFFDF8;
+  --raised: #ECE6D8;
+  --ink: #231E16;
+  --muted: #7D7466;
+  --line: #E2DACA;
+  --brand: #E4572E;
+  --brand-soft: #FBE4DB;
+  --on-brand: #FFFFFF;
+  --ok: #2C9B57;   --busy: #3B6FD9;  --soon: #D19220; --over: #DD4B42;
+  --clean: #8C8578; --oos: #57504A;
+}
+.dark {
+  --bg: #14110C;        /* sera in sala */
+  --surface: #1E1A14;
+  --raised: #2B2519;
+  --ink: #F3EEE2;
+  --muted: #A79D8C;
+  --line: #362E21;
+  --brand: #FF6B3D;
+  --brand-soft: #43251A;
+  --on-brand: #1E0F08;
+  --ok: #43C878;  --busy: #6E9BFF;  --soon: #EAB23F; --over: #FF7166;
+  --clean: #9A9181; --oos: #8A806F;
+}
+
+@theme inline {
+  --color-bg: var(--bg);
+  --color-surface: var(--surface);
+  --color-raised: var(--raised);
+  --color-ink: var(--ink);
+  --color-muted: var(--muted);
+  --color-line: var(--line);
+  --color-brand: var(--brand);
+  --color-brand-soft: var(--brand-soft);
+  --color-on-brand: var(--on-brand);
+  --color-ok: var(--ok);
+  --color-busy: var(--busy);
+  --color-soon: var(--soon);
+  --color-over: var(--over);
+  --color-clean: var(--clean);
+  --color-oos: var(--oos);
+  --font-sans: var(--font-inter), ui-sans-serif, system-ui, sans-serif;
+  --font-display: var(--font-fraunces), Georgia, serif;
+  --animate-sheet-up: sheet-up 0.28s cubic-bezier(0.32, 0.72, 0, 1);
+  --animate-pop: pop 0.18s ease-out;
+  --animate-fade: fade 0.2s ease-out;
+  @keyframes sheet-up { from { transform: translateY(100%); } to { transform: translateY(0); } }
+  @keyframes pop { from { transform: scale(0.9); opacity: 0; } to { transform: scale(1); opacity: 1; } }
+  @keyframes fade { from { opacity: 0; } to { opacity: 1; } }
+}
+
+html { -webkit-tap-highlight-color: transparent; }
+body {
+  background: var(--bg);
+  color: var(--ink);
+  font-size: 17px;
+  overscroll-behavior-y: none;
+}
+button { touch-action: manipulation; user-select: none; }
+input, textarea { font-size: 17px; }
+::selection { background: color-mix(in srgb, var(--brand) 30%, transparent); }
+
+.no-scrollbar::-webkit-scrollbar { display: none; }
+.no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+
+/* tick dei timer in sala */
+@keyframes live-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.45; } }
+.live-pulse { animation: live-pulse 2s ease-in-out infinite; }
+
+@keyframes shrink { from { width: 100%; } to { width: 0%; } }
+.undo-bar { animation: shrink linear forwards; }
+
+@keyframes shimmer { from { background-position: 200% 0; } to { background-position: -200% 0; } }
+.skeleton {
+  background: linear-gradient(90deg, var(--raised) 25%, color-mix(in srgb, var(--raised) 60%, var(--surface)) 37%, var(--raised) 63%);
+  background-size: 200% 100%;
+  animation: shimmer 1.4s infinite;
+}
+
+/* Stampa: solo l'area marcata, palette carta */
+@media print {
+  .no-print { display: none !important; }
+  body { background: #fff !important; color: #000 !important; }
+  .print-area { display: block !important; }
+  .print-area * { color: #000 !important; border-color: #999 !important; background: transparent !important; }
+}

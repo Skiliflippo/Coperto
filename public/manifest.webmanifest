@@ -1,0 +1,13 @@
+{
+  "name": "Coperto · Gestione sala",
+  "short_name": "Coperto",
+  "description": "Tavoli in tempo reale, prenotazioni, walk-in e lista d'attesa.",
+  "start_url": "/sala",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#14110C",
+  "theme_color": "#E4572E",
+  "icons": [
+    { "src": "/icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" }
+  ]
+}
