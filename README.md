@@ -1,0 +1,77 @@
+# Coperto · Gestione sala e prenotazioni
+
+App per la sala di un ristorante ad alta affluenza: tavoli in tempo reale, prenotazioni
+telefoniche, walk-in e lista d'attesa. Veloce come la carta, pensata per mani occupate.
+
+## Avvio rapido (3 comandi dopo il clone)
+
+```bash
+npm install                      # 1 · dipendenze
+cp .env.example .env             # 2 · metti la tua DATABASE_URL dentro .env
+npx drizzle-kit push             # 3 · crea le tabelle nel database
+npx tsx src/db/seed.ts           # 4 · dati demo: Osteria del Vicolo (18 tavoli, 72 coperti)
+npm run dev                      # 5 · http://localhost:3000
+```
+
+Accesso demo: **Marco · PIN 1234** (titolare) · Sara 1111 · Luca 2222.
+
+In produzione: `npm run build && npm start`. Deploy tipico: Vercel + qualsiasi Postgres
+(Neon/Supabase/free tier). L'unica variabile d'ambiente richiesta è `DATABASE_URL`.
+
+## Cosa copiare nel tuo progetto
+
+Copia **tutto tranne**: `.env`, `node_modules/`, `.next/`. Il file `.gitignore`
+esclude già le cose giuste. Se parti dal progetto scaricato da git basta:
+
+```bash
+git pull   # oppure sovrascrivi la cartella con questi file
+npm install
+npx drizzle-kit push   # solo se lo schema è cambiato
+```
+
+## Struttura
+
+```
+├── drizzle.config.ts          # config Drizzle (legge .env)
+├── public/
+│   ├── manifest.webmanifest   # PWA: installabile su tablet/smartphone
+│   ├── sw.js                  # service worker minimale
+│   └── icon.svg
+├── src/
+│   ├── app/
+│   │   ├── (app)/             # area autenticata (tab bar in basso)
+│   │   │   ├── layout.tsx     #   shell: guardia PIN, realtime, tema
+│   │   │   ├── sala/          #   VISTA SALA: tavoli live, walk-in, check-in
+│   │   │   ├── prenotazioni/  #   elenco + Piano (timeline drag&drop, auto-sistema)
+│   │   │   ├── attesa/        #   lista d'attesa con stime
+│   │   │   └── altro/         #   riepilogo servizio + impostazioni
+│   │   ├── api/               # route handlers REST + SSE (/api/events)
+│   │   ├── login/             # accesso PIN
+│   │   ├── layout.tsx · globals.css · providers.tsx
+│   ├── components/            # UI: piano, seat-flow, check-in, sheet, toast…
+│   ├── db/                    # schema Drizzle + seed
+│   ├── lib/                   # time, estimates, autoassign, hooks, api client
+│   ├── server/                # hub realtime + query condivise
+│   └── store/                 # zustand (sessione staff persistita)
+└── .env.example
+```
+
+## Architettura in 30 secondi
+
+- **Multi-tenant dal giorno 1**: ogni tabella ha `restaurant_id`. Configurazione = dati
+  (`restaurant_settings`), non codice. Un nuovo ristorante = righe nel DB.
+- **Prenotazione = intenzione · Seating = realtà**. Le deviazioni (ritardo, coperti
+  diversi) sono la differenza tra le due, mai sovrascritte.
+- **Realtime**: Server-Sent Events (`/api/events` + `src/server/hub.ts`). Per passare a
+  Supabase Realtime basta riscrivere `broadcast()/subscribe()` — i client non cambiano.
+- **Undo 10 secondi** sulle azioni distruttive (`src/components/toast.tsx`).
+- **Auto-sistema**: greedy in `src/lib/autoassign.ts`, puro e testabile, con motivazioni.
+
+## Comandi utili
+
+| Comando | Cosa fa |
+| --- | --- |
+| `npx drizzle-kit push` | allinea il DB allo schema |
+| `npx tsx src/db/seed.ts` | reset + dati demo (idempotente, slug `osteria-del-vicolo`) |
+| `npm run typecheck` | TypeScript strict |
+| `npm run build` | build di produzione |
