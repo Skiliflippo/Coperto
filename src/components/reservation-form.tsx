@@ -97,8 +97,8 @@ export function ReservationFormSheet({ open, onClose, defaultDate }: { open: boo
     `min-h-[52px] shrink-0 rounded-2xl px-3.5 font-display text-[15px] font-bold tabular-nums active:scale-95 ${active ? "bg-brand text-on-brand shadow" : "bg-raised"}`;
 
   return (
-    <Sheet open={open} onClose={onClose} title={<span className="flex items-center gap-2"><Phone className="h-5 w-5 text-brand" /> Prenotazione al telefono</span>}>
-      <div className="grid gap-4">
+    <Sheet open={open} onClose={onClose} title="Prenotazione">
+      <div className="grid min-w-0 gap-3.5">
         {/* 1 · GIORNO */}
         <Field label="Giorno">
           <div className="grid grid-cols-3 gap-2">
@@ -125,7 +125,7 @@ export function ReservationFormSheet({ open, onClose, defaultDate }: { open: boo
               return (
                 <div key={p.id}>
                   <p className="mb-1 text-xs font-bold uppercase tracking-wide text-muted">{p.name}</p>
-                  <div className="no-scrollbar -mx-5 flex gap-2 overflow-x-auto px-5">
+                  <div className="no-scrollbar -mx-4 flex gap-2 overflow-x-auto px-4">
                     {list.map((t) => <button key={t} onClick={() => setTime(t)} className={chipCls(time === t)}>{t}</button>)}
                   </div>
                 </div>
@@ -147,11 +147,11 @@ export function ReservationFormSheet({ open, onClose, defaultDate }: { open: boo
         </Field>
 
         {/* 5 · TELEFONO + NOTE opzionali */}
-        <div className="grid grid-cols-[1fr] gap-3">
-          <Field label="Telefono (opzionale, anche parziale)">
+        <div className="grid gap-2.5">
+          <Field label="Telefono (opzionale)">
             <Input value={phone} onChange={(e) => setPhone(e.target.value)} inputMode="tel" placeholder="333…" />
           </Field>
-          <div className="no-scrollbar -mx-5 flex gap-2 overflow-x-auto px-5">
+          <div className="no-scrollbar -mx-4 flex gap-2 overflow-x-auto px-4">
             {NOTE_CHIPS.map((n) => (
               <button key={n} onClick={() => setNotes((v) => (v.includes(n) ? v.replace(n, "").replace(/,\s*,/g, ",").trim() : (v ? `${v}, ${n}` : n)))}
                 className={`min-h-[44px] shrink-0 rounded-full px-3.5 text-sm font-semibold active:scale-95 ${notes.includes(n) ? "bg-brand text-on-brand" : "bg-raised text-muted"}`}>

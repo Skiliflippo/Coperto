@@ -14,6 +14,8 @@ export async function PUT(req: Request) {
     slotMinutes: settings.slotMinutes, bufferMinutes: settings.bufferMinutes,
     lateThresholdMinutes: settings.lateThresholdMinutes, noShowThresholdMinutes: settings.noShowThresholdMinutes,
     overbookingPct: settings.overbookingPct, durations: settings.durations,
+    overtimeMinutes: settings.overtimeMinutes, reservationHoldMinutes: settings.reservationHoldMinutes,
+    allowTableJoin: settings.allowTableJoin, joinMaxGapCm: settings.joinMaxGapCm,
   }).where(eq(s.restaurantSettings.restaurantId, restaurantId));
   for (const p of periods ?? []) {
     await db.update(s.servicePeriods).set({ startTime: p.startTime, endTime: p.endTime })

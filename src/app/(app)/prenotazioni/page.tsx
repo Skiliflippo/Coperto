@@ -3,14 +3,16 @@
 import { Suspense, useMemo, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import { useQueryClient } from "@tanstack/react-query";
-import { CalendarDays, ChevronLeft, ChevronRight, ListTodo, Phone, Plus, Rows3, LayoutGrid, UserX, Trash2, Armchair, Clock } from "lucide-react";
+import { CalendarDays, ListTodo, Phone, Plus, Rows3, LayoutGrid, UserX, Trash2, Armchair, Clock } from "lucide-react";
 import { useBootstrap, useDay } from "@/lib/hooks";
 import { useSession } from "@/store/session";
 import { api } from "@/lib/api";
-import { addDays, dayLabel, nowMin, relDay, toMin, todayISO } from "@/lib/time";
+import { dayLabel, nowMin, relDay, toMin, todayISO } from "@/lib/time";
 import { RES_STATUS } from "@/lib/meta";
 import { Btn, Chip, Empty, Segmented, Sheet, SkeletonRows } from "@/components/ui";
 import { ReservationFormSheet } from "@/components/reservation-form";
+import { DayNav } from "@/components/date-picker";
+import { MonthView } from "@/components/month-view";
 import { Piano, AssignSheet } from "@/components/piano";
 import { CheckInSheet } from "@/components/checkin-sheet";
 import { scheduleUndo } from "@/components/toast";
@@ -34,12 +36,11 @@ function Inner() {
   const params = useSearchParams();
   const [date, setDate] = useState(params.get("date") ?? todayISO());
   const day = useDay(date);
-  const [view, setView] = useState<"elenco" | "piano">("elenco");
+  const [view, setView] = useState<"elenco" | "piano" | "calendario">("elenco");
   const [formOpen, setFormOpen] = useState(false);
   const [sel, setSel] = useState<Reservation | null>(null);
   const [assign, setAssign] = useState<Reservation | null>(null);
   const [checkin, setCheckin] = useState<Reservation | null>(null);
-  const [datePick, setDatePick] = useState(false);
 
   const isToday = date === todayISO();
   const isPast = date < todayISO();
@@ -70,21 +71,8 @@ function Inner() {
         <h1 className="font-display text-[28px] font-bold leading-tight">Prenotazioni</h1>
       </header>
 
-      {/* Navigazione giorno */}
-      <div className="mt-2 flex items-center gap-2 no-print">
-        <button onClick={() => setDate(addDays(date, -1))} aria-label="Giorno prima" className="grid h-14 w-14 shrink-0 place-items-center rounded-2xl bg-raised active:scale-95"><ChevronLeft className="h-6 w-6" /></button>
-        <button onClick={() => setDatePick(true)} className="min-w-0 flex-1 rounded-2xl border border-line bg-surface px-3 py-2 text-center active:scale-[0.98]">
-          <p className="truncate text-lg font-extrabold">{relDay(date)}</p>
-          <p className="text-[13px] font-semibold text-muted">{date !== todayISO() && relDay(date) !== dayLabel(date) ? `${dayLabel(date)} · ` : ""}Tocca per il calendario</p>
-        </button>
-        <button onClick={() => setDate(addDays(date, 1))} aria-label="Giorno dopo" className="grid h-14 w-14 shrink-0 place-items-center rounded-2xl bg-raised active:scale-95"><ChevronRight className="h-6 w-6" /></button>
-      </div>
-      {datePick && (
-        <div className="mt-2 rounded-2xl border border-line bg-surface p-3 no-print">
-          <input type="date" value={date} onChange={(e) => { setDate(e.target.value || todayISO()); setDatePick(false); }}
-            className="min-h-[52px] w-full rounded-xl border border-line bg-bg px-3 font-display text-lg font-bold outline-none focus:border-brand" />
-        </div>
-      )}
+      {/* Navigazione giorno: un tocco apre il calendario, "oggi" torna al servizio */}
+      <div className="mt-2 no-print"><DayNav date={date} onChange={setDate} /></div>
 
       {/* Riepilogo giorno */}
       {grouped && (
@@ -99,13 +87,16 @@ function Inner() {
 
       <div className="mt-3 no-print">
         <Segmented value={view} onChange={setView} options={[
-          { value: "elenco", label: "Elenco", icon: <Rows3 className="h-5 w-5" /> },
-          { value: "piano", label: "Piano", icon: <LayoutGrid className="h-5 w-5" /> },
+          { value: "elenco", label: "Elenco", icon: <Rows3 className="h-[18px] w-[18px]" /> },
+          { value: "piano", label: "Piano", icon: <LayoutGrid className="h-[18px] w-[18px]" /> },
+          { value: "calendario", label: "Mese", icon: <CalendarDays className="h-[18px] w-[18px]" /> },
         ]} />
       </div>
 
       {day.isLoading || !day.data || !grouped ? (
         <div className="mt-4"><SkeletonRows n={5} h={72} /></div>
+      ) : view === "calendario" ? (
+        <MonthView date={date} onPick={(d) => { setDate(d); setView("elenco"); }} />
       ) : view === "elenco" ? (
         <div className="mt-4 space-y-2 no-print">
           {!grouped.active.length && !grouped.closed.length && (
@@ -172,7 +163,7 @@ function Inner() {
       </div>}
 
       <button onClick={() => setFormOpen(true)}
-        className="fixed bottom-[calc(env(safe-area-inset-bottom)+92px)] right-4 z-40 flex h-16 w-16 items-center justify-center rounded-full bg-brand text-on-brand shadow-xl shadow-brand/40 active:scale-95 no-print sm:right-[max(1rem,calc(50%-30rem))]"
+        className="fixed bottom-[calc(env(safe-area-inset-bottom)+82px)] right-4 z-40 flex h-16 w-16 items-center justify-center rounded-full bg-brand text-on-brand shadow-xl shadow-brand/40 active:scale-95 no-print sm:right-[max(1rem,calc(50%-30rem))]"
         aria-label="Nuova prenotazione">
         <Plus className="h-8 w-8" />
       </button>

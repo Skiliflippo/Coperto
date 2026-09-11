@@ -74,11 +74,31 @@ export default function ImpostazioniPage() {
         <h1 className="font-display text-[24px] font-bold">Impostazioni</h1>
       </header>
 
-      <p className="mt-4 text-sm font-bold uppercase tracking-wide text-muted">Ritmo del servizio</p>
+      <p className="mt-4 text-sm font-bold uppercase tracking-wide text-muted">Tavoli</p>
+      <div className="mt-2 space-y-2">
+        <button onClick={() => setS({ ...s, allowTableJoin: !s.allowTableJoin })}
+          className="flex w-full items-center justify-between gap-3 rounded-2xl border border-line bg-surface px-4 py-3 text-left active:scale-[0.99]">
+          <span>
+            <span className="block text-[15px] font-semibold">Unisci tavoli</span>
+            <span className="block text-[13px] text-muted">Se un gruppo non entra, proponi di accostare due tavoli vicini e liberi</span>
+          </span>
+          <span className={`relative h-8 w-14 shrink-0 rounded-full transition-colors ${s.allowTableJoin ? "bg-ok" : "bg-raised"}`}>
+            <span className={`absolute top-1 h-6 w-6 rounded-full bg-surface shadow transition-all ${s.allowTableJoin ? "left-7" : "left-1"}`} />
+          </span>
+        </button>
+        {s.allowTableJoin && (
+          <Num label="Distanza max fra tavoli accostabili" value={s.joinMaxGapCm ?? 90}
+            onChange={(v) => setS({ ...s, joinMaxGapCm: v })} min={20} max={200} step={10} suffix="cm" />
+        )}
+      </div>
+
+      <p className="mt-5 text-sm font-bold uppercase tracking-wide text-muted">Ritmo del servizio</p>
       <div className="mt-2 space-y-2">
         <Num label="Granularità slot piano" value={s.slotMinutes} onChange={(v) => setS({ ...s, slotMinutes: v })} min={5} max={30} step={5} />
         <Num label="Buffer riassetto tra turni" value={s.bufferMinutes} onChange={(v) => setS({ ...s, bufferMinutes: v })} min={0} max={45} step={5} />
         <Num label="Evidenzia 'in ritardo' dopo" value={s.lateThresholdMinutes} onChange={(v) => setS({ ...s, lateThresholdMinutes: v })} min={5} max={30} step={5} />
+        <Num label="Tavolo 'oltre l'ora' dopo" value={s.overtimeMinutes ?? 60} onChange={(v) => setS({ ...s, overtimeMinutes: v })} min={30} max={180} step={15} />
+        <Num label="Prenotazione blocca il tavolo da" value={s.reservationHoldMinutes ?? 90} onChange={(v) => setS({ ...s, reservationHoldMinutes: v })} min={15} max={180} step={15} />
         <Num label="Proponi no-show dopo" value={s.noShowThresholdMinutes} onChange={(v) => setS({ ...s, noShowThresholdMinutes: v })} min={5} max={45} step={5} />
         <Num label="Alert overbooking al" value={s.overbookingPct} onChange={(v) => setS({ ...s, overbookingPct: v })} min={50} max={110} step={5} suffix="%" />
       </div>

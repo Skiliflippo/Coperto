@@ -17,7 +17,7 @@ type Summary = {
   date: string; covers: number; seatings: number; avgStay: number; tablesTurned: number;
   peak: { hour: number; covers: number }[]; booked: number; arrived: number; noShows: number; noShowPct: number;
   coversLost: number; avgLate: number; walkIns: number; walkInCovers: number; bookedCovers: number;
-  avgWait: number; waitLeft: number; cancelled: number;
+  cancelled: number;
   weekAvg: { covers: number; seatings: number; noShows: number; walkIns: number };
 };
 type LogRow = { id: string; staffName: string; action: string; message: string; createdAt: string };
@@ -65,7 +65,7 @@ export default function AltroPage() {
             <Stat big icon={<Users className="h-5 w-5" />} label="Coperti serviti" value={String(S.covers)} sub={delta(S.covers, S.weekAvg.covers)} />
             <Stat icon={<Armchair className="h-5 w-5" />} label="Girature" value={String(S.tablesTurned)} sub={`${S.seatings} gruppi seduti`} />
             <Stat icon={<Timer className="h-5 w-5" />} label="Permanenza media" value={`${S.avgStay}′`} sub={topPeak ? `Picco: ${topPeak.hour}:00 (${topPeak.covers} coperti)` : undefined} />
-            <Stat icon={<Footprints className="h-5 w-5" />} label="Walk-in vs prenotati" value={`${S.walkInCovers}/${S.bookedCovers}`} sub={`${S.walkIns} walk-in · attesa media ${S.avgWait}′`} />
+            <Stat icon={<Footprints className="h-5 w-5" />} label="Walk-in vs prenotati" value={`${S.walkInCovers}/${S.bookedCovers}`} sub={`${S.walkIns} gruppi senza prenotazione`} />
           </div>
 
           <div className="mt-2.5 grid grid-cols-2 gap-2.5">
@@ -79,7 +79,7 @@ export default function AltroPage() {
               <p className="flex items-center gap-1.5 text-sm font-bold text-muted"><Hourglass className="h-4 w-4" /> Arrivi</p>
               <p className="mt-1 font-display text-3xl font-extrabold">{S.arrived}<span className="text-base font-bold text-muted">/{S.booked}</span></p>
               <p className="text-[13px] font-semibold text-soon">ritardo medio {S.avgLate}′</p>
-              <p className="mt-0.5 text-[13px] text-muted">{S.cancelled} cancellate · {S.waitLeft} andati via dall'attesa</p>
+              <p className="mt-0.5 text-[13px] text-muted">{S.cancelled} cancellate</p>
             </div>
           </div>
 
@@ -128,6 +128,13 @@ export default function AltroPage() {
           {theme === "light" ? <Moon className="h-5 w-5" /> : <Sun className="h-5 w-5" />}
           Tema {theme === "light" ? "scuro" : "chiaro"} <span className="ml-auto text-sm text-muted">{theme === "light" ? "per il servizio di sera" : "per il dehors col sole"}</span>
         </button>
+        {staff?.role === "titolare" && (
+          <Link href="/altro/personale"
+            className="flex min-h-[60px] items-center gap-3 rounded-2xl border border-line bg-surface px-4 font-semibold active:scale-[0.98]">
+            <Users className="h-5 w-5" /> Personale e PIN
+            <ChevronRight className="ml-auto h-5 w-5 text-muted" />
+          </Link>
+        )}
         {staff?.role === "titolare" && (
           <Link href="/altro/impostazioni"
             className="flex min-h-[60px] items-center gap-3 rounded-2xl border border-line bg-surface px-4 font-semibold active:scale-[0.98]">

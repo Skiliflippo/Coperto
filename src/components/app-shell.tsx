@@ -3,16 +3,18 @@
 import { useEffect, useState, type ReactNode } from "react";
 import { usePathname, useRouter } from "next/navigation";
 import Link from "next/link";
-import { Armchair, CalendarRange, Hourglass, Ellipsis, Wifi, WifiOff, RefreshCw } from "lucide-react";
+import { Armchair, CalendarRange, Ellipsis, Wifi, WifiOff, RefreshCw } from "lucide-react";
 import { useSession } from "@/store/session";
 import { useRealtime } from "@/lib/hooks";
 import { Providers } from "@/app/providers";
+import { useBootstrap } from "@/lib/hooks";
+import { Onboarding } from "@/components/onboarding";
 import { Toaster } from "@/components/toast";
 
+// Tre voci: chi è in attesa sta in fila davanti alla porta, non nell'app.
 const TABS = [
   { href: "/sala", label: "Sala", icon: Armchair },
   { href: "/prenotazioni", label: "Prenotazioni", icon: CalendarRange },
-  { href: "/attesa", label: "Attesa", icon: Hourglass },
   { href: "/altro", label: "Altro", icon: Ellipsis },
 ];
 
@@ -23,6 +25,7 @@ function Shell({ children }: { children: ReactNode }) {
   const path = usePathname();
   const [hydrated, setHydrated] = useState(false);
   const conn = useRealtime();
+  const boot = useBootstrap();
 
   useEffect(() => setHydrated(true), []);
   useEffect(() => {
@@ -43,23 +46,31 @@ function Shell({ children }: { children: ReactNode }) {
     );
   }
 
+  // Primo accesso: prima di tutto si disegna la sala.
+  if (boot.data && !boot.data.restaurant.onboarded) {
+    return <><Onboarding boot={boot.data} /><Toaster /></>;
+  }
+
   return (
     <>
       <div className="no-print pointer-events-none fixed right-3 top-[calc(env(safe-area-inset-top)+10px)] z-50">
         <ConnBadge conn={conn} />
       </div>
-      <main className="mx-auto min-h-dvh w-full max-w-5xl pb-[calc(env(safe-area-inset-bottom)+92px)]">{children}</main>
+      <main className="mx-auto min-h-dvh w-full max-w-5xl pb-[calc(env(safe-area-inset-bottom)+72px)]">{children}</main>
       <Toaster />
-      <nav className="no-print fixed inset-x-0 bottom-0 z-50 border-t border-line bg-surface/95 backdrop-blur supports-[backdrop-filter]:bg-surface/80"
-        style={{ paddingBottom: "env(safe-area-inset-bottom)" }}>
-        <div className="mx-auto grid max-w-lg grid-cols-4">
+      {/* Navigazione: pillola compatta, solo icone. Nessun testo da tagliare,
+          l'icona attiva si accende. Occupa il minimo indispensabile. */}
+      <nav className="no-print pointer-events-none fixed inset-x-0 bottom-0 z-50 flex justify-center"
+        style={{ paddingBottom: "calc(env(safe-area-inset-bottom) + 8px)" }}>
+        <div className="pointer-events-auto flex items-center gap-0.5 rounded-full border border-line/60 bg-surface/75 p-1 shadow-lg backdrop-blur-xl">
           {TABS.map(({ href, label, icon: Icon }) => {
             const active = path.startsWith(href);
             return (
-              <Link key={href} href={href}
-                className={`flex min-h-[64px] flex-col items-center justify-center gap-0.5 text-[13px] font-semibold transition-colors ${active ? "text-brand" : "text-muted"}`}>
-                <Icon className={`h-6 w-6 ${active ? "stroke-[2.6px]" : ""}`} />
-                {label}
+              <Link key={href} href={href} aria-label={label} title={label}
+                className={`relative grid h-11 w-14 place-items-center rounded-full transition-colors active:scale-90 ${active ? "text-brand" : "text-muted"}`}>
+                {active && <span className="absolute inset-0 rounded-full bg-brand/12" />}
+                <Icon className={`relative h-[22px] w-[22px] ${active ? "stroke-[2.6px]" : "stroke-[2px]"}`} />
+                {active && <span className="absolute bottom-1 h-1 w-1 rounded-full bg-brand" />}
               </Link>
             );
           })}

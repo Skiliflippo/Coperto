@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { db } from "@/db";
 import * as s from "@/db/schema";
-import { and, eq, inArray } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { broadcast } from "@/server/hub";
 import { logActivity } from "@/server/data";
 export const dynamic = "force-dynamic";
@@ -16,10 +16,9 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
 
   let msg = "";
   if (action === "libera") {
-    // fine occupazione → il tavolo passa "da pulire" (ritorna libero con "Pronto")
+    // fine occupazione → il tavolo torna subito libero: in servizio nessuno ha tempo
+    // di segnare "da pulire" e poi "pronto".
     await db.update(s.seatings).set({ status: "chiuso", actualEndAt: new Date() }).where(eq(s.seatings.id, id));
-    await db.update(s.tables).set({ state: "da_pulire", updatedAt: new Date() })
-      .where(and(inArray(s.tables.id, cur.tableIds), eq(s.tables.state, "libero")));
     msg = `${staffName} ha liberato il tavolo ${cur.tableLabel}`;
   } else if (action === "extend") {
     const mins = Number(b.minutes ?? 15);
@@ -34,8 +33,6 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
       .where(and(eq(s.seatings.restaurantId, restaurantId), eq(s.seatings.status, "seduto")));
     const clash = active.find((x) => x.id !== id && x.tableIds.some((tid: string) => tableIds.includes(tid)));
     if (clash) return NextResponse.json({ conflict: true, tableLabel: clash.tableLabel }, { status: 409 });
-    await db.update(s.tables).set({ state: "da_pulire", updatedAt: new Date() })
-      .where(and(inArray(s.tables.id, cur.tableIds), eq(s.tables.state, "libero")));
     await db.update(s.seatings).set({ tableIds, tableLabel: b.tableLabel }).where(eq(s.seatings.id, id));
     msg = `${staffName} ha spostato ${cur.name || "tavolo"} su ${b.tableLabel}`;
   } else if (action === "bill") {

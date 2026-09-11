@@ -3,11 +3,12 @@
 // Tap 1: quanti siete · Tap 2: tavolo suggerito → seduti. Fine.
 import { useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import { Users, Clock, ArrowRight } from "lucide-react";
+import { Users, Clock, ArrowRight, Link2 } from "lucide-react";
 import { api, ApiError } from "@/lib/api";
 import { useBootstrap, useDay, useNow } from "@/lib/hooks";
 import { useSession } from "@/store/session";
-import { activeSeatingByTable, durationFor, liveState, periodFor, walkInSuggestions } from "@/lib/estimates";
+import { availableTargets, computeTableStatuses, durationFor, periodFor } from "@/lib/estimates";
+import { findJoinProposals } from "@/lib/join";
 import { toMin, todayISO, nowMin } from "@/lib/time";
 import { toast } from "@/components/toast";
 import { Btn, Sheet } from "@/components/ui";
@@ -71,57 +72,97 @@ export function useSeat() {
   };
 }
 
-// Elenco tavoli liberi suggeriti per capienza, con avviso se prenotati a breve
-export function SuggestedTables({ party, onPick, excludeIds = [], compact }: {
+// Tavoli assegnabili ADESSO. I tavoli prenotati non compaiono: se la prenotazione
+// viene cancellata o segnata no-show, il tavolo torna automaticamente disponibile.
+// Se il gruppo non entra da nessuna parte, propone di accostare due tavoli vicini.
+export function SuggestedTables({ party, onPick, excludeIds = [], compact, forReservationId }: {
   party: number;
   onPick: (v: { tableIds: string[]; tableLabel: string }) => void;
-  excludeIds?: string[]; compact?: boolean;
+  excludeIds?: string[]; compact?: boolean; forReservationId?: string;
 }) {
   const boot = useBootstrap();
   const day = useDay(todayISO());
   const now = useNow();
   if (!boot.data || !day.data) return <div className="skeleton h-24 rounded-2xl" />;
-  const { tables, combos } = boot.data;
-  const usableTables = tables.filter((t) => !excludeIds.includes(t.id));
-  const { free, nextMin } = walkInSuggestions(party, usableTables, combos.filter((c) => !c.tableIds.some((id) => excludeIds.includes(id))), day.data.seatings, now);
-  const byTable = activeSeatingByTable(day.data.seatings);
-  const upcoming = day.data.reservations.filter((r) => r.status === "confermata");
+  const { tables, combos, rooms, settings } = boot.data;
+  const statuses = computeTableStatuses({
+    tables, combos, seatings: day.data.seatings, reservations: day.data.reservations,
+    settings, nowMs: now, nowMinOfDay: nowMin(),
+  });
+  const { free, nextFreeMin, nextFreeLabel } = availableTargets({
+    party, tables, combos, statuses, forReservationId, excludeIds,
+  });
+  const held = tables.filter((t) => statuses.get(t.id)?.state === "prenotato" && t.capacity >= party).length;
 
-  if (!free.length) {
+  // Accorpamenti: solo se attivi in impostazioni e solo quando servono davvero
+  const joins = settings.allowTableJoin && !free.length
+    ? findJoinProposals({
+        party, tables: tables.filter((t) => !excludeIds.includes(t.id)), statuses,
+        maxGapCm: settings.joinMaxGapCm ?? 90,
+      })
+    : [];
+
+  if (!free.length && !joins.length) {
     return (
       <div className="rounded-2xl border border-soon/50 bg-soon/10 p-4 text-center">
-        <p className="font-bold text-soon">Nessun tavolo libero per {party}</p>
-        {nextMin != null && <p className="mt-1 flex items-center justify-center gap-1.5 text-sm font-semibold text-muted"><Clock className="h-4 w-4" /> Prossima liberazione prevista: ~{nextMin} min</p>}
+        <p className="font-bold text-soon">Nessun tavolo disponibile per {party}</p>
+        {nextFreeMin != null && (
+          <p className="mt-1 flex items-center justify-center gap-1.5 text-sm font-semibold text-muted">
+            <Clock className="h-4 w-4" /> Il tavolo {nextFreeLabel} si libera tra ~{nextFreeMin} min
+          </p>
+        )}
+        {held > 0 && <p className="mt-1 text-[13px] font-semibold text-muted">{held} tavoli adatti sono tenuti per prenotazioni in arrivo</p>}
       </div>
     );
   }
+
   return (
     <div className="grid gap-2">
       {free.slice(0, compact ? 3 : 6).map((c) => {
         const isT = c.kind === "table";
         const ids = isT ? [c.table.id] : c.combo.tableIds;
         const label = isT ? c.table.label : c.combo.label;
-        const cap = isT ? c.table.capacity : c.combo.capacity;
-        const room = boot.data.rooms.find((r) => r.id === (isT ? c.table.roomId : c.combo.roomId));
-        // prenotato a breve su questo tavolo?
-        const soonRes = upcoming.find((r) =>
-          (ids.includes(r.assignedTableId ?? "") || (r.assignedComboId && !isT && r.assignedComboId === (c as any).combo?.id)) &&
-          toMin(r.time) - nowMin() < 45 && toMin(r.time) >= nowMin() - 15);
-        void byTable;
+        const cap = isT ? Math.max(c.table.capacity, c.table.maxCapacity) : c.combo.capacity;
+        const room = rooms.find((r) => r.id === (isT ? c.table.roomId : c.combo.roomId));
+        const mine = isT && statuses.get(c.table.id)?.state === "prenotato";
         return (
           <button key={ids.join("+")} onClick={() => onPick({ tableIds: ids, tableLabel: label })}
             className="flex min-h-[64px] items-center gap-3 rounded-2xl border-2 border-ok/40 bg-ok/10 px-4 text-left active:scale-[0.98]">
             <span className="grid h-11 w-11 shrink-0 place-items-center rounded-xl bg-ok font-display text-lg font-bold text-white">{label}</span>
             <span className="min-w-0 flex-1">
               <span className="block font-bold">{cap} posti · {room?.name}</span>
-              {soonRes
-                ? <span className="block text-[13px] font-semibold text-soon">Prenotato {soonRes.guestName} alle {soonRes.time}</span>
-                : <span className="block text-[13px] text-muted">{c.waste === 0 ? "Perfetto, nessuno spreco" : c.waste <= 2 ? "Buon incastro" : `Avanzi ${c.waste} posti`}</span>}
+              <span className="block text-[13px] text-muted">
+                {mine ? "Il tavolo tenuto per questa prenotazione"
+                  : c.extraChairs > 0 ? `Aggiungendo ${c.extraChairs} sedi${c.extraChairs === 1 ? "a" : "e"}`
+                  : c.waste === 0 ? "Perfetto, nessuno spreco"
+                  : c.waste <= 2 ? "Buon incastro" : `Avanzi ${c.waste} posti`}
+              </span>
             </span>
             <ArrowRight className="h-5 w-5 shrink-0 text-ok" />
           </button>
         );
       })}
+
+      {joins.length > 0 && (
+        <>
+          <p className="mt-1 flex items-center gap-1.5 px-1 text-[13px] font-bold text-soon">
+            <Link2 className="h-4 w-4" /> In {party} non entrate in un tavolo solo · si possono accostare:
+          </p>
+          {joins.map((j) => (
+            <button key={j.label} onClick={() => onPick({ tableIds: j.tableIds, tableLabel: j.label })}
+              className="flex min-h-[64px] items-center gap-3 rounded-2xl border-2 border-soon/50 bg-soon/10 px-4 text-left active:scale-[0.98]">
+              <span className="grid h-11 shrink-0 place-items-center rounded-xl bg-soon px-2.5 font-display text-base font-bold text-ink">{j.label}</span>
+              <span className="min-w-0 flex-1">
+                <span className="block font-bold">{j.seats} posti uniti</span>
+                <span className="block text-[13px] text-muted">{j.reason}</span>
+              </span>
+              <ArrowRight className="h-5 w-5 shrink-0 text-soon" />
+            </button>
+          ))}
+        </>
+      )}
+
+      {held > 0 && <p className="px-1 text-[12px] font-medium text-muted">{held} tavoli nascosti perché prenotati a breve</p>}
     </div>
   );
 }

@@ -15,16 +15,63 @@ export function periodFor(partyTimeMin: number, periods: Period[]): Period | nul
   return periods.find((p) => toMin(p.startTime) <= partyTimeMin && partyTimeMin <= toMin(p.endTime)) ?? null;
 }
 
-// Stato LIVE del tavolo: base (DB) + occupazioni attive + orologio
-export function liveState(table: TableT, active: Seating | undefined, nowMs: number): TableLiveState {
-  if (table.state === "fuori_servizio") return "fuori_servizio";
-  if (active) {
-    const end = new Date(active.expectedEndAt).getTime();
-    if (nowMs > end) return "oltre_tempo";
-    if (end - nowMs <= 15 * 60000) return "in_liberazione";
-    return "occupato";
+// ─────────────────────────────────────────────────────────────────────────────
+// STATO LIVE DEI TAVOLI
+// Nessuno stato da aggiornare a mano: tutto si deduce da orologio e prenotazioni.
+//  · occupato    → c'è gente seduta
+//  · oltre l'ora → seduti da più di settings.overtimeMinutes (default 60')
+//  · prenotato   → tavolo vuoto ma con prenotazione in arrivo: non si può assegnare
+//  · libero      → assegnabile subito
+// ─────────────────────────────────────────────────────────────────────────────
+export type ResLite = {
+  id: string; guestName: string; time: string; partySize: number; status: string;
+  assignedTableId: string | null; assignedComboId: string | null;
+};
+export type TableStatus = {
+  state: TableLiveState;
+  seating?: Seating;
+  minutesSeated?: number;
+  reservation?: ResLite;   // prenotazione che tiene impegnato il tavolo
+};
+
+export function computeTableStatuses(args: {
+  tables: TableT[]; combos: Combo[]; seatings: Seating[]; reservations: ResLite[];
+  settings: Settings; nowMs: number; nowMinOfDay: number;
+}): Map<string, TableStatus> {
+  const { tables, combos, seatings, reservations, settings, nowMs, nowMinOfDay } = args;
+  const byTable = activeSeatingByTable(seatings);
+  const hold = settings.reservationHoldMinutes ?? 90;
+  const overtime = settings.overtimeMinutes ?? 60;
+
+  // prenotazioni ancora da far sedere, mappate sui tavoli che impegnano
+  const holds = new Map<string, ResLite>();
+  for (const r of reservations) {
+    if (r.status !== "confermata") continue;      // cancellata/no-show → il tavolo torna libero
+    const t = toMin(r.time);
+    // impegna da "hold" minuti prima fino a un'ora dopo l'orario (poi è ritardo conclamato)
+    if (t - nowMinOfDay > hold || nowMinOfDay - t > 60) continue;
+    const ids = r.assignedTableId
+      ? [r.assignedTableId]
+      : combos.find((c) => c.id === r.assignedComboId)?.tableIds ?? [];
+    for (const id of ids) {
+      const cur = holds.get(id);
+      if (!cur || toMin(r.time) < toMin(cur.time)) holds.set(id, r);
+    }
   }
-  return table.state === "da_pulire" ? "da_pulire" : "libero";
+
+  const out = new Map<string, TableStatus>();
+  for (const t of tables) {
+    if (t.state === "fuori_servizio") { out.set(t.id, { state: "fuori_servizio" }); continue; }
+    const seating = byTable.get(t.id);
+    if (seating) {
+      const minutesSeated = Math.max(0, Math.round((nowMs - new Date(seating.seatedAt).getTime()) / 60000));
+      out.set(t.id, { state: minutesSeated > overtime ? "oltre_tempo" : "occupato", seating, minutesSeated });
+      continue;
+    }
+    const reservation = holds.get(t.id);
+    out.set(t.id, reservation ? { state: "prenotato", reservation } : { state: "libero" });
+  }
+  return out;
 }
 
 // Mappa tavolo → seating attiva
@@ -35,66 +82,55 @@ export function activeSeatingByTable(seatings: Seating[]): Map<string, Seating> 
 }
 
 export type FreeCandidate =
-  | { kind: "table"; table: TableT; waste: number; freeNow: boolean; freeInMin: number }
-  | { kind: "combo"; combo: Combo; waste: number; freeNow: boolean; freeInMin: number };
+  | { kind: "table"; table: TableT; waste: number; extraChairs: number }
+  | { kind: "combo"; combo: Combo; waste: number; extraChairs: number };
 
-// Walk-in: tavoli compatibili ordinati per efficienza (meno spreco prima), poi accorpamenti
-export function walkInSuggestions(
-  party: number, tables: TableT[], combos: Combo[], seatings: Seating[], nowMs: number
-): { free: FreeCandidate[]; nextMin: number | null } {
-  const byTable = activeSeatingByTable(seatings);
-  const out: FreeCandidate[] = [];
-  let nextMin: number | null = null;
-  const considerFreeIn = (endIso: string) => {
-    const m = Math.ceil((new Date(endIso).getTime() - nowMs) / 60000);
-    if (nextMin == null || m < nextMin) nextMin = m;
+// Tavoli assegnabili ADESSO per un gruppo: esclude occupati, fuori servizio e prenotati.
+// `forReservationId` permette di sedere una prenotazione sul tavolo che lei stessa tiene.
+export function availableTargets(args: {
+  party: number; tables: TableT[]; combos: Combo[]; statuses: Map<string, TableStatus>;
+  forReservationId?: string; excludeIds?: string[];
+}): { free: FreeCandidate[]; nextFreeMin: number | null; nextFreeLabel: string | null } {
+  const { party, tables, combos, statuses, forReservationId, excludeIds = [] } = args;
+  const usable = (id: string) => {
+    if (excludeIds.includes(id)) return false;
+    const st = statuses.get(id);
+    if (!st) return false;
+    if (st.state === "libero") return true;
+    return st.state === "prenotato" && !!forReservationId && st.reservation?.id === forReservationId;
   };
+  const free: FreeCandidate[] = [];
   for (const t of tables) {
-    const st = byTable.get(t.id);
-    const state = liveState(t, st, nowMs);
-    if (state === "fuori_servizio" || state === "da_pulire") continue;
-    if (t.capacity >= party) {
-      if (!st) out.push({ kind: "table", table: t, waste: t.capacity - party, freeNow: true, freeInMin: 0 });
-      else considerFreeIn(st.expectedEndAt);
+    // un 2 posti con maxCapacity 4 accoglie 4 persone aggiungendo sedie
+    const seats = Math.max(t.capacity, t.maxCapacity || 0);
+    if (seats >= party && usable(t.id)) {
+      free.push({ kind: "table", table: t, waste: seats - party, extraChairs: Math.max(0, party - t.capacity) });
     }
   }
   for (const c of combos) {
-    if (c.capacity < party) continue;
-    const acts = c.tableIds.map((id) => byTable.get(id)).filter(Boolean) as Seating[];
-    if (acts.length === 0) out.push({ kind: "combo", combo: c, waste: c.capacity - party, freeNow: true, freeInMin: 0 });
-    else considerFreeIn(acts.map((a) => a.expectedEndAt).sort().reverse()[0]);
+    if (c.capacity >= party && c.tableIds.every(usable)) {
+      free.push({ kind: "combo", combo: c, waste: c.capacity - party, extraChairs: 0 });
+    }
   }
-  out.sort((a, b) => a.waste - b.waste);
-  return { free: out.filter((c) => c.freeNow), nextMin };
+  // prima chi non richiede sedie extra, poi chi spreca meno posti
+  free.sort((a, b) => a.extraChairs - b.extraChairs || a.waste - b.waste || (a.kind === "table" ? -1 : 1));
+
+  // prossima liberazione utile (per dire "tra ~12 minuti" quando è tutto pieno)
+  let nextFreeMin: number | null = null;
+  let nextFreeLabel: string | null = null;
+  for (const t of tables) {
+    if (t.capacity < party || excludeIds.includes(t.id)) continue;
+    const st = statuses.get(t.id);
+    if (!st?.seating || st.minutesSeated == null) continue;
+    const left = Math.max(0, Math.round((new Date(st.seating.expectedEndAt).getTime() - Date.now()) / 60000));
+    if (nextFreeMin == null || left < nextFreeMin) { nextFreeMin = left; nextFreeLabel = t.label; }
+  }
+  return { free, nextFreeMin, nextFreeLabel };
 }
 
-// Stima attesa per la lista d'attesa: guarda liberazioni previste E prenotazioni in arrivo
-export function estimateWaitMin(
-  party: number, tables: TableT[], combos: Combo[], seatings: Seating[],
-  reservations: { time: string; partySize: number; assignedTableId: string | null; assignedComboId: string | null }[],
-  nowMinOfDay: number, settings: Settings, nowMs: number
-): number | null {
-  const byTable = activeSeatingByTable(seatings);
-  const fitting = tables.filter((t) => t.capacity >= party && t.state === "libero");
-  const candidates: number[] = []; // minuti da ora in cui un tavolo adatto si libera "per davvero"
-  for (const t of fitting) {
-    const st = byTable.get(t.id);
-    if (!st) { candidates.push(0); continue; }
-    // se dopo la liberazione prevista arriva subito una prenotazione su quel tavolo, non conta
-    const freedMin = nowMinOfDay + Math.ceil((new Date(st.expectedEndAt).getTime() - nowMs) / 60000);
-    const blocked = reservations.some(
-      (r) => r.assignedTableId === t.id && toMin(r.time) < freedMin + settings.bufferMinutes + 30
-    );
-    if (!blocked) candidates.push(Math.max(0, freedMin - nowMinOfDay));
-  }
-  const joinedFree = combos.some((c) => c.capacity >= party && c.tableIds.every((id) => !byTable.get(id)));
-  if (joinedFree) candidates.push(0);
-  if (!candidates.length) return null;
-  candidates.sort((a, b) => a - b);
-  return candidates[0];
-}
-
-// Tavoli/accorpamenti liberi in una fascia [timeMin, timeMin+dur+buffer)
+// Sovraccarico coperti per fascia oraria (warning overbooking sul Piano)
+// Tavoli/accorpamenti liberi in una fascia futura [time, time+durata+buffer):
+// serve al Piano e al form prenotazioni, dove non conta "adesso" ma un orario preciso.
 export function freeTargetsAt(params: {
   timeMin: number; party: number; dur: number; buf: number;
   tables: TableT[]; combos: Combo[];
@@ -119,7 +155,6 @@ export function freeTargetsAt(params: {
   };
 }
 
-// Sovraccarico coperti per fascia oraria (warning overbooking sul Piano)
 export function loadBySlot(
   reservationTimes: { time: string; partySize: number }[], slotMin: number
 ): Map<number, number> {

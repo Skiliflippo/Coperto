@@ -67,6 +67,24 @@ npx drizzle-kit push   # solo se lo schema è cambiato
 - **Undo 10 secondi** sulle azioni distruttive (`src/components/toast.tsx`).
 - **Auto-sistema**: greedy in `src/lib/autoassign.ts`, puro e testabile, con motivazioni.
 
+## Risoluzione problemi dopo clone o reseed
+
+### `/api/bootstrap?rid=...` restituisce 404 oppure la pagina resta vuota
+
+Il browser può conservare in `localStorage` l'UUID del database precedente. La rotta
+bootstrap ora recupera automaticamente `osteria-del-vicolo` (o il primo tenant valido)
+e invalida la vecchia sessione: basta ricaricare e accedere di nuovo col PIN.
+
+Se `/api/bootstrap` restituisce `503 DATABASE_EMPTY`, inizializza il DB:
+
+```bash
+npx drizzle-kit push
+npx tsx src/db/seed.ts
+```
+
+Puoi verificare direttamente: `http://localhost:3000/api/bootstrap`. La risposta deve
+contenere `restaurant`, `settings`, `rooms[].layout.elements`, `tables`, `combos` e `periods`.
+
 ## Comandi utili
 
 | Comando | Cosa fa |

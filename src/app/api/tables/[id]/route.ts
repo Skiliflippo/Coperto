@@ -27,9 +27,6 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
   } else if (action === "note") {
     await db.update(s.tables).set({ note: String(b.note ?? ""), updatedAt: new Date() }).where(eq(s.tables.id, id));
     return NextResponse.json({ ok: true });
-  } else if (action === "position") {
-    await db.update(s.tables).set({ x: Math.round(b.x), y: Math.round(b.y), updatedAt: new Date() }).where(eq(s.tables.id, id));
-    return NextResponse.json({ ok: true });
   } else {
     return NextResponse.json({ error: "Azione sconosciuta" }, { status: 400 });
   }

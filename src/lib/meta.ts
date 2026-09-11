@@ -1,14 +1,16 @@
 // Metadati di presentazione: colori/etichette degli stati, terminologia da sala.
 import type { TableLiveState, ResStatus } from "./types";
 
+// Quattro stati, leggibili da lontano. "Fuori servizio" resta ma è raro e non in legenda.
 export const TABLE_STATE: Record<TableLiveState, { label: string; dot: string; card: string; text: string }> = {
   libero:         { label: "Libero",        dot: "bg-ok",    card: "border-ok/50",     text: "text-ok" },
   occupato:       { label: "Occupato",      dot: "bg-busy",  card: "border-busy/50",   text: "text-busy" },
-  in_liberazione: { label: "Si libera",     dot: "bg-soon",  card: "border-soon/60",   text: "text-soon" },
-  oltre_tempo:    { label: "Oltre tempo",   dot: "bg-over",  card: "border-over/60",   text: "text-over" },
-  da_pulire:      { label: "Da pulire",     dot: "bg-clean", card: "border-clean/60",  text: "text-clean" },
+  oltre_tempo:    { label: "Oltre l'ora",   dot: "bg-over",  card: "border-over/60",   text: "text-over" },
+  prenotato:      { label: "Prenotato",     dot: "bg-soon",  card: "border-soon/60",   text: "text-soon" },
   fuori_servizio: { label: "Fuori servizio",dot: "bg-oos",   card: "border-oos/60",    text: "text-oos" },
 };
+// In legenda mostriamo solo ciò che serve durante il servizio.
+export const LEGEND_STATES: TableLiveState[] = ["libero", "prenotato", "occupato", "oltre_tempo"];
 
 export const RES_STATUS: Record<ResStatus | "da_sistemare" | "sistemata" | "in_ritardo", { label: string; cls: string }> = {
   da_sistemare: { label: "Da sistemare", cls: "bg-soon/15 text-soon border-soon/40" },

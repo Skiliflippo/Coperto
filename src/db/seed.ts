@@ -47,35 +47,69 @@ async function main() {
   const [rest] = await db.insert(s.restaurants).values({
     slug: "osteria-del-vicolo", name: "Osteria del Vicolo", plan: "trial",
     subscriptionStatus: "trialing", trialEndsAt: new Date(Date.now() + 30 * 86400000),
+    onboardedAt: new Date(),   // il locale demo è già configurato
   }).returning();
   const rid = rest.id;
   await db.insert(s.restaurantSettings).values({ restaurantId: rid });
   await db.insert(s.restaurantFeatures).values({ restaurantId: rid, flags: { online_widget: false } });
 
-  // SALE
-  const [sala] = await db.insert(s.rooms).values({ restaurantId: rid, name: "Sala interna", sortOrder: 0 }).returning();
-  const [dehors] = await db.insert(s.rooms).values({ restaurantId: rid, name: "Dehors", sortOrder: 1 }).returning();
-  const [soppalco] = await db.insert(s.rooms).values({ restaurantId: rid, name: "Soppalco", sortOrder: 2 }).returning();
+  // SALE con planimetria in centimetri reali (vista dall'alto, 1 cella griglia = 50 cm)
+  const el = (kind: "wall" | "decor", x: number, y: number, w: number, h: number, label = "", rotation = 0) =>
+    ({ id: `el_${Math.random().toString(36).slice(2, 10)}`, kind, x, y, w, h, rotation, label });
+  const [sala] = await db.insert(s.rooms).values({
+    restaurantId: rid, name: "Sala interna", sortOrder: 0,
+    layout: {
+      w: 1250, h: 850,
+      elements: [
+        el("wall", 620, 0, 20, 240),          // divisorio ingresso
+        el("decor", 1000, 450, 210, 330, "Bancone"),
+        el("decor", 40, 640, 190, 180, "Cucina"),
+        el("decor", 560, 780, 130, 60, "Ingresso"),
+      ],
+    },
+  }).returning();
+  const [dehors] = await db.insert(s.rooms).values({
+    restaurantId: rid, name: "Dehors", sortOrder: 1,
+    layout: { w: 1150, h: 600, elements: [el("decor", 20, 20, 90, 560, "Facciata"), el("wall", 130, 580, 1000, 18)] },
+  }).returning();
+  const [soppalco] = await db.insert(s.rooms).values({
+    restaurantId: rid, name: "Soppalco", sortOrder: 2,
+    layout: { w: 1050, h: 720, elements: [el("wall", 0, 380, 400, 18), el("decor", 30, 420, 170, 270, "Scala")] },
+  }).returning();
 
-  // TAVOLI: 6×2 · 8×4 · 3×6 · 1×10 = 72 coperti
-  type T = { label: string; cap: number; room: string; x: number; y: number };
+  // TAVOLI: 6×2 · 8×4 · 3×6 · 1×10 = 72 coperti · geometria reale sulla piantina
+  // dimensioni realistiche (~65 cm di fronte a coperto), coerenti con src/lib/floor.ts
+  const geo = (cap: number) => {
+    const shape = cap <= 2 ? "round" : cap <= 4 ? "square" : "rect";
+    if (shape === "round") return { w: 80, h: 80, shape };
+    if (shape === "square") return { w: 90, h: 90, shape };
+    const perSide = Math.max(2, Math.ceil(cap / 2));
+    return { w: Math.min(460, perSide * 65), h: 85, shape };
+  };
+  type T = { label: string; cap: number; room: string; x: number; y: number; rot?: number };
   const layout: T[] = [
     // Sala interna (44 coperti)
-    { label: "1", cap: 2, room: sala.id, x: 8, y: 12 }, { label: "2", cap: 2, room: sala.id, x: 26, y: 12 },
-    { label: "3", cap: 2, room: sala.id, x: 44, y: 12 }, { label: "4", cap: 4, room: sala.id, x: 8, y: 45 },
-    { label: "5", cap: 4, room: sala.id, x: 30, y: 45 }, { label: "6", cap: 4, room: sala.id, x: 8, y: 78 },
-    { label: "7", cap: 4, room: sala.id, x: 30, y: 78 }, { label: "8", cap: 6, room: sala.id, x: 62, y: 40 },
-    { label: "9", cap: 6, room: sala.id, x: 62, y: 76 }, { label: "10", cap: 10, room: sala.id, x: 80, y: 12 },
+    // 1-2-3 sono la fila dei due posti lungo la parete: accostabili fra loro
+    { label: "1", cap: 2, room: sala.id, x: 150, y: 120 }, { label: "2", cap: 2, room: sala.id, x: 300, y: 120 },
+    { label: "3", cap: 2, room: sala.id, x: 450, y: 120 }, { label: "4", cap: 4, room: sala.id, x: 160, y: 360 },
+    { label: "5", cap: 4, room: sala.id, x: 310, y: 360 }, { label: "6", cap: 4, room: sala.id, x: 300, y: 620 },
+    { label: "7", cap: 4, room: sala.id, x: 450, y: 620 }, { label: "8", cap: 6, room: sala.id, x: 780, y: 380 },
+    { label: "9", cap: 6, room: sala.id, x: 780, y: 640 }, { label: "10", cap: 10, room: sala.id, x: 900, y: 120 },
     // Dehors (10 coperti)
-    { label: "11", cap: 2, room: dehors.id, x: 12, y: 20 }, { label: "12", cap: 4, room: dehors.id, x: 42, y: 20 },
-    { label: "13", cap: 4, room: dehors.id, x: 70, y: 20 },
+    { label: "11", cap: 2, room: dehors.id, x: 300, y: 280 }, { label: "12", cap: 4, room: dehors.id, x: 600, y: 280 },
+    { label: "13", cap: 4, room: dehors.id, x: 730, y: 280 },
     // Soppalco (18 coperti)
-    { label: "14", cap: 2, room: soppalco.id, x: 12, y: 18 }, { label: "15", cap: 2, room: soppalco.id, x: 36, y: 18 },
-    { label: "16", cap: 4, room: soppalco.id, x: 60, y: 18 }, { label: "17", cap: 4, room: soppalco.id, x: 82, y: 18 },
-    { label: "18", cap: 6, room: soppalco.id, x: 30, y: 62 },
+    { label: "14", cap: 2, room: soppalco.id, x: 200, y: 160 }, { label: "15", cap: 2, room: soppalco.id, x: 330, y: 160 },
+    { label: "16", cap: 4, room: soppalco.id, x: 680, y: 160 }, { label: "17", cap: 4, room: soppalco.id, x: 830, y: 160 },
+    { label: "18", cap: 6, room: soppalco.id, x: 560, y: 520, rot: 90 },
   ];
   const tableRows = await db.insert(s.tables).values(
-    layout.map((t) => ({ restaurantId: rid, roomId: t.room, label: t.label, capacity: t.cap, x: t.x, y: t.y }))
+    layout.map((t) => {
+      const g = geo(t.cap);
+      // molti tavoli reggono sedie extra: un 2 diventa 3, un 4 diventa 6…
+      const maxCap = t.cap <= 2 ? t.cap + 1 : t.cap <= 4 ? t.cap + 2 : t.cap + 2;
+      return { restaurantId: rid, roomId: t.room, label: t.label, capacity: t.cap, maxCapacity: maxCap, x: t.x, y: t.y, width: g.w, height: g.h, shape: g.shape, rotation: t.rot ?? 0 };
+    })
   ).returning();
   const byLabel: Record<string, typeof tableRows[number]> = {};
   for (const t of tableRows) byLabel[t.label] = t;
@@ -191,18 +225,8 @@ async function main() {
         actualEndAt: new Date(seated.getTime() + (82 + w * 6) * 60000), status: "chiuso", createdBy: "Luca",
       });
     }
-    await db.insert(s.waitlistEntries).values([
-      // attese storiche: seduti dopo ~15 min, uno andato via
-      { restaurantId: rid, name: "Orlando", partySize: 2, status: "seduto", quotedMinutes: 10, createdAt: tsAt(date, "20:10"), seatedAt: tsAt(date, "20:24") },
-      { restaurantId: rid, name: "Vitale", partySize: 4, status: "andato_via", quotedMinutes: 35, createdAt: tsAt(date, "20:40") },
-    ]);
   }
 
-  // ATTESA di oggi (demo live)
-  await db.insert(s.waitlistEntries).values([
-    { restaurantId: rid, name: "Pavan", partySize: 2, phone: "338 1212121", quotedMinutes: 15, status: "in_attesa" },
-    { restaurantId: rid, name: "Lombardi", partySize: 5, phone: "", roomPreference: "Dehors", quotedMinutes: 25, status: "in_attesa" },
-  ]);
 
   console.log("✓ Seed completato:", rest.name, "| tavoli:", tableRows.length, "| prenotazioni oggi:", res.length);
   await pool.end();

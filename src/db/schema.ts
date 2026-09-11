@@ -15,6 +15,8 @@ export const restaurants = pgTable("restaurants", {
   plan: text("plan").notNull().default("trial"), // trial | base | pro
   subscriptionStatus: text("subscription_status").notNull().default("trialing"),
   trialEndsAt: timestamp("trial_ends_at", { withTimezone: true }),
+  // Primo accesso: finché è null mostriamo il percorso guidato di configurazione sala.
+  onboardedAt: timestamp("onboarded_at", { withTimezone: true }),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });
 
@@ -26,6 +28,16 @@ export const restaurantSettings = pgTable("restaurant_settings", {
   lateThresholdMinutes: integer("late_threshold_minutes").notNull().default(15),   // evidenzia "in ritardo"
   noShowThresholdMinutes: integer("no_show_threshold_minutes").notNull().default(15),
   overbookingPct: integer("overbooking_pct").notNull().default(90),  // alert sforamento coperti
+  // Un tavolo diventa "oltre tempo" dopo N minuti dal momento in cui si è seduto:
+  // nessuno in servizio ha tempo di aggiornare stati, il conteggio parte da solo.
+  overtimeMinutes: integer("overtime_minutes").notNull().default(60),
+  // Quanto prima una prenotazione "blocca" il tavolo, togliendolo dai liberi.
+  reservationHoldMinutes: integer("reservation_hold_minutes").notNull().default(90),
+  // "Unisci tavoli": se il gruppo non entra da nessuna parte, l'app propone di
+  // accostare due tavoli vicini e liberi. Alcuni locali non lo vogliono (spazi stretti).
+  allowTableJoin: boolean("allow_table_join").notNull().default(true),
+  // Distanza massima (cm) fra due tavoli perché siano considerati accostabili.
+  joinMaxGapCm: integer("join_max_gap_cm").notNull().default(90),
   // Durate medie occupazione per turno e fascia coperti
   durations: jsonb("durations").notNull().default({
     pranzo: { base: 60, large: 90, xl: 120 },   // large = 7-8 coperti, xl = 9+
@@ -64,11 +76,22 @@ export const customers = pgTable("customers", {
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 }, (t) => [index("customers_restaurant_idx").on(t.restaurantId)]);
 
+// Planimetria della sala vista dall'alto, in centimetri reali (1 cella griglia = 50 cm).
+// Muri e arredi fissi sono elementi rettangolari con posizione, dimensione e rotazione:
+// così l'editor può spostarli, ridimensionarli e ruotarli come in Figma.
+export type FloorElement = {
+  id: string;
+  kind: "wall" | "decor";
+  x: number; y: number; w: number; h: number; rotation: number;
+  label: string;
+};
+export type RoomLayout = { w: number; h: number; elements: FloorElement[] };
 export const rooms = pgTable("rooms", {
   id: uuid("id").defaultRandom().primaryKey(),
   restaurantId: uuid("restaurant_id").notNull().references(() => restaurants.id, { onDelete: "cascade" }),
   name: text("name").notNull(), // Sala interna · Dehors · Soppalco
   sortOrder: integer("sort_order").notNull().default(0),
+  layout: jsonb("layout").$type<RoomLayout>(), // null → generata al primo accesso
 }, (t) => [index("rooms_restaurant_idx").on(t.restaurantId)]);
 
 // state = stato "di base" del tavolo. "occupato" è derivato dalle seatings attive,
@@ -78,10 +101,19 @@ export const tables = pgTable("tables", {
   restaurantId: uuid("restaurant_id").notNull().references(() => restaurants.id, { onDelete: "cascade" }),
   roomId: uuid("room_id").notNull().references(() => rooms.id, { onDelete: "cascade" }),
   label: text("label").notNull(),          // numero tavolo mostrato in sala
-  capacity: integer("capacity").notNull(), // coperti max
+  capacity: integer("capacity").notNull(), // coperti "normali", con le sedie che ci stanno sempre
   minCapacity: integer("min_capacity").notNull().default(1),
-  x: integer("x").notNull().default(0),    // coordinate % per la mappa (0-100)
+  // Coperti massimi aggiungendo sedie: un 2 può diventare un 4 stringendosi.
+  // Usato per walk-in e per valutare gli accorpamenti.
+  maxCapacity: integer("max_capacity").notNull().default(0), // 0 = come capacity
+  // Geometria sulla piantina: x/y = centro del tavolo in unità stanza
+  x: integer("x").notNull().default(0),
   y: integer("y").notNull().default(0),
+  width: integer("width").notNull().default(120),
+  height: integer("height").notNull().default(120),
+  rotation: integer("rotation").notNull().default(0),        // gradi
+  shape: text("shape").notNull().default("square"),          // round | square | rect
+  archived: boolean("archived").notNull().default(false),    // tavolo rimosso dalla mappa (storico intatto)
   state: text("state").notNull().default("libero"), // libero | da_pulire | fuori_servizio
   note: text("note").notNull().default(""),         // nota veloce ("compleanno", "allergia")
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),

@@ -5,21 +5,29 @@ export type StaffSession = { id: string; name: string; role: Role; color: string
 export type Settings = {
   slotMinutes: number; bufferMinutes: number; lateThresholdMinutes: number;
   noShowThresholdMinutes: number; overbookingPct: number;
+  overtimeMinutes: number;          // oltre tempo dopo N min dal momento in cui si sono seduti
+  reservationHoldMinutes: number;   // quanto prima una prenotazione blocca il tavolo
+  allowTableJoin: boolean;          // proponi accorpamenti quando il gruppo non entra
+  joinMaxGapCm: number;             // distanza max fra tavoli accostabili
   durations: { pranzo: DurationBands; cena: DurationBands; [k: string]: DurationBands };
   timezone: string;
 };
 export type DurationBands = { base: number; large: number; xl: number };
 
-export type Room = { id: string; name: string; sortOrder: number };
+export type { FloorElement, RoomLayout, TableShape } from "./floor";
+import type { RoomLayout, TableShape } from "./floor";
+export type Room = { id: string; name: string; sortOrder: number; layout: RoomLayout };
 export type TableT = {
   id: string; roomId: string; label: string; capacity: number; minCapacity: number;
-  x: number; y: number; state: "libero" | "da_pulire" | "fuori_servizio"; note: string;
+  maxCapacity: number;   // con sedie aggiunte (>= capacity)
+  x: number; y: number; width: number; height: number; rotation: number; shape: TableShape;
+  state: "libero" | "da_pulire" | "fuori_servizio"; note: string;
 };
 export type Combo = { id: string; roomId: string; label: string; capacity: number; tableIds: string[] };
 export type Period = { id: string; name: string; startTime: string; endTime: string; sortOrder: number };
 
 export type Bootstrap = {
-  restaurant: { id: string; name: string; slug: string; plan: string; subscriptionStatus: string };
+  restaurant: { id: string; name: string; slug: string; plan: string; subscriptionStatus: string; onboarded: boolean };
   settings: Settings; rooms: Room[]; tables: TableT[]; combos: Combo[]; periods: Period[];
   features: Record<string, unknown>;
 };
@@ -44,5 +52,6 @@ export type WaitEntry = {
 };
 export type DayData = { date: string; reservations: Reservation[]; seatings: Seating[]; waitlist: WaitEntry[] };
 
-// Stato derivato del tavolo in un dato momento (client + server)
-export type TableLiveState = "libero" | "occupato" | "in_liberazione" | "oltre_tempo" | "da_pulire" | "fuori_servizio";
+// Stato derivato del tavolo. Solo quello che si capisce guardando la sala:
+// niente "da pulire" / "si libera" da aggiornare a mano nel pieno del servizio.
+export type TableLiveState = "libero" | "occupato" | "oltre_tempo" | "prenotato" | "fuori_servizio";

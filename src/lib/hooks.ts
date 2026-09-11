@@ -7,11 +7,22 @@ import type { Bootstrap, DayData } from "./types";
 import { toast } from "@/components/toast";
 
 export function useBootstrap() {
-  const rid = useSession((s) => s.staff?.restaurantId);
+  const staff = useSession((s) => s.staff);
+  const rid = staff?.restaurantId;
   return useQuery({
     queryKey: ["bootstrap", rid ?? "default"],
-    queryFn: () => api<Bootstrap>(`/api/bootstrap${rid ? `?rid=${rid}` : ""}`),
+    queryFn: async () => {
+      const data = await api<Bootstrap>(`/api/bootstrap${rid ? `?rid=${encodeURIComponent(rid)}` : ""}`);
+      // Dopo clone/reseed il browser può conservare UUID di ristorante e staff
+      // appartenenti al vecchio DB. Non trasferiamo un'identità fra tenant:
+      // azzeriamo la sessione e AppShell riporta al login del database corrente.
+      if (staff && data.restaurant.id !== staff.restaurantId) {
+        useSession.getState().setStaff(null);
+      }
+      return data;
+    },
     staleTime: 60_000,
+    retry: 1,
   });
 }
 

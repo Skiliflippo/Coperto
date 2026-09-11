@@ -37,6 +37,15 @@ export function Piano({ date, day, onTap }: { date: string; day: DayData; onTap:
 
   if (!boot.data) return <div className="skeleton mt-3 h-72 rounded-3xl" />;
   const bootData: Bootstrap = boot.data;
+  // Senza turni configurati la timeline non ha assi: meglio dirlo che crashare.
+  if (!bootData.periods.length) {
+    return (
+      <div className="mt-4 rounded-3xl border border-dashed border-line px-6 py-10 text-center">
+        <p className="font-bold">Nessun turno configurato</p>
+        <p className="mt-1 text-sm text-muted">Il Piano ha bisogno degli orari di pranzo e cena. Impostali in Altro → Impostazioni.</p>
+      </div>
+    );
+  }
   const period = bootData.periods.find((p) => p.id === periodId) ?? bootData.periods[0];
   const { settings } = bootData;
   const startMin = toMin(period.startTime);

@@ -3,13 +3,13 @@
 import { useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import {
-  Check, Clock, DoorOpen, Receipt, ArrowLeftRight, Sparkles, Ban, StickyNote, Users, Timer, Undo2,
+  Check, Clock, DoorOpen, Receipt, ArrowLeftRight, Ban, StickyNote, Users, Timer, Undo2,
 } from "lucide-react";
 import { api } from "@/lib/api";
 import { useBootstrap, useDay, useNow } from "@/lib/hooks";
 import { useSession } from "@/store/session";
-import { activeSeatingByTable, liveState } from "@/lib/estimates";
-import { mmssAgo, todayISO } from "@/lib/time";
+import { computeTableStatuses } from "@/lib/estimates";
+import { nowMin, todayISO } from "@/lib/time";
 import { TABLE_STATE, fmtCovers } from "@/lib/meta";
 import { Btn, Sheet, Chip } from "@/components/ui";
 import { scheduleUndo, usePending } from "@/components/toast";
@@ -30,9 +30,14 @@ export function TableSheet({ table, onClose }: { table: TableT | null; onClose: 
   const [note, setNote] = useState("");
 
   if (!table || !boot.data || !day.data) return null;
-  const byTable = activeSeatingByTable(day.data.seatings);
-  const seating = byTable.get(table.id);
-  const state = liveState(table, seating, now);
+  const statuses = computeTableStatuses({
+    tables: boot.data.tables, combos: boot.data.combos,
+    seatings: day.data.seatings, reservations: day.data.reservations,
+    settings: boot.data.settings, nowMs: now, nowMinOfDay: nowMin(),
+  });
+  const status = statuses.get(table.id) ?? { state: "libero" as const };
+  const seating = status.seating;
+  const state = status.state;
   const meta = TABLE_STATE[state];
   const isPendingFree = seating && pending.has(`libera:${seating.id}`);
 
@@ -49,8 +54,12 @@ export function TableSheet({ table, onClose }: { table: TableT | null; onClose: 
         <span className="flex items-center gap-3">
           <span className="grid h-11 w-11 place-items-center rounded-xl bg-raised font-display text-xl font-bold">{table.label}</span>
           <span>
-            <span className="flex items-center gap-2">Tavolo {table.label} <Chip cls={meta.dot.replace("bg-", "border-").concat(" bg-raised text-inherit")}><span className={`h-2 w-2 rounded-full ${meta.dot}`} />{meta.label}</Chip></span>
-            <span className="block text-sm font-medium text-muted">{fmtCovers(table.capacity)} · {boot.data.rooms.find((r) => r.id === table.roomId)?.name}</span>
+            <span className="flex items-center gap-2">{seating && seating.tableIds.length > 1 ? `Tavoli ${seating.tableLabel}` : `Tavolo ${table.label}`} <Chip cls={meta.dot.replace("bg-", "border-").concat(" bg-raised text-inherit")}><span className={`h-2 w-2 rounded-full ${meta.dot}`} />{meta.label}</Chip></span>
+            <span className="block text-sm font-medium text-muted">
+              {seating && seating.tableIds.length > 1 ? "tavoli accostati" : fmtCovers(table.capacity)}
+              {table.maxCapacity > table.capacity && !seating ? ` (fino a ${table.maxCapacity})` : ""}
+              {" · "}{boot.data.rooms.find((r) => r.id === table.roomId)?.name}
+            </span>
           </span>
         </span>
       }>
@@ -64,20 +73,21 @@ export function TableSheet({ table, onClose }: { table: TableT | null; onClose: 
                 {seating.billRequested && <Chip cls="bg-soon/15 text-soon border-soon/40"><Receipt className="h-3.5 w-3.5" />Conto</Chip>}
               </div>
               <p className="mt-1 flex items-center gap-1.5 text-sm font-semibold text-muted">
-                <Timer className="h-4 w-4" /> Seduti da {mmssAgo(seating.seatedAt, now)} min · liberazione prevista {expected?.toLocaleTimeString("it-IT", { hour: "2-digit", minute: "2-digit" })}
+                <Timer className="h-4 w-4" /> Seduti da {status.minutesSeated} min
+                {state === "oltre_tempo" && <span className="font-bold text-over">· oltre l'ora</span>}
               </p>
               {seating.note && <p className="mt-1 text-sm text-muted">Nota: {seating.note}</p>}
             </div>
           )}
           {isPendingFree ? (
             <div className="rounded-2xl border-2 border-soon/50 bg-soon/10 p-4 text-center">
-              <p className="font-bold text-soon">Liberazione in corso…</p>
+              <p className="font-bold text-soon">Sto liberando il tavolo…</p>
               <p className="text-sm text-muted">Tocca Annulla nel riquadro giallo per tornare indietro</p>
             </div>
           ) : seating ? (
             <>
               <Btn variant="ok" size="xl" onClick={() =>
-                scheduleUndo(`libera:${seating.id}`, `Tavolo ${table.label} liberato → da pulire`, () => act(`/api/seatings/${seating.id}`, { action: "libera" }))}>
+                scheduleUndo(`libera:${seating.id}`, `${seating.tableIds.length > 1 ? `Tavoli ${seating.tableLabel} liberati` : `Tavolo ${table.label} liberato`}`, () => act(`/api/seatings/${seating.id}`, { action: "libera" }))}>
                 <DoorOpen className="h-6 w-6" /> Libera il tavolo
               </Btn>
               <div className="grid grid-cols-2 gap-3">
@@ -100,8 +110,18 @@ export function TableSheet({ table, onClose }: { table: TableT | null; onClose: 
               </div>
               {table.note && <p className="rounded-xl bg-raised px-3 py-2 text-sm text-muted">Nota: {table.note}</p>}
             </>
-          ) : state === "da_pulire" ? (
-            <Btn size="xl" variant="ok" onClick={() => act(`/api/tables/${table.id}`, { action: "pronto" })}><Sparkles className="h-6 w-6" /> Pulito · Pronto</Btn>
+          ) : state === "prenotato" ? (
+            <>
+              <div className="rounded-2xl border-2 border-soon/50 bg-soon/10 p-3.5">
+                <p className="font-bold text-soon">Tenuto per {status.reservation?.guestName}</p>
+                <p className="text-sm font-semibold text-muted">
+                  {status.reservation?.time} · {status.reservation?.partySize} coperti. Non compare fra i tavoli liberi.
+                </p>
+              </div>
+              <Btn size="xl" onClick={() => { setParty(status.reservation?.partySize ?? 2); setMode("seat"); }}>
+                <Users className="h-6 w-6" /> Siedi qui comunque
+              </Btn>
+            </>
           ) : (
             <Btn size="xl" onClick={() => act(`/api/tables/${table.id}`, { action: "in_servizio" })}><Undo2 className="h-6 w-6" /> Rimetti in servizio</Btn>
           )}

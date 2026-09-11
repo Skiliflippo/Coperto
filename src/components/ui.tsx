@@ -37,15 +37,15 @@ export function Sheet({ open, onClose, title, children, wide }: {
   return (
     <div className="no-print fixed inset-0 z-[60]">
       <div className="absolute inset-0 animate-fade bg-black/45" onClick={onClose} />
-      <div className={`absolute inset-x-0 bottom-0 mx-auto max-h-[90dvh] animate-sheet-up overflow-hidden rounded-t-[28px] border-t border-line bg-surface shadow-2xl ${wide ? "sm:max-w-2xl" : "max-w-lg"}`}>
-        <div className="flex items-center gap-3 border-b border-line px-5 py-4">
-          <div className="min-w-0 flex-1 text-lg font-bold leading-tight">{title}</div>
+      <div className={`absolute inset-x-0 bottom-0 mx-auto flex max-h-[92dvh] w-full flex-col overflow-hidden rounded-t-[28px] border-t border-line bg-surface shadow-2xl ${wide ? "sm:max-w-2xl" : "sm:max-w-lg"}`}>
+        <div className="flex items-center gap-3 border-b border-line px-4 py-3">
+          <div className="min-w-0 flex-1 truncate text-[17px] font-bold leading-tight">{title}</div>
           <button onClick={onClose} aria-label="Chiudi"
-            className="grid h-12 w-12 shrink-0 place-items-center rounded-2xl bg-raised text-muted active:scale-95">
+            className="grid h-11 w-11 shrink-0 place-items-center rounded-2xl bg-raised text-muted active:scale-95">
             <X className="h-5 w-5" />
           </button>
         </div>
-        <div className="max-h-[calc(90dvh-76px)] overflow-y-auto px-5 py-4 pb-[calc(env(safe-area-inset-bottom)+16px)]">{children}</div>
+        <div className="min-w-0 flex-1 overflow-y-auto overflow-x-hidden px-4 py-3.5 pb-[calc(env(safe-area-inset-bottom)+16px)]">{children}</div>
       </div>
     </div>
   );

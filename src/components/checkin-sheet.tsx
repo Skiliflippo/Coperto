@@ -2,12 +2,12 @@
 // Check-in: il momento in cui prenotazione e realtà si incontrano.
 // Gestisce le deviazioni classiche: ritardo, anticipo, coperti diversi — ognuna con un tap.
 import { useMemo, useState } from "react";
-import { Phone, Hourglass, UserX, Check, ArrowLeftRight, TriangleAlert, PhoneOutgoing, CheckCircle2 } from "lucide-react";
+import { Phone, UserX, Check, ArrowLeftRight, TriangleAlert, PhoneOutgoing, CheckCircle2 } from "lucide-react";
 import { useQueryClient } from "@tanstack/react-query";
 import { api } from "@/lib/api";
 import { useBootstrap, useDay, useNow } from "@/lib/hooks";
 import { useSession } from "@/store/session";
-import { activeSeatingByTable, liveState } from "@/lib/estimates";
+import { computeTableStatuses } from "@/lib/estimates";
 import { nowMin, toMin, todayISO } from "@/lib/time";
 import { Btn, Sheet, Chip } from "@/components/ui";
 import { scheduleUndo } from "@/components/toast";
@@ -40,10 +40,16 @@ export function CheckInSheet({ res, onClose }: { res: Reservation | null; onClos
   const isLate = lateMin > boot.data.settings.lateThresholdMinutes;
   const isEarly = lateMin < -boot.data.settings.lateThresholdMinutes;
 
-  // stato del tavolo assegnato (potrebbe essere ancora occupato)
+  // stato del tavolo assegnato: se è ancora occupato lo diciamo subito
   let assignedState: string | null = null;
   if (info?.table && !picked) {
-    assignedState = liveState(info.table, activeSeatingByTable(day.data.seatings).get(info.table.id), now);
+    const statuses = computeTableStatuses({
+      tables: boot.data.tables, combos: boot.data.combos,
+      seatings: day.data.seatings, reservations: day.data.reservations,
+      settings: boot.data.settings, nowMs: now, nowMinOfDay: nowMin(),
+    });
+    const st = statuses.get(info.table.id)?.state ?? "libero";
+    assignedState = st === "prenotato" ? "libero" : st;   // tenuto per questa prenotazione
   }
   const target = picked ?? (info?.table ? { tableIds: [info.table.id], tableLabel: info.table.label } : info?.combo ? { tableIds: info.combo.tableIds, tableLabel: info.combo.label } : null);
   const targetCap = picked ? null : info?.table?.capacity ?? info?.combo?.capacity ?? null;
@@ -58,15 +64,6 @@ export function CheckInSheet({ res, onClose }: { res: Reservation | null; onClos
   const markNoShow = () => scheduleUndo(`noshow:${res.id}`, `${res.guestName} segnato no-show`, () =>
     api(`/api/reservations/${res.id}`, { method: "PATCH", body: { restaurantId: rid, staffName: me, action: "status", status: "no_show" } })
       .then(() => qc.invalidateQueries({ queryKey: ["day", rid] })));
-  const toWaitlist = async () => {
-    await api("/api/waitlist", {
-      method: "POST",
-      body: { restaurantId: rid, name: res.guestName, partySize: p, phone: res.guestPhone, createdBy: me, linkedReservationId: res.id },
-    });
-    await qc.invalidateQueries({ queryKey: ["day", rid] });
-    onClose();
-  };
-
   return (
     <Sheet open={!!res} onClose={() => { setParty(null); setPicked(null); setChangeTable(false); onClose(); }}
       title={<span>Check-in · <span className="text-brand">{res.guestName}</span> <span className="text-sm font-medium text-muted">prenotato alle {res.time}</span></span>}>
@@ -90,7 +87,7 @@ export function CheckInSheet({ res, onClose }: { res: Reservation | null; onClos
         )}
         {isEarly && (
           <div className="rounded-2xl border border-busy/40 bg-busy/10 p-3 text-sm font-semibold text-busy">
-            In anticipo di {-lateMin} min: se il tavolo è libero siedi pure, altrimenti metti in attesa.
+            In anticipo di {-lateMin} min: se il tavolo è libero siedi pure.
           </div>
         )}
 
@@ -132,7 +129,7 @@ export function CheckInSheet({ res, onClose }: { res: Reservation | null; onClos
             </div>
           ) : (
             <>
-              <SuggestedTables party={p} onPick={(t) => { setPicked(t); setChangeTable(false); }} />
+              <SuggestedTables party={p} forReservationId={res.id} onPick={(t) => { setPicked(t); setChangeTable(false); }} />
               {picked && (
                 <p className="mt-2 flex items-center gap-2 text-sm font-semibold text-ok"><CheckCircle2 className="h-4 w-4" /> Scelto tavolo {picked.tableLabel}</p>
               )}
@@ -145,16 +142,11 @@ export function CheckInSheet({ res, onClose }: { res: Reservation | null; onClos
         <Btn size="xl" disabled={!target || (targetCap != null && p > targetCap)} onClick={doSeat}>
           <Check className="h-6 w-6" /> Siedi {p} al tavolo {target?.tableLabel ?? "—"}
         </Btn>
-        <div className="grid grid-cols-2 gap-3">
-          {res.guestPhone && !isLate && (
-            <a href={`tel:${res.guestPhone.replace(/\s/g, "")}`} className="flex min-h-[56px] items-center justify-center gap-2 rounded-2xl bg-raised font-semibold active:scale-[0.97]">
-              <Phone className="h-5 w-5" /> Chiama
-            </a>
-          )}
-          <button onClick={toWaitlist} className="flex min-h-[56px] items-center justify-center gap-2 rounded-2xl bg-raised font-semibold active:scale-[0.97]">
-            <Hourglass className="h-5 w-5" /> Metti in attesa
-          </button>
-        </div>
+        {res.guestPhone && !isLate && (
+          <a href={`tel:${res.guestPhone.replace(/\s/g, "")}`} className="flex min-h-[56px] items-center justify-center gap-2 rounded-2xl bg-raised font-semibold active:scale-[0.97]">
+            <Phone className="h-5 w-5" /> Chiama {res.guestPhone}
+          </a>
+        )}
       </div>
     </Sheet>
   );

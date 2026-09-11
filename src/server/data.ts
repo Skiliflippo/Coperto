@@ -2,14 +2,39 @@
 import "server-only";
 import { db } from "@/db";
 import * as s from "@/db/schema";
-import { and, asc, eq, gte, lte, ne } from "drizzle-orm";
+import { and, asc, eq } from "drizzle-orm";
 import type { Bootstrap, DayData, Settings } from "@/lib/types";
+import { normalizeLayout, tableGeometry, type RoomLayout, type TableShape } from "@/lib/floor";
+
+export class BootstrapDataError extends Error {
+  code: "DATABASE_EMPTY" | "RESTAURANT_NOT_FOUND";
+  constructor(code: BootstrapDataError["code"], message: string) {
+    super(message);
+    this.name = "BootstrapDataError";
+    this.code = code;
+  }
+}
 
 export async function getRestaurantBundle(restaurantId?: string | null): Promise<Bootstrap> {
-  const rest = restaurantId
-    ? (await db.select().from(s.restaurants).where(eq(s.restaurants.id, restaurantId)))[0]
-    : (await db.select().from(s.restaurants).where(eq(s.restaurants.slug, "osteria-del-vicolo")))[0];
-  if (!rest) throw new Error("Ristorante non trovato");
+  // Una sessione persistita nel browser può contenere l'UUID di un altro database
+  // (tipico dopo clone, import o reseed). In locale non deve produrre una pagina vuota:
+  // prova l'ID richiesto, poi il tenant demo, infine il primo tenant disponibile.
+  const validUuid = !!restaurantId && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(restaurantId);
+  let rest = validUuid
+    ? (await db.select().from(s.restaurants).where(eq(s.restaurants.id, restaurantId!)).limit(1))[0]
+    : undefined;
+  if (!rest) {
+    rest = (await db.select().from(s.restaurants).where(eq(s.restaurants.slug, "osteria-del-vicolo")).limit(1))[0];
+  }
+  if (!rest) {
+    rest = (await db.select().from(s.restaurants).orderBy(asc(s.restaurants.createdAt)).limit(1))[0];
+  }
+  if (!rest) {
+    throw new BootstrapDataError(
+      "DATABASE_EMPTY",
+      "Database vuoto: esegui `npx drizzle-kit push` e `npx tsx src/db/seed.ts`, poi ricarica la pagina.",
+    );
+  }
   const rid = rest.id;
   // Auto-riparazione: ambienti semi-inizializzati (push senza seed) devono comunque funzionare
   let [st] = await db.select().from(s.restaurantSettings).where(eq(s.restaurantSettings.restaurantId, rid));
@@ -17,15 +42,53 @@ export async function getRestaurantBundle(restaurantId?: string | null): Promise
   let [ft] = await db.select().from(s.restaurantFeatures).where(eq(s.restaurantFeatures.restaurantId, rid));
   if (!ft) [ft] = await db.insert(s.restaurantFeatures).values({ restaurantId: rid, flags: {} }).returning();
   const rooms = await db.select().from(s.rooms).where(eq(s.rooms.restaurantId, rid)).orderBy(asc(s.rooms.sortOrder));
-  const tables = await db.select().from(s.tables).where(eq(s.tables.restaurantId, rid));
-  tables.sort((a, b) => Number(a.label) - Number(b.label));
+  let tables = (await db.select().from(s.tables).where(eq(s.tables.restaurantId, rid))).filter((t) => !t.archived);
+  tables.sort((a, b) => (Number(a.label) || 0) - (Number(b.label) || 0) || a.label.localeCompare(b.label));
+
+  // Auto-riparazione planimetria: sale senza layout, o con il vecchio formato
+  // (muri come segmenti / coordinate in percentuale) vengono migrate una volta sola.
+  const DEFAULT_LAYOUT: RoomLayout = { w: 1200, h: 800, elements: [] };
+  const layouts = new Map<string, RoomLayout>();
+  for (const room of rooms) {
+    const wasLegacy = !room.layout || !Array.isArray((room.layout as any).elements);
+    const layout = room.layout ? normalizeLayout(room.layout) : DEFAULT_LAYOUT;
+    layouts.set(room.id, layout);
+    if (wasLegacy) {
+      await db.update(s.rooms).set({ layout }).where(eq(s.rooms.id, room.id));
+      // vecchie coordinate in percentuale (0-100) → centimetri
+      for (const t of tables.filter((x) => x.roomId === room.id && x.x <= 100 && x.y <= 100)) {
+        const shape = (t.capacity <= 2 ? "round" : t.capacity <= 4 ? "square" : "rect") as TableShape;
+        const g = tableGeometry(t.capacity, shape);
+        const patch = {
+          x: Math.round((t.x / 100) * layout.w) || 150,
+          y: Math.round((t.y / 100) * layout.h) || 150,
+          width: g.width, height: g.height, shape,
+        };
+        Object.assign(t, patch);
+        await db.update(s.tables).set(patch).where(eq(s.tables.id, t.id));
+      }
+    }
+  }
   const combos = await db.select().from(s.tableCombinations).where(eq(s.tableCombinations.restaurantId, rid));
-  const periods = await db.select().from(s.servicePeriods).where(eq(s.servicePeriods.restaurantId, rid)).orderBy(asc(s.servicePeriods.sortOrder));
+  // Senza turni il Piano non può disegnare la timeline: se mancano li creiamo con i
+  // valori standard, così un database importato a metà non manda in errore la pagina.
+  let periods = await db.select().from(s.servicePeriods).where(eq(s.servicePeriods.restaurantId, rid)).orderBy(asc(s.servicePeriods.sortOrder));
+  if (!periods.length) {
+    periods = await db.insert(s.servicePeriods).values([
+      { restaurantId: rid, name: "Pranzo", startTime: "12:00", endTime: "15:00", sortOrder: 0 },
+      { restaurantId: rid, name: "Cena", startTime: "19:00", endTime: "23:30", sortOrder: 1 },
+    ]).returning();
+  }
   return {
-    restaurant: { id: rid, name: rest.name, slug: rest.slug, plan: rest.plan, subscriptionStatus: rest.subscriptionStatus },
+    restaurant: { id: rid, name: rest.name, slug: rest.slug, plan: rest.plan, subscriptionStatus: rest.subscriptionStatus, onboarded: !!rest.onboardedAt },
     settings: st as unknown as Settings,
-    rooms: rooms.map((r) => ({ id: r.id, name: r.name, sortOrder: r.sortOrder })),
-    tables: tables.map((t) => ({ id: t.id, roomId: t.roomId, label: t.label, capacity: t.capacity, minCapacity: t.minCapacity, x: t.x, y: t.y, state: t.state as any, note: t.note })),
+    rooms: rooms.map((r) => ({ id: r.id, name: r.name, sortOrder: r.sortOrder, layout: layouts.get(r.id) ?? DEFAULT_LAYOUT })),
+    tables: tables.map((t) => ({
+      id: t.id, roomId: t.roomId, label: t.label, capacity: t.capacity, minCapacity: t.minCapacity,
+      maxCapacity: Math.max(t.capacity, t.maxCapacity || 0),   // 0 nel DB = nessuna sedia extra
+      x: t.x, y: t.y, width: t.width, height: t.height, rotation: t.rotation, shape: t.shape as any,
+      state: t.state as any, note: t.note,
+    })),
     combos: combos.map((c) => ({ id: c.id, roomId: c.roomId, label: c.label, capacity: c.capacity, tableIds: c.tableIds })),
     periods: periods.map((p) => ({ id: p.id, name: p.name, startTime: p.startTime, endTime: p.endTime, sortOrder: p.sortOrder })),
     features: (ft?.flags ?? {}) as Record<string, unknown>,
@@ -39,10 +102,6 @@ export async function getDayData(restaurantId: string, date: string): Promise<Da
   const seatings = await db.select().from(s.seatings)
     .where(and(eq(s.seatings.restaurantId, restaurantId), eq(s.seatings.status, "seduto")))
     .orderBy(asc(s.seatings.seatedAt));
-  const waitlist = await db.select().from(s.waitlistEntries)
-    .where(and(eq(s.waitlistEntries.restaurantId, restaurantId),
-      ne(s.waitlistEntries.status, "seduto"), ne(s.waitlistEntries.status, "andato_via")))
-    .orderBy(asc(s.waitlistEntries.createdAt));
   const map = <T extends { createdAt: Date }>(x: T) => ({ ...x, createdAt: x.createdAt.toISOString() });
   return {
     date,
@@ -51,10 +110,17 @@ export async function getDayData(restaurantId: string, date: string): Promise<Da
       ...map(x), id: x.id, seatedAt: x.seatedAt.toISOString(),
       expectedEndAt: x.expectedEndAt.toISOString(), actualEndAt: x.actualEndAt?.toISOString() ?? null,
     })),
-    waitlist: waitlist.map(map),
+    waitlist: [],   // la fila sta davanti alla porta, non nell'app
   } as unknown as DayData;
 }
 
 export async function logActivity(restaurantId: string, staffName: string, action: string, message: string) {
   await db.insert(s.activityLog).values({ restaurantId, staffName, action, message });
+}
+
+// La piantina la tocca solo il titolare: il cameriere non deve poter spostare la sala per sbaglio.
+export async function isOwner(staffId?: string | null): Promise<boolean> {
+  if (!staffId) return false;
+  const [row] = await db.select().from(s.staff).where(eq(s.staff.id, staffId));
+  return row?.role === "titolare" && row.active;
 }

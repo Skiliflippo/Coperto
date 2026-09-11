@@ -20,8 +20,6 @@ async function statsFor(rid: string, date: string) {
     .where(and(eq(s.seatings.restaurantId, rid), gte(s.seatings.seatedAt, start), lt(s.seatings.seatedAt, end)));
   const reservations = await db.select().from(s.reservations)
     .where(and(eq(s.reservations.restaurantId, rid), eq(s.reservations.date, date)));
-  const wait = await db.select().from(s.waitlistEntries)
-    .where(and(eq(s.waitlistEntries.restaurantId, rid), gte(s.waitlistEntries.createdAt, start), lt(s.waitlistEntries.createdAt, end)));
 
   const covers = seatings.reduce((a, x) => a + x.partySize, 0);
   const closed = seatings.filter((x) => x.actualEndAt);
@@ -44,9 +42,6 @@ async function statsFor(rid: string, date: string) {
     if (late > 0) { lateSum += late; lateN++; }
   }
   const walkIns = seatings.filter((x) => !x.reservationId);
-  const seatedFromWait = wait.filter((x) => x.seatedAt);
-  const avgWait = seatedFromWait.length
-    ? Math.round(seatedFromWait.reduce((a, x) => a + (x.seatedAt!.getTime() - x.createdAt.getTime()) / 60000, 0) / seatedFromWait.length) : 0;
 
   return {
     date, covers, seatings: seatings.length, avgStay, tablesTurned: closed.length,
@@ -57,7 +52,6 @@ async function statsFor(rid: string, date: string) {
     avgLate: lateN ? Math.round(lateSum / lateN) : 0,
     walkIns: walkIns.length, walkInCovers: walkIns.reduce((a, x) => a + x.partySize, 0),
     bookedCovers: arrived.reduce((a, r) => a + (r.partySizeActual ?? r.partySize), 0),
-    avgWait, waitLeft: wait.filter((x) => x.status === "andato_via").length,
     cancelled: reservations.filter((r) => r.status === "cancellata").length,
   };
 }
@@ -74,14 +68,14 @@ export async function GET(req: Request) {
     const iso = dt.toISOString().slice(0, 10);
     week.push(await statsFor(rid, iso));
   }
-  const avg = (k: "covers" | "seatings" | "noShows" | "walkIns" | "avgWait") =>
+  const avg = (k: "covers" | "seatings" | "noShows" | "walkIns") =>
     week.length ? Math.round(week.reduce((a, w) => a + w[k], 0) / week.length) : 0;
   const summary = { ...today, weekAvg: { covers: avg("covers"), seatings: avg("seatings"), noShows: avg("noShows"), walkIns: avg("walkIns") } };
 
   if (url.searchParams.get("csv")) {
-    const head = "giorno,coperti,girature,permanenza_media_min,prenotati,arrivati,no_show,no_show_pct,coperti_persi_no_show,ritardo_medio_min,walk_in,attesa_media_min,andati_via,cancellate";
+    const head = "giorno,coperti,girature,permanenza_media_min,prenotati,arrivati,no_show,no_show_pct,coperti_persi_no_show,ritardo_medio_min,walk_in,cancellate";
     const all = [today, ...week];
-    const rows = all.map((w: any) => [w.date, w.covers, w.tablesTurned, w.avgStay, w.booked, w.arrived, w.noShows, w.noShowPct, w.coversLost, w.avgLate, w.walkIns, w.avgWait, w.waitLeft, w.cancelled].join(","));
+    const rows = all.map((w: any) => [w.date, w.covers, w.tablesTurned, w.avgStay, w.booked, w.arrived, w.noShows, w.noShowPct, w.coversLost, w.avgLate, w.walkIns, w.cancelled].join(","));
     return new Response([head, ...rows].join("\n"), {
       headers: { "Content-Type": "text/csv; charset=utf-8", "Content-Disposition": `attachment; filename="riepilogo-${date}.csv"` },
     });
