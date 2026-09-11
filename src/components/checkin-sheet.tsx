@@ -9,7 +9,7 @@ import { useBootstrap, useDay, useNow } from "@/lib/hooks";
 import { useSession } from "@/store/session";
 import { computeTableStatuses } from "@/lib/estimates";
 import { nowMin, toMin, todayISO } from "@/lib/time";
-import { Btn, Sheet, Chip } from "@/components/ui";
+import { Btn, Sheet } from "@/components/ui";
 import { scheduleUndo } from "@/components/toast";
 import { PartyGrid, SuggestedTables, useSeat } from "@/components/seat-flow";
 import type { Reservation } from "@/lib/types";

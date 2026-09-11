@@ -1,7 +1,7 @@
 {
   "name": "Coperto · Gestione sala",
   "short_name": "Coperto",
-  "description": "Tavoli in tempo reale, prenotazioni, walk-in e lista d'attesa.",
+  "description": "Tavoli in tempo reale, prenotazioni telefoniche e walk-in.",
   "start_url": "/sala",
   "display": "standalone",
   "orientation": "any",

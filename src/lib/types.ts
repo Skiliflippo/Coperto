@@ -21,7 +21,7 @@ export type TableT = {
   id: string; roomId: string; label: string; capacity: number; minCapacity: number;
   maxCapacity: number;   // con sedie aggiunte (>= capacity)
   x: number; y: number; width: number; height: number; rotation: number; shape: TableShape;
-  state: "libero" | "da_pulire" | "fuori_servizio"; note: string;
+  state: "libero" | "fuori_servizio"; note: string;
 };
 export type Combo = { id: string; roomId: string; label: string; capacity: number; tableIds: string[] };
 export type Period = { id: string; name: string; startTime: string; endTime: string; sortOrder: number };
@@ -40,17 +40,12 @@ export type Reservation = {
   createdBy: string; createdAt: string; customerId: string | null;
 };
 export type Seating = {
-  id: string; reservationId: string | null; waitlistId: string | null;
+  id: string; reservationId: string | null;
   tableIds: string[]; tableLabel: string; name: string; partySize: number; note: string;
   billRequested: boolean; status: "seduto" | "chiuso";
   seatedAt: string; expectedEndAt: string; actualEndAt: string | null; createdBy: string;
 };
-export type WaitEntry = {
-  id: string; name: string; partySize: number; phone: string; roomPreference: string;
-  notes: string; status: "in_attesa" | "avvisato" | "seduto" | "andato_via";
-  quotedMinutes: number | null; linkedReservationId: string | null; createdAt: string;
-};
-export type DayData = { date: string; reservations: Reservation[]; seatings: Seating[]; waitlist: WaitEntry[] };
+export type DayData = { date: string; reservations: Reservation[]; seatings: Seating[] };
 
 // Stato derivato del tavolo. Solo quello che si capisce guardando la sala:
 // niente "da pulire" / "si libera" da aggiornare a mano nel pieno del servizio.

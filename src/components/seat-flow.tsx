@@ -9,9 +9,9 @@ import { useBootstrap, useDay, useNow } from "@/lib/hooks";
 import { useSession } from "@/store/session";
 import { availableTargets, computeTableStatuses, durationFor, periodFor } from "@/lib/estimates";
 import { findJoinProposals } from "@/lib/join";
-import { toMin, todayISO, nowMin } from "@/lib/time";
+import { todayISO, nowMin } from "@/lib/time";
 import { toast } from "@/components/toast";
-import { Btn, Sheet } from "@/components/ui";
+import { Sheet } from "@/components/ui";
 
 // Griglia coperti 1–8 + 9+
 export function PartyGrid({ value, onChange }: { value: number; onChange: (v: number) => void }) {
@@ -46,7 +46,7 @@ export function useSeat() {
   const me = useSession((s) => s.staff?.name) ?? "";
   const boot = useBootstrap();
   const qc = useQueryClient();
-  return async (v: { tableIds: string[]; tableLabel: string; partySize: number; name?: string; reservationId?: string; waitlistId?: string; note?: string }) => {
+  return async (v: { tableIds: string[]; tableLabel: string; partySize: number; name?: string; reservationId?: string; note?: string }) => {
     const settings = boot.data!.settings;
     const period = periodFor(nowMin(), boot.data!.periods);
     const dur = durationFor(v.partySize, period?.name ?? null, settings);
@@ -168,7 +168,7 @@ export function SuggestedTables({ party, onPick, excludeIds = [], compact, forRe
 }
 
 // Sheet completo walk-in: quanti siete → tavolo → seduti
-export function WalkInSheet({ open, onClose, defaultName = "", waitlistId }: { open: boolean; onClose: () => void; defaultName?: string; waitlistId?: string }) {
+export function WalkInSheet({ open, onClose, defaultName = "" }: { open: boolean; onClose: () => void; defaultName?: string }) {
   const [party, setParty] = useState(2);
   const seat = useSeat();
   const [busy, setBusy] = useState(false);
@@ -180,7 +180,7 @@ export function WalkInSheet({ open, onClose, defaultName = "", waitlistId }: { o
         <SuggestedTables party={party} onPick={async (t) => {
           if (busy) return;
           setBusy(true);
-          const ok = await seat({ ...t, partySize: party, name: defaultName || "Walk-in", waitlistId });
+          const ok = await seat({ ...t, partySize: party, name: defaultName || "Walk-in" });
           setBusy(false);
           if (ok) { setParty(2); onClose(); }
         }} />

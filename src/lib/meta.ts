@@ -22,11 +22,4 @@ export const RES_STATUS: Record<ResStatus | "da_sistemare" | "sistemata" | "in_r
   confermata:   { label: "Confermata",   cls: "bg-busy/15 text-busy border-busy/40" },
 };
 
-export const WAIT_STATUS = {
-  in_attesa:  { label: "In attesa",  cls: "bg-soon/15 text-soon border-soon/40" },
-  avvisato:   { label: "Avvisato",   cls: "bg-busy/15 text-busy border-busy/40" },
-  seduto:     { label: "Seduto",     cls: "bg-ok/15 text-ok border-ok/40" },
-  andato_via: { label: "Andato via", cls: "bg-clean/15 text-clean border-clean/40" },
-} as const;
-
 export const fmtCovers = (n: number) => `${n} copert${n === 1 ? "o" : "i"}`;

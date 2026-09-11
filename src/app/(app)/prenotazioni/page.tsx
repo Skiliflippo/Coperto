@@ -16,7 +16,7 @@ import { MonthView } from "@/components/month-view";
 import { Piano, AssignSheet } from "@/components/piano";
 import { CheckInSheet } from "@/components/checkin-sheet";
 import { scheduleUndo } from "@/components/toast";
-import type { Reservation, ResStatus } from "@/lib/types";
+import type { Reservation } from "@/lib/types";
 
 function statusOf(r: Reservation, isToday: boolean, lateThr: number): keyof typeof RES_STATUS {
   if (r.status !== "confermata") return r.status;
@@ -30,9 +30,6 @@ export default function PrenotazioniPage() {
 
 function Inner() {
   const boot = useBootstrap();
-  const me = useSession((s) => s.staff?.name) ?? "";
-  const rid = useSession((s) => s.staff?.restaurantId);
-  const qc = useQueryClient();
   const params = useSearchParams();
   const [date, setDate] = useState(params.get("date") ?? todayISO());
   const day = useDay(date);

@@ -1,5 +1,5 @@
 "use client";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "./api";
 import { useSession } from "@/store/session";
@@ -52,7 +52,6 @@ export function useRealtime(): "online" | "offline" | "connecting" {
   const myName = useSession((s) => s.staff?.name);
   const qc = useQueryClient();
   const [status, setStatus] = useState<"online" | "offline" | "connecting">("connecting");
-  const bcRef = useRef<BroadcastChannel | null>(null);
 
   useEffect(() => {
     if (!rid) return;
@@ -85,7 +84,6 @@ export function useRealtime(): "online" | "offline" | "connecting" {
       closed = true; es?.close();
       window.removeEventListener("offline", onOff);
       window.removeEventListener("online", onOff);
-      bcRef.current?.close();
     };
   }, [rid, myName, qc]);
   return status;

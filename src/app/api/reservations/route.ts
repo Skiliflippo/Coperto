@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { db } from "@/db";
 import * as s from "@/db/schema";
-import { and, eq, or, ilike } from "drizzle-orm";
+import { and, eq, or } from "drizzle-orm";
 import { broadcast } from "@/server/hub";
 import { logActivity } from "@/server/data";
 export const dynamic = "force-dynamic";

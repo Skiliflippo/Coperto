@@ -110,8 +110,7 @@ export async function getDayData(restaurantId: string, date: string): Promise<Da
       ...map(x), id: x.id, seatedAt: x.seatedAt.toISOString(),
       expectedEndAt: x.expectedEndAt.toISOString(), actualEndAt: x.actualEndAt?.toISOString() ?? null,
     })),
-    waitlist: [],   // la fila sta davanti alla porta, non nell'app
-  } as unknown as DayData;
+  } as DayData;
 }
 
 export async function logActivity(restaurantId: string, staffName: string, action: string, message: string) {

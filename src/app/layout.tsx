@@ -8,7 +8,7 @@ const fraunces = Fraunces({ subsets: ["latin"], variable: "--font-fraunces", wei
 
 export const metadata: Metadata = {
   title: "Coperto · Gestione sala e prenotazioni",
-  description: "Tavoli in tempo reale, prenotazioni telefoniche, walk-in e lista d'attesa. Veloce come la carta.",
+  description: "Tavoli in tempo reale, prenotazioni telefoniche e walk-in. Veloce come la carta.",
   manifest: "/manifest.webmanifest",
   appleWebApp: { capable: true, statusBarStyle: "black-translucent", title: "Coperto" },
 };

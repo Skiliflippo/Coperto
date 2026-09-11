@@ -12,7 +12,7 @@ export function useViewport(roomW: number, roomH: number, opts?: { padding?: num
   const ref = useRef<HTMLDivElement>(null);
   const [vp, setVp] = useState<Viewport>({ zoom: 0.4, panX: 0, panY: 0 });
   const vpRef = useRef(vp);
-  vpRef.current = vp;
+  useEffect(() => { vpRef.current = vp; }, [vp]);
   const pointers = useRef(new Map<number, { x: number; y: number }>());
   const pinch = useRef<{ dist: number } | null>(null);
   const panning = useRef<{ x: number; y: number; panX: number; panY: number } | null>(null);

@@ -3,7 +3,6 @@
 // la UI mostra subito lo stato come fatto (pending), Annulla ferma tutto. Niente popup.
 import { create } from "zustand";
 import { CheckCircle2, Info, TriangleAlert, X } from "lucide-react";
-import { useEffect, useRef } from "react";
 
 type Tone = "info" | "ok" | "warn" | "err";
 export type ToastItem = {

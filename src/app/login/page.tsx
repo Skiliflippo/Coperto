@@ -28,14 +28,31 @@ export default function LoginPage() {
       .catch(() => setErr("Server non raggiungibile. Riprova tra poco."));
   }, []);
 
-  useEffect(() => {
-    if (pin.length !== 4 || !sel) return;
+  const submitPin = async (completePin: string) => {
+    if (!sel || completePin.length !== 4 || busy) return;
     setBusy(true);
-    api<StaffSession>("/api/login", { method: "POST", body: { staffId: sel.id, pin } })
-      .then((s) => { setStaff(s); router.replace("/sala"); })
-      .catch((e: ApiError) => { setErr(e.message); setPin(""); })
-      .finally(() => setBusy(false));
-  }, [pin, sel, router, setStaff]);
+    try {
+      const session = await api<StaffSession>("/api/login", {
+        method: "POST",
+        body: { staffId: sel.id, pin: completePin },
+      });
+      setStaff(session);
+      router.replace("/sala");
+    } catch (error: unknown) {
+      setErr(error instanceof ApiError ? error.message : "Accesso non riuscito");
+      setPin("");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const addDigit = (digit: string) => {
+    if (pin.length >= 4 || busy) return;
+    setErr("");
+    const nextPin = pin + digit;
+    setPin(nextPin);
+    if (nextPin.length === 4) void submitPin(nextPin);
+  };
 
   return (
     <div className="mx-auto flex min-h-dvh max-w-md flex-col px-6 pb-[env(safe-area-inset-bottom)] pt-[max(env(safe-area-inset-top),2rem)]">
@@ -90,7 +107,7 @@ export default function LoginPage() {
                   <Delete className="h-7 w-7" />
                 </button>
               ) : (
-                <button key={i} disabled={busy} onClick={() => { setErr(""); setPin((p) => (p.length < 4 ? p + k : p)); }}
+                <button key={i} disabled={busy} onClick={() => addDigit(k)}
                   className="h-[72px] rounded-3xl bg-surface text-3xl font-bold shadow-sm ring-1 ring-line active:scale-95 active:bg-raised">
                   {k}
                 </button>

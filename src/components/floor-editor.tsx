@@ -9,7 +9,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import {
-  Check, CircleDot, Minus, MousePointer2, Plus, RectangleHorizontal, Redo2, RotateCw,
+  Check, CircleDot, MousePointer2, RectangleHorizontal, Redo2, RotateCw,
   Square, Trash2, Undo2, Wallpaper, X, ZoomIn, ZoomOut, Blocks, Spline, Maximize2,
 } from "lucide-react";
 import { api } from "@/lib/api";
@@ -18,9 +18,9 @@ import { toast } from "@/components/toast";
 import { useViewport } from "@/lib/use-viewport";
 import {
   DECOR_PRESETS, aabb, blockedSides, boxInsideRoom, boxesOverlap, clamp, clampPointToRoom,
-  elementBox, iconFromLabel, normalizeLayout, polygonOf, rectInsideRoom, rectPolygon,
+  elementBox, iconFromLabel, normalizeLayout, polygonOf, rectPolygon,
   snapBoxToWalls, snapTo, suggestShape, tableGeometry, uid,
-  type Box, type DecorIcon, type FloorElement, type Point, type RoomLayout, type TableShape,
+  type Box, type DecorIcon, type FloorElement, type RoomLayout, type TableShape,
 } from "@/lib/floor";
 import { ElementNode, GridBackdrop, RoomShell, TableNode, type TableNodeData } from "@/components/floor-shapes";
 import type { Bootstrap, Room, TableT } from "@/lib/types";

@@ -2,7 +2,7 @@
 // IL PIANO — la timeline che uccide la lista cartacea.
 // Asse verticale = tempo (slot configurabili), colonne = tavoli + accorpamenti.
 // Drag & drop, conflitti evidenziati, Auto-sistema con motivazioni spiegate.
-import { useMemo, useRef, useState } from "react";
+import { useRef, useState } from "react";
 import { DndContext, DragOverlay, PointerSensor, useDraggable, useDroppable, useSensor, useSensors, type DragEndEvent, type DragStartEvent } from "@dnd-kit/core";
 import { useQueryClient } from "@tanstack/react-query";
 import { Check, ListPlus, Printer, Zap } from "lucide-react";
@@ -10,7 +10,7 @@ import { api } from "@/lib/api";
 import { useBootstrap, useNow } from "@/lib/hooks";
 import { useSession } from "@/store/session";
 import { durationFor, freeTargetsAt, periodFor } from "@/lib/estimates";
-import { overlaps, toHHMM, toMin, todayISO, nowMin } from "@/lib/time";
+import { overlaps, toHHMM, toMin, todayISO } from "@/lib/time";
 import { Btn, Sheet } from "@/components/ui";
 import { toast } from "@/components/toast";
 import type { AssignPlan } from "@/lib/autoassign";
@@ -32,7 +32,7 @@ export function Piano({ date, day, onTap }: { date: string; day: DayData; onTap:
   const [plan, setPlan] = useState<AssignPlan | null>(null);
   const [planOpen, setPlanOpen] = useState(false);
   const [planBusy, setPlanBusy] = useState(false);
-  const justDragged = useRef(0);
+  const justDragged = useRef(false);
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 8 } }));
 
   if (!boot.data) return <div className="skeleton mt-3 h-72 rounded-3xl" />;
@@ -103,7 +103,8 @@ export function Piano({ date, day, onTap }: { date: string; day: DayData; onTap:
 
   const onDragStart = (e: DragStartEvent) => setDragRes(e.active.data.current?.res ?? null);
   const onDragEnd = (e: DragEndEvent) => {
-    justDragged.current = Date.now();
+    justDragged.current = true;
+    queueMicrotask(() => { justDragged.current = false; });
     setDragRes(null);
     const res = e.active.data.current?.res as Reservation | undefined;
     if (!res || !e.over) return;
@@ -178,7 +179,7 @@ export function Piano({ date, day, onTap }: { date: string; day: DayData; onTap:
         <Rail count={unassigned.length}>
           {unassigned.map((r) => (
             <RailChip key={r.id} res={r} lateMin={isToday ? nMin - toMin(r.time) : 0} lateThr={settings.lateThresholdMinutes}
-              onTap={() => { if (Date.now() - justDragged.current > 200) setAssignRes(r); }} />
+              onTap={() => { if (!justDragged.current) setAssignRes(r); }} />
           ))}
           {!unassigned.length && <p className="px-2 py-3 text-sm font-semibold text-ok">Tutto sistemato per il {period.name.toLowerCase()}.</p>}
         </Rail>
@@ -215,7 +216,7 @@ export function Piano({ date, day, onTap }: { date: string; day: DayData; onTap:
                             conflict={conflicts.has(r.id)}
                             late={isToday && r.status === "confermata" && nMin - toMin(r.time) > settings.lateThresholdMinutes}
                             seated={r.status === "seduta"}
-                            onTap={() => { if (Date.now() - justDragged.current > 200) onTap(r); }} />
+                            onTap={() => { if (!justDragged.current) onTap(r); }} />
                         ))}
                       </Column>
                     );
@@ -240,7 +241,7 @@ export function Piano({ date, day, onTap }: { date: string; day: DayData; onTap:
         {planBusy && !plan && <div className="skeleton h-40 rounded-2xl" />}
         {plan && (
           <div className="grid gap-2.5">
-            <p className="text-sm font-semibold text-muted">L'algoritmo propone, tu decidi. Gruppi grandi nei tavoli grandi, {settings.bufferMinutes}′ di riassetto tra un turno e l'altro.</p>
+            <p className="text-sm font-semibold text-muted">L&apos;algoritmo propone, tu decidi. Gruppi grandi nei tavoli grandi, {settings.bufferMinutes}′ di riassetto tra un turno e l&apos;altro.</p>
             {plan.proposals.map((p) => (
               <div key={p.reservationId} className="flex items-start gap-3 rounded-2xl border border-ok/40 bg-ok/10 p-3">
                 <Check className="mt-0.5 h-5 w-5 shrink-0 text-ok" />
@@ -263,7 +264,7 @@ export function Piano({ date, day, onTap }: { date: string; day: DayData; onTap:
             {plan.proposals.length > 0 && (
               <Btn size="xl" disabled={planBusy} onClick={applyPlan}><Check className="h-6 w-6" /> Applico {plan.proposals.length} assegnazioni?</Btn>
             )}
-            <Btn variant="ghost" onClick={() => { setPlanOpen(false); setPlan(null); }}>No, lascio com'è</Btn>
+            <Btn variant="ghost" onClick={() => { setPlanOpen(false); setPlan(null); }}>No, lascio com&apos;è</Btn>
           </div>
         )}
       </Sheet>
@@ -384,7 +385,7 @@ export function AssignSheet({ res, date, onClose }: { res: Reservation | null; d
         </div>
       ) : (
         <p className="rounded-2xl border border-soon/50 bg-soon/10 p-4 text-center font-semibold text-soon">
-          Nessun tavolo libero per {res.partySize} persone alle {res.time}. Sposta l'orario o valuta un accorpamento già occupato.
+          Nessun tavolo libero per {res.partySize} persone alle {res.time}. Sposta l&apos;orario o valuta un accorpamento già occupato.
         </p>
       )}
     </Sheet>

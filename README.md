@@ -1,7 +1,7 @@
 # Coperto · Gestione sala e prenotazioni
 
 App per la sala di un ristorante ad alta affluenza: tavoli in tempo reale, prenotazioni
-telefoniche, walk-in e lista d'attesa. Veloce come la carta, pensata per mani occupate.
+telefoniche e walk-in. Veloce come la carta, pensata per mani occupate.
 
 ## Avvio rapido (3 comandi dopo il clone)
 
@@ -43,8 +43,7 @@ npx drizzle-kit push   # solo se lo schema è cambiato
 │   │   │   ├── layout.tsx     #   shell: guardia PIN, realtime, tema
 │   │   │   ├── sala/          #   VISTA SALA: tavoli live, walk-in, check-in
 │   │   │   ├── prenotazioni/  #   elenco + Piano (timeline drag&drop, auto-sistema)
-│   │   │   ├── attesa/        #   lista d'attesa con stime
-│   │   │   └── altro/         #   riepilogo servizio + impostazioni
+│   │   │   └── altro/         #   riepilogo, personale e impostazioni
 │   │   ├── api/               # route handlers REST + SSE (/api/events)
 │   │   ├── login/             # accesso PIN
 │   │   ├── layout.tsx · globals.css · providers.tsx

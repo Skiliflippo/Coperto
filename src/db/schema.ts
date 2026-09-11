@@ -4,7 +4,7 @@
 // Prenotazione = intenzione · Seating (occupazione) = realtà in sala.
 // ─────────────────────────────────────────────────────────────────────────────
 import {
-  pgTable, uuid, text, integer, boolean, timestamp, jsonb, index, uniqueIndex,
+  pgTable, uuid, text, integer, boolean, timestamp, jsonb, index,
 } from "drizzle-orm/pg-core";
 
 export const restaurants = pgTable("restaurants", {
@@ -114,7 +114,7 @@ export const tables = pgTable("tables", {
   rotation: integer("rotation").notNull().default(0),        // gradi
   shape: text("shape").notNull().default("square"),          // round | square | rect
   archived: boolean("archived").notNull().default(false),    // tavolo rimosso dalla mappa (storico intatto)
-  state: text("state").notNull().default("libero"), // libero | da_pulire | fuori_servizio
+  state: text("state").notNull().default("libero"), // libero | fuori_servizio
   note: text("note").notNull().default(""),         // nota veloce ("compleanno", "allergia")
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 }, (t) => [index("tables_restaurant_idx").on(t.restaurantId), index("tables_room_idx").on(t.roomId)]);
@@ -168,7 +168,6 @@ export const seatings = pgTable("seatings", {
   id: uuid("id").defaultRandom().primaryKey(),
   restaurantId: uuid("restaurant_id").notNull().references(() => restaurants.id, { onDelete: "cascade" }),
   reservationId: uuid("reservation_id").references(() => reservations.id, { onDelete: "set null" }),
-  waitlistId: uuid("waitlist_id"),
   tableIds: jsonb("table_ids").notNull().$type<string[]>(), // >1 se accorpato
   tableLabel: text("table_label").notNull(),
   name: text("name").notNull().default(""),   // nome prenotazione o "Walk-in"
@@ -182,23 +181,6 @@ export const seatings = pgTable("seatings", {
   createdBy: text("created_by").notNull().default(""),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 }, (t) => [index("seatings_restaurant_status_idx").on(t.restaurantId, t.status)]);
-
-export const waitlistEntries = pgTable("waitlist_entries", {
-  id: uuid("id").defaultRandom().primaryKey(),
-  restaurantId: uuid("restaurant_id").notNull().references(() => restaurants.id, { onDelete: "cascade" }),
-  name: text("name").notNull(),
-  partySize: integer("party_size").notNull(),
-  phone: text("phone").notNull().default(""),
-  roomPreference: text("room_preference").notNull().default(""), // "Dehors" ecc.
-  notes: text("notes").notNull().default(""),
-  status: text("status").notNull().default("in_attesa"), // in_attesa | avvisato | seduto | andato_via
-  quotedMinutes: integer("quoted_minutes"),   // attesa comunicata al cliente
-  linkedReservationId: uuid("linked_reservation_id").references(() => reservations.id, { onDelete: "set null" }),
-  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
-  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
-  seatedAt: timestamp("seated_at", { withTimezone: true }), // per attesa media reale
-  notifiedAt: timestamp("notified_at", { withTimezone: true }),
-}, (t) => [index("waitlist_restaurant_status_idx").on(t.restaurantId, t.status)]);
 
 // Chi ha fatto cosa: fine alle "non ero stato io"
 export const activityLog = pgTable("activity_log", {

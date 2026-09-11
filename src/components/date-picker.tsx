@@ -29,7 +29,11 @@ export function DayNav({ date, onChange, counts }: {
   const today = todayISO();
   const [cursor, setCursor] = useState(() => new Date(date + "T12:00:00"));
 
-  useEffect(() => { if (open) setCursor(new Date(date + "T12:00:00")); }, [open, date]);
+  const toggleCalendar = () => {
+    if (!open) setCursor(new Date(date + "T12:00:00"));
+    setOpen(!open);
+  };
+
   useEffect(() => {
     if (!open) return;
     const h = (e: MouseEvent) => { if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false); };
@@ -47,7 +51,7 @@ export function DayNav({ date, onChange, counts }: {
         <button onClick={() => onChange(addDays(date, -1))} aria-label="Giorno prima"
           className="grid h-12 w-12 shrink-0 place-items-center rounded-2xl bg-raised active:scale-95"><ChevronLeft className="h-5 w-5" /></button>
 
-        <button onClick={() => setOpen((v) => !v)}
+        <button onClick={toggleCalendar}
           className={`flex min-w-0 flex-1 items-center justify-center gap-2 rounded-2xl border bg-surface px-3 py-2 active:scale-[0.98] ${open ? "border-brand" : "border-line"}`}>
           <CalendarDays className="h-4 w-4 shrink-0 text-muted" />
           <span className="min-w-0">

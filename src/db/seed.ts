@@ -35,7 +35,7 @@ async function main() {
   const existing = await db.select().from(s.restaurants).where(eq(s.restaurants.slug, "osteria-del-vicolo"));
   if (existing[0]) {
     const rid = existing[0].id;
-    for (const t of [s.activityLog, s.waitlistEntries, s.seatings, s.reservations, s.customers,
+    for (const t of [s.activityLog, s.seatings, s.reservations, s.customers,
       s.tableCombinations, s.tables, s.rooms, s.servicePeriods, s.staff,
       s.restaurantFeatures, s.restaurantSettings] as const) {
       await db.delete(t).where(eq((t as any).restaurantId, rid));
@@ -124,8 +124,10 @@ async function main() {
   const combos = [c12, c16];
 
   // TURNI
-  const [pranzo] = await db.insert(s.servicePeriods).values({ restaurantId: rid, name: "Pranzo", startTime: "12:00", endTime: "15:00", sortOrder: 0 }).returning();
-  const [cena] = await db.insert(s.servicePeriods).values({ restaurantId: rid, name: "Cena", startTime: "19:00", endTime: "23:30", sortOrder: 1 }).returning();
+  await db.insert(s.servicePeriods).values([
+    { restaurantId: rid, name: "Pranzo", startTime: "12:00", endTime: "15:00", sortOrder: 0 },
+    { restaurantId: rid, name: "Cena", startTime: "19:00", endTime: "23:30", sortOrder: 1 },
+  ]);
 
   // STAFF
   await db.insert(s.staff).values([

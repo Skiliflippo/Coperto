@@ -46,8 +46,6 @@ export function TableSheet({ table, onClose }: { table: TableT | null; onClose: 
     await Promise.all([qc.invalidateQueries({ queryKey: ["day", rid] }), qc.invalidateQueries({ queryKey: ["bootstrap", rid] })]);
   };
 
-  const expected = seating ? new Date(seating.expectedEndAt) : null;
-
   return (
     <Sheet open={!!table} onClose={() => { setMode("main"); onClose(); }}
       title={
@@ -74,7 +72,7 @@ export function TableSheet({ table, onClose }: { table: TableT | null; onClose: 
               </div>
               <p className="mt-1 flex items-center gap-1.5 text-sm font-semibold text-muted">
                 <Timer className="h-4 w-4" /> Seduti da {status.minutesSeated} min
-                {state === "oltre_tempo" && <span className="font-bold text-over">· oltre l'ora</span>}
+                {state === "oltre_tempo" && <span className="font-bold text-over">· oltre l&apos;ora</span>}
               </p>
               {seating.note && <p className="mt-1 text-sm text-muted">Nota: {seating.note}</p>}
             </div>

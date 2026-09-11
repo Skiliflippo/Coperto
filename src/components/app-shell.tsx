@@ -1,6 +1,6 @@
 "use client";
 // Guscio dell'app: guardia PIN, tema, realtime, tab bar, indicatori connessione.
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, type ReactNode } from "react";
 import { usePathname, useRouter } from "next/navigation";
 import Link from "next/link";
 import { Armchair, CalendarRange, Ellipsis, Wifi, WifiOff, RefreshCw } from "lucide-react";
@@ -11,7 +11,6 @@ import { useBootstrap } from "@/lib/hooks";
 import { Onboarding } from "@/components/onboarding";
 import { Toaster } from "@/components/toast";
 
-// Tre voci: chi è in attesa sta in fila davanti alla porta, non nell'app.
 const TABS = [
   { href: "/sala", label: "Sala", icon: Armchair },
   { href: "/prenotazioni", label: "Prenotazioni", icon: CalendarRange },
@@ -23,11 +22,9 @@ function Shell({ children }: { children: ReactNode }) {
   const theme = useSession((s) => s.theme);
   const router = useRouter();
   const path = usePathname();
-  const [hydrated, setHydrated] = useState(false);
+  const hydrated = useSession((state) => state.hydrated);
   const conn = useRealtime();
   const boot = useBootstrap();
-
-  useEffect(() => setHydrated(true), []);
   useEffect(() => {
     document.documentElement.classList.toggle("dark", theme === "dark");
   }, [theme]);

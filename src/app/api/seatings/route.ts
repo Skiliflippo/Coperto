@@ -10,7 +10,7 @@ export const dynamic = "force-dynamic";
 export async function POST(req: Request) {
   const b = await req.json();
   const { restaurantId, tableIds, tableLabel, partySize, name = "", note = "",
-    reservationId, waitlistId, expectedEndAt, createdBy = "" } = b;
+    reservationId, expectedEndAt, createdBy = "" } = b;
   if (!restaurantId || !tableIds?.length || !partySize || !expectedEndAt) {
     return NextResponse.json({ error: "Campi mancanti" }, { status: 400 });
   }
@@ -22,24 +22,23 @@ export async function POST(req: Request) {
     return NextResponse.json({ conflict: true, occupiedBy: clash.createdBy || "un collega", tableLabel: clash.tableLabel },
       { status: 409 });
   }
-  // i tavoli devono essere "liberi" (non fuori servizio / non da pulire)
+  // i tavoli devono essere in servizio; l'occupazione è già protetta dal controllo sopra
   const tRows = await db.select().from(s.tables).where(inArray(s.tables.id, tableIds));
   const blocked = tRows.find((t) => t.state !== "libero");
   if (blocked) {
-    return NextResponse.json({ conflict: true, occupiedBy: blocked.state === "da_pulire" ? "in pulizia" : "fuori servizio", tableLabel: blocked.label }, { status: 409 });
+    return NextResponse.json(
+      { conflict: true, occupiedBy: "fuori servizio", tableLabel: blocked.label },
+      { status: 409 },
+    );
   }
   const [row] = await db.insert(s.seatings).values({
-    restaurantId, reservationId: reservationId ?? null, waitlistId: waitlistId ?? null,
+    restaurantId, reservationId: reservationId ?? null,
     tableIds, tableLabel, partySize, name, note, expectedEndAt: new Date(expectedEndAt), createdBy,
   }).returning();
   if (reservationId) {
     await db.update(s.reservations)
       .set({ status: "seduta", partySizeActual: partySize, assignedTableId: tRows.length === 1 ? tRows[0].id : null, updatedAt: new Date() })
       .where(eq(s.reservations.id, reservationId));
-  }
-  if (waitlistId) {
-    await db.update(s.waitlistEntries).set({ status: "seduto", seatedAt: new Date(), updatedAt: new Date() })
-      .where(eq(s.waitlistEntries.id, waitlistId));
   }
   // contatore visite cliente (fedeltà implicita)
   if (reservationId) {

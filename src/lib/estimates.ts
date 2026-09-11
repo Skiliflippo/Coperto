@@ -1,5 +1,5 @@
-// Stime di sala: durata occupazione, stato derivato tavolo, suggerimenti walk-in,
-// stima attesa. Funzioni pure → testabili e usate sia dal client che dagli endpoint.
+// Motore di sala: durate, stati live, disponibilità immediata e futura.
+// Funzioni pure, testabili, condivise fra mappa, walk-in e Piano.
 import type { Combo, Period, Seating, Settings, TableT, TableLiveState } from "./types";
 import { toMin } from "./time";
 
@@ -128,6 +128,7 @@ export function availableTargets(args: {
   return { free, nextFreeMin, nextFreeLabel };
 }
 
+// Disponibilità futura e carico del Piano.
 // Sovraccarico coperti per fascia oraria (warning overbooking sul Piano)
 // Tavoli/accorpamenti liberi in una fascia futura [time, time+durata+buffer):
 // serve al Piano e al form prenotazioni, dove non conta "adesso" ma un orario preciso.

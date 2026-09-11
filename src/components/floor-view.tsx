@@ -7,7 +7,7 @@ import { Maximize2, Pencil, ZoomIn, ZoomOut } from "lucide-react";
 import { useSession } from "@/store/session";
 import { useViewport } from "@/lib/use-viewport";
 import { normalizeLayout } from "@/lib/floor";
-import { LEGEND_STATES, TABLE_STATE } from "@/lib/meta";
+import { TABLE_STATE } from "@/lib/meta";
 import { GridBackdrop, RoomShell, TableNode, ElementNode, JoinedNode } from "@/components/floor-shapes";
 import { FloorEditor } from "@/components/floor-editor";
 import { RoomTabs, useActiveRoom } from "@/components/room-tabs";
@@ -117,6 +117,10 @@ export function FloorView({ boot, statuses, onPick, viewToggle, counts }: {
                 onPointerUp={(e) => endTap(e, seating.id, group[0])} />
             );
           })}
+        </div>
+
+        <div className="pointer-events-none absolute inset-x-2 top-2">
+          <StatusBar counts={counts} floating />
         </div>
 
         <div className="absolute bottom-3 right-3 flex flex-col gap-1.5">

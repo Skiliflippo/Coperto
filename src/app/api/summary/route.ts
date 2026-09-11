@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { db } from "@/db";
 import * as s from "@/db/schema";
-import { and, eq, gte, lt, ne } from "drizzle-orm";
+import { and, eq, gte, lt } from "drizzle-orm";
 export const dynamic = "force-dynamic";
 
 // Finestra del giorno di servizio nel fuso del locale (00:00 → 04:00 del giorno dopo)

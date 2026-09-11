@@ -3,13 +3,13 @@
 // Ordine dei campi = ordine in cui arrivano dalla telefonata.
 import { useMemo, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { Calendar, Check, Phone, TriangleAlert, Zap } from "lucide-react";
+import { Calendar, Check, TriangleAlert, Zap } from "lucide-react";
 import { api, ApiError } from "@/lib/api";
 import { useBootstrap } from "@/lib/hooks";
 import { useSession } from "@/store/session";
 import { nowMin, toHHMM, toMin, todayISO, relDay } from "@/lib/time";
 import { durationFor, freeTargetsAt, periodFor } from "@/lib/estimates";
-import { Btn, Chip, Field, Input, Sheet } from "@/components/ui";
+import { Btn, Field, Input, Sheet } from "@/components/ui";
 import { PartyGrid } from "@/components/seat-flow";
 import { toast } from "@/components/toast";
 import type { DayData } from "@/lib/types";
