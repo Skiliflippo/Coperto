@@ -3,7 +3,7 @@
 import { Suspense, useMemo, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import { useQueryClient } from "@tanstack/react-query";
-import { CalendarDays, ListTodo, Phone, Plus, Rows3, LayoutGrid, UserX, Trash2, Armchair, Clock } from "lucide-react";
+import { CalendarDays, ListTodo, Phone, Plus, Rows3, LayoutGrid, UserX, Trash2, Armchair, Clock, Pencil } from "lucide-react";
 import { useBootstrap, useDay } from "@/lib/hooks";
 import { useSession } from "@/store/session";
 import { api } from "@/lib/api";
@@ -15,7 +15,7 @@ import { DayNav } from "@/components/date-picker";
 import { MonthView } from "@/components/month-view";
 import { Piano, AssignSheet } from "@/components/piano";
 import { CheckInSheet } from "@/components/checkin-sheet";
-import { scheduleUndo } from "@/components/toast";
+import { runWithUndo } from "@/components/toast";
 import type { Reservation } from "@/lib/types";
 
 function statusOf(r: Reservation, isToday: boolean, lateThr: number): keyof typeof RES_STATUS {
@@ -38,6 +38,7 @@ function Inner() {
   const [sel, setSel] = useState<Reservation | null>(null);
   const [assign, setAssign] = useState<Reservation | null>(null);
   const [checkin, setCheckin] = useState<Reservation | null>(null);
+  const [editRes, setEditRes] = useState<Reservation | null>(null);
 
   const isToday = date === todayISO();
   const isPast = date < todayISO();
@@ -56,7 +57,12 @@ function Inner() {
   const lateThr = boot.data.settings?.lateThresholdMinutes ?? 15;
 
   const tableLabel = (r: Reservation) => {
-    if (r.assignedTableId) return `Tav. ${boot.data.tables.find((t) => t.id === r.assignedTableId)?.label ?? "?"}`;
+    if (r.assignedTableId) {
+      const main = boot.data.tables.find((t) => t.id === r.assignedTableId)?.label ?? "?";
+      const extra = (r.joinedTableIds ?? [])
+        .map((id) => boot.data.tables.find((t) => t.id === id)?.label).filter(Boolean);
+      return extra.length ? `Tav. ${[main, ...extra].join("+")}` : `Tav. ${main}`;
+    }
     if (r.assignedComboId) return `Acc. ${boot.data.combos.find((c) => c.id === r.assignedComboId)?.label ?? "?"}`;
     return null;
   };
@@ -168,7 +174,11 @@ function Inner() {
       <ReservationFormSheet open={formOpen} onClose={() => setFormOpen(false)} defaultDate={date} />
       <ResSheet res={sel} date={date} onClose={() => setSel(null)}
         onAssign={(r) => { setSel(null); setAssign(r); }}
-        onCheckin={(r) => { setSel(null); setCheckin(r); }} />
+        onCheckin={(r) => { setSel(null); setCheckin(r); }}
+        onEdit={(r) => { setSel(null); setEditRes(r); }} />
+      {editRes && (
+        <ReservationFormSheet open onClose={() => setEditRes(null)} edit={editRes} />
+      )}
       <AssignSheet res={assign} date={date} onClose={() => setAssign(null)} />
       <CheckInSheet res={checkin} onClose={() => setCheckin(null)} />
     </div>
@@ -176,9 +186,10 @@ function Inner() {
 }
 
 // Dettaglio prenotazione: modifiche rapide + azioni di stato.
-function ResSheet({ res, date, onClose, onAssign, onCheckin }: {
+function ResSheet({ res, date, onClose, onAssign, onCheckin, onEdit }: {
   res: Reservation | null; date: string; onClose: () => void;
   onAssign: (r: Reservation) => void; onCheckin: (r: Reservation) => void;
+  onEdit: (r: Reservation) => void;
 }) {
   const boot = useBootstrap();
   const me = useSession((s) => s.staff?.name) ?? "";
@@ -188,13 +199,25 @@ function ResSheet({ res, date, onClose, onAssign, onCheckin }: {
   const isFuture = date > todayISO();
 
   if (!res || !boot.data) return null;
-  const tbl = res.assignedTableId ? boot.data.tables.find((t) => t.id === res.assignedTableId)?.label
+  const joinedLabels = (res.joinedTableIds ?? [])
+    .map((id) => boot.data!.tables.find((t) => t.id === id)?.label)
+    .filter(Boolean);
+  const tbl = res.assignedTableId
+    ? [boot.data.tables.find((t) => t.id === res.assignedTableId)?.label, ...joinedLabels].filter(Boolean).join("+")
     : res.assignedComboId ? `${boot.data.combos.find((c) => c.id === res.assignedComboId)?.label} (acc.)` : null;
 
   const patch = async (body: Record<string, unknown>) => {
     await api(`/api/reservations/${res.id}`, { method: "PATCH", body: { restaurantId: rid, staffName: me, ...body } });
     await qc.invalidateQueries({ queryKey: ["day", rid] });
     onClose();
+  };
+  // cambio di stato riutilizzabile: serve sia all'azione sia al suo annullamento
+  const setStatus = async (status: string) => {
+    await api(`/api/reservations/${res.id}`, {
+      method: "PATCH",
+      body: { restaurantId: rid, staffName: me, action: "status", status },
+    });
+    await qc.invalidateQueries({ queryKey: ["day", rid] });
   };
   const shift = (min: number) => {
     const [h, m] = res.time.split(":").map(Number);
@@ -216,6 +239,9 @@ function ResSheet({ res, date, onClose, onAssign, onCheckin }: {
               <Btn variant="soft" onClick={() => shift(15)}><Clock className="h-5 w-5" /> +15′</Btn>
               <Btn variant="soft" onClick={() => onAssign(res)}><Armchair className="h-5 w-5" /> Tavolo</Btn>
             </div>
+            <Btn variant="soft" onClick={() => onEdit(res)}>
+              <Pencil className="h-5 w-5" /> Modifica nome, giorno, ora, coperti
+            </Btn>
             {res.guestPhone && (
               <a href={`tel:${res.guestPhone.replace(/\s/g, "")}`} className="flex min-h-[56px] items-center justify-center gap-2 rounded-2xl bg-raised font-semibold active:scale-[0.97]">
                 <Phone className="h-5 w-5" /> Chiama {res.guestPhone}
@@ -231,16 +257,14 @@ function ResSheet({ res, date, onClose, onAssign, onCheckin }: {
         {res.status === "confermata" && !isFuture && (
           <div className="grid grid-cols-2 gap-2 pt-1">
             <Btn variant="danger" onClick={() => {
-              scheduleUndo(`noshow:${res.id}`, `${res.guestName} segnato no-show`, () =>
-                api(`/api/reservations/${res.id}`, { method: "PATCH", body: { restaurantId: rid, staffName: me, action: "status", status: "no_show" } })
-                  .then(() => qc.invalidateQueries({ queryKey: ["day", rid] })));
               onClose();
+              runWithUndo(`${res.guestName} segnato no-show`,
+                () => setStatus("no_show"), () => setStatus("confermata"));
             }}><UserX className="h-5 w-5" /> No-show</Btn>
             <Btn variant="danger" onClick={() => {
-              scheduleUndo(`canc:${res.id}`, `${res.guestName} cancellato`, () =>
-                api(`/api/reservations/${res.id}`, { method: "PATCH", body: { restaurantId: rid, staffName: me, action: "status", status: "cancellata" } })
-                  .then(() => qc.invalidateQueries({ queryKey: ["day", rid] })));
               onClose();
+              runWithUndo(`${res.guestName} cancellato`,
+                () => setStatus("cancellata"), () => setStatus("confermata"));
             }}><Trash2 className="h-5 w-5" /> Cancella</Btn>
           </div>
         )}

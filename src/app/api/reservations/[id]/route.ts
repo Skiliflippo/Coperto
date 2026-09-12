@@ -19,6 +19,7 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
   if (action === "assign") {
     patch.assignedTableId = f.tableId ?? null;
     patch.assignedComboId = f.comboId ?? null;
+    patch.joinedTableIds = Array.isArray(f.joinedTableIds) ? f.joinedTableIds : [];
     if (f.time) patch.time = f.time;
     const lbl = f.label ? `tavolo ${f.label}` : "nessun tavolo";
     msg = `${staffName}: ${cur.guestName} → ${lbl}${f.time ? ` alle ${f.time}` : ""}`;
@@ -38,6 +39,7 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
     if (f.notes !== undefined) patch.notes = f.notes;
     if (f.guestName) patch.guestName = f.guestName;
     if (f.guestPhone !== undefined) patch.guestPhone = f.guestPhone;
+    if (f.preferredRoomId !== undefined) patch.preferredRoomId = f.preferredRoomId || null;
     msg = `${staffName} ha modificato ${cur.guestName}${f.time ? ` → ${f.time}` : ""}${f.partySize ? `, ${f.partySize} p.` : ""}`;
   }
   const [row] = await db.update(s.reservations).set(patch).where(eq(s.reservations.id, id)).returning();

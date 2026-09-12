@@ -1,8 +1,8 @@
 "use client";
 // Primitive di disegno della piantina, condivise fra vista servizio ed editor.
 // Tutto in coordinate mondo (cm); la scala la applica il contenitore trasformato.
-import { forwardRef } from "react";
-import { CM_PER_CELL, rectPolygon, seatPositions, type DecorIcon, type FloorElement, type Point, type Sides, type TableShape } from "@/lib/floor";
+import { forwardRef, useId } from "react";
+import { CM_PER_CELL, rectPolygon, tableSeats, type DecorIcon, type FloorElement, type Point, type TableShape } from "@/lib/floor";
 import type { Viewport } from "@/lib/use-viewport";
 
 // Griglia disegnata in spazio SCHERMO: resta nitida a qualsiasi zoom (trucco anti-sfocatura).
@@ -38,13 +38,15 @@ export const TableNode = forwardRef<HTMLDivElement, {
   selected?: boolean;
   dimmed?: boolean;
   invalid?: boolean;
-  blocked?: Sides;
+  // Posti già calcolati per l'intera sala (computeRoomSeats): così due tavoli
+  // vicini non piazzano sedie nello stesso punto.
+  seats?: Point[];
   onPointerDown?: (e: React.PointerEvent) => void;
   onPointerUp?: (e: React.PointerEvent) => void;
   onClick?: (e: React.MouseEvent) => void;
   children?: React.ReactNode;
-}>(function TableNode({ t, tone = "border-line", dotClass, sub, selected, dimmed, invalid, blocked, onPointerDown, onPointerUp, onClick, children }, ref) {
-  const seats = seatPositions(t.capacity, t.width, t.height, t.shape, blocked);
+}>(function TableNode({ t, tone = "border-line", dotClass, sub, selected, dimmed, invalid, seats: given, onPointerDown, onPointerUp, onClick, children }, ref) {
+  const seats = given ?? tableSeats(t);
   const radius = t.shape === "round" ? "50%" : Math.max(8, Math.min(t.width, t.height) * 0.12);
   const fs = Math.max(22, Math.min(t.width, t.height) * 0.36);
   return (
@@ -165,7 +167,10 @@ export function RoomShell({ w, h, polygon }: { w: number; h: number; polygon?: P
   const maxX = Math.max(w, ...xs) + pad, maxY = Math.max(h, ...ys) + pad;
   const vw = maxX - minX, vh = maxY - minY;
   const pts = poly.map((p) => `${p.x},${p.y}`).join(" ");
-  const id = `mask-${Math.round(vw)}-${Math.round(vh)}-${poly.length}`;
+  // ID stabile: se cambiasse a ogni frame (es. derivato dalle dimensioni) il
+  // browser perderebbe il riferimento url(#id) mentre trascini un angolo e il
+  // pavimento sparirebbe a intermittenza.
+  const id = useId();
   const T = 22;   // spessore muro in cm, tutto verso l'esterno
   return (
     <svg className="pointer-events-none absolute" width={vw} height={vh}

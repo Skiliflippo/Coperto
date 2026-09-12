@@ -7,6 +7,7 @@
 export const CM_PER_CELL = 50;          // lato di una cella della griglia
 export const SNAP = 10;                 // aggancio fine: 10 cm
 export const MIN_ZOOM = 0.06;
+export const MAX_ROOM_CM = 1500;        // 15 m per lato: oltre non è una sala di ristorante
 export const MAX_ZOOM = 2.4;
 
 export type ElementKind = "wall" | "decor";
@@ -77,101 +78,201 @@ export function suggestShape(capacity: number, current: TableShape): TableShape 
   return current;
 }
 
-export type Sides = { top: boolean; bottom: boolean; left: boolean; right: boolean };
+// Distanza di un punto da un segmento: base per capire se una sedia finisce
+// dentro un muro, anche obliquo.
+export function distanceToSegment(p: Point, a: Point, b: Point): number {
+  const dx = b.x - a.x, dy = b.y - a.y;
+  const len2 = dx * dx + dy * dy;
+  if (len2 === 0) return Math.hypot(p.x - a.x, p.y - a.y);
+  const t = clamp(((p.x - a.x) * dx + (p.y - a.y) * dy) / len2, 0, 1);
+  return Math.hypot(p.x - (a.x + t * dx), p.y - (a.y + t * dy));
+}
 
-// Distribuisce n posti fra i lati liberi in proporzione alla loro lunghezza:
-// su un rettangolo i lati lunghi ricevono più sedie, come nella realtà.
-function allocateBySide(n: number, sides: { key: string; len: number }[]): Map<string, number> {
-  const out = new Map<string, number>(sides.map((s) => [s.key, 0]));
-  const total = sides.reduce((a, s) => a + s.len, 0) || 1;
-  // quota proporzionale, poi si assegnano i resti al lato con più spazio per sedia
+export type SeatContext = {
+  poly: Point[];       // perimetro della sala
+  obstacles: Box[];    // altri tavoli, muri interni, arredi
+  taken?: Point[];     // sedie già assegnate ad altri tavoli (coordinate sala)
+  clearance?: number;  // spazio minimo dietro la sedia (cm)
+};
+
+export const SEAT_RADIUS = 13;     // raggio del pallino sedia, in cm
+export const SEAT_MIN_GAP = 32;    // distanza minima fra i centri di due sedie
+
+type SeatTable = {
+  x: number; y: number; width: number; height: number;
+  rotation: number; capacity: number; shape: TableShape;
+};
+
+// Da coordinate locali del tavolo a coordinate della sala (tiene conto della rotazione).
+export function seatToWorld(t: SeatTable, local: Point): Point {
+  const rad = (t.rotation * Math.PI) / 180;
+  const cos = Math.cos(rad), sin = Math.sin(rad);
+  const dx = local.x - t.width / 2, dy = local.y - t.height / 2;
+  return { x: t.x + dx * cos - dy * sin, y: t.y + dx * sin + dy * cos };
+}
+
+// Un posto è utilizzabile se sta dentro la sala, non è schiacciato contro un muro
+// (anche obliquo), non finisce dentro un oggetto e non si sovrappone a una sedia
+// di un altro tavolo.
+function seatUsable(world: Point, ctx: SeatContext): boolean {
+  const clearance = ctx.clearance ?? SEAT_RADIUS + 5;
+  if (!pointInPolygon(world, ctx.poly)) return false;
+  for (const { a, b } of polygonEdges(ctx.poly)) {
+    if (distanceToSegment(world, a, b) < clearance) return false;
+  }
+  for (const box of ctx.obstacles) {
+    const nx = clamp(world.x, box.x, box.x + box.w);
+    const ny = clamp(world.y, box.y, box.y + box.h);
+    if (Math.hypot(world.x - nx, world.y - ny) < clearance) return false;
+  }
+  for (const seat of ctx.taken ?? []) {
+    if (Math.hypot(world.x - seat.x, world.y - seat.y) < SEAT_MIN_GAP) return false;
+  }
+  return true;
+}
+
+// Tratti liberi contigui in una sequenza campionata. `closed` gestisce l'anello
+// (tavolo tondo), dove l'ultimo campione confina col primo.
+function freeRuns(flags: boolean[], closed: boolean): { from: number; to: number }[] {
+  const n = flags.length;
+  const runs: { from: number; to: number }[] = [];
+  let start: number | null = null;
+  for (let i = 0; i < n; i++) {
+    if (flags[i]) { if (start === null) start = i; }
+    else if (start !== null) { runs.push({ from: start, to: i - 1 }); start = null; }
+  }
+  if (start !== null) runs.push({ from: start, to: n - 1 });
+  // anello chiuso: se inizio e fine sono liberi, i due tratti sono lo stesso
+  if (closed && runs.length > 1 && flags[0] && flags[n - 1]) {
+    const first = runs.shift()!;
+    const last = runs.pop()!;
+    runs.push({ from: last.from, to: first.to + n });   // indici oltre n = wraparound
+  }
+  return runs;
+}
+
+// TAVOLI TONDI: angoli equidistanti sull'arco disponibile.
+function roundSeats(t: SeatTable, n: number, gap: number, ctx?: SeatContext): Point[] {
+  const r = Math.max(t.width, t.height) / 2 + gap;
+  const cx = t.width / 2, cy = t.height / 2;
+  const at = (angle: number): Point => ({ x: cx + Math.cos(angle) * r, y: cy + Math.sin(angle) * r });
+
+  // niente vincoli: giro completo, spaziatura perfettamente uniforme
+  if (!ctx) return Array.from({ length: n }, (_, i) => at((i / n) * Math.PI * 2 - Math.PI / 2));
+
+  const STEPS = 96;
+  const flags: boolean[] = [];
+  for (let i = 0; i < STEPS; i++) {
+    flags.push(seatUsable(seatToWorld(t, at((i / STEPS) * Math.PI * 2 - Math.PI / 2)), ctx));
+  }
+  if (flags.every(Boolean)) {
+    return Array.from({ length: n }, (_, i) => at((i / n) * Math.PI * 2 - Math.PI / 2));
+  }
+  const runs = freeRuns(flags, true).sort((a, b) => (b.to - b.from) - (a.to - a.from));
+  const best = runs[0];
+  // tutto bloccato: meglio i posti standard che nessun posto
+  if (!best) return Array.from({ length: n }, (_, i) => at((i / n) * Math.PI * 2 - Math.PI / 2));
+
+  const step = (Math.PI * 2) / STEPS;
+  const a0 = best.from * step - Math.PI / 2;
+  const arc = (best.to - best.from) * step;
+  // (i + 0.5) tiene le sedie staccate dai bordi dell'arco occupato
+  return Array.from({ length: n }, (_, i) => at(a0 + (arc * (i + 0.5)) / n));
+}
+
+type Side = "top" | "bottom" | "left" | "right";
+
+// TAVOLI RETTANGOLARI/QUADRATI: si valuta quanto spazio libero ha ogni lato e i
+// posti si distribuiscono in proporzione, equidistanti dentro il tratto libero.
+function rectSeats(t: SeatTable, n: number, gap: number, ctx?: SeatContext): Point[] {
+  const { width: w, height: h } = t;
+  const geom: Record<Side, { from: Point; to: Point; len: number }> = {
+    top: { from: { x: 0, y: -gap }, to: { x: w, y: -gap }, len: w },
+    bottom: { from: { x: 0, y: h + gap }, to: { x: w, y: h + gap }, len: w },
+    left: { from: { x: -gap, y: 0 }, to: { x: -gap, y: h }, len: h },
+    right: { from: { x: w + gap, y: 0 }, to: { x: w + gap, y: h }, len: h },
+  };
+  const lerp = (side: Side, u: number): Point => {
+    const g = geom[side];
+    return { x: g.from.x + (g.to.x - g.from.x) * u, y: g.from.y + (g.to.y - g.from.y) * u };
+  };
+  // i lati corti servono solo su tavoli davvero lunghi (capotavola)
+  const sides: Side[] = w >= 170 || h >= 170
+    ? ["top", "bottom", "left", "right"]
+    : (w >= h ? ["top", "bottom"] : ["left", "right"]);
+
+  // tratto libero più ampio per ciascun lato
+  const usable = new Map<Side, { u0: number; u1: number; len: number }>();
+  for (const side of sides) {
+    if (!ctx) { usable.set(side, { u0: 0, u1: 1, len: geom[side].len }); continue; }
+    const STEPS = 24;
+    const flags: boolean[] = [];
+    for (let i = 0; i < STEPS; i++) {
+      flags.push(seatUsable(seatToWorld(t, lerp(side, (i + 0.5) / STEPS)), ctx));
+    }
+    const runs = freeRuns(flags, false).sort((a, b) => (b.to - b.from) - (a.to - a.from));
+    const best = runs[0];
+    if (!best) continue;
+    const u0 = best.from / STEPS, u1 = (best.to + 1) / STEPS;
+    const len = (u1 - u0) * geom[side].len;
+    if (len < SEAT_MIN_GAP * 0.6) continue;       // tratto troppo corto per una sedia
+    usable.set(side, { u0, u1, len });
+  }
+  // nessun lato libero: si torna alla disposizione standard
+  if (!usable.size) return rectSeats(t, n, gap);
+
+  // quote proporzionali alla lunghezza libera, resti al lato con più spazio per sedia
+  const entries = [...usable.entries()];
+  const total = entries.reduce((a, [, v]) => a + v.len, 0) || 1;
+  const count = new Map<Side, number>(entries.map(([side]) => [side, 0]));
   let assigned = 0;
-  for (const s of sides) {
-    const q = Math.floor((n * s.len) / total);
-    out.set(s.key, q);
+  for (const [side, v] of entries) {
+    const q = Math.floor((n * v.len) / total);
+    count.set(side, q);
     assigned += q;
   }
   while (assigned < n) {
-    let best = sides[0], bestScore = -Infinity;
-    for (const s of sides) {
-      const score = s.len / (out.get(s.key)! + 1);   // chi ha più spazio libero per sedia
-      if (score > bestScore) { bestScore = score; best = s; }
+    let bestSide = entries[0][0], bestScore = -Infinity;
+    for (const [side, v] of entries) {
+      const score = v.len / (count.get(side)! + 1);
+      if (score > bestScore) { bestScore = score; bestSide = side; }
     }
-    out.set(best.key, out.get(best.key)! + 1);
+    count.set(bestSide, count.get(bestSide)! + 1);
     assigned++;
+  }
+
+  const out: Point[] = [];
+  for (const [side, v] of entries) {
+    const k = count.get(side) ?? 0;
+    for (let i = 0; i < k; i++) out.push(lerp(side, v.u0 + ((v.u1 - v.u0) * (i + 0.5)) / k));
   }
   return out;
 }
 
-// Le sedie non finiscono dentro il muro: se un lato è a filo, i posti si
-// ridistribuiscono sui lati liberi mantenendo la spaziatura regolare.
-export function seatPositions(capacity: number, w: number, h: number, shape: TableShape, blocked?: Sides) {
-  const n = Math.min(Math.max(1, capacity), 14);
-  const out: Point[] = [];
-  const B = blocked ?? { top: false, bottom: false, left: false, right: false };
-  const GAP = 24;   // distanza della sedia dal bordo del tavolo
+// POSTI A SEDERE — unica funzione usata da mappa in servizio ed editor.
+export function tableSeats(t: SeatTable, ctx?: SeatContext, gap = 24): Point[] {
+  const n = Math.min(Math.max(1, t.capacity), 14);
+  return t.shape === "round" ? roundSeats(t, n, gap, ctx) : rectSeats(t, n, gap, ctx);
+}
 
-  if (shape === "round") {
-    const r = Math.max(w, h) / 2 + GAP;
-    const cx = w / 2, cy = h / 2;
-    // settori vietati: quelli rivolti verso un muro
-    const forbidden: [number, number][] = [];
-    if (B.top) forbidden.push([Math.PI, Math.PI * 2]);          // sopra (y negativa)
-    if (B.bottom) forbidden.push([0, Math.PI]);
-    if (B.left) forbidden.push([Math.PI / 2, (3 * Math.PI) / 2]);
-    if (B.right) forbidden.push([(3 * Math.PI) / 2, Math.PI * 2], [0, Math.PI / 2]);
-    const allowed = (a: number) => {
-      const t = ((a % (Math.PI * 2)) + Math.PI * 2) % (Math.PI * 2);
-      return !forbidden.some(([s0, e0]) => t > s0 + 0.05 && t < e0 - 0.05);
-    };
-    if (!forbidden.length) {
-      // cerchio completo: spaziatura perfettamente uniforme
-      for (let i = 0; i < n; i++) {
-        const a = (i / n) * Math.PI * 2 - Math.PI / 2;
-        out.push({ x: cx + Math.cos(a) * r, y: cy + Math.sin(a) * r });
-      }
-      return out;
-    }
-    // arco libero più ampio: si distribuiscono i posti al suo interno
-    const steps = 720;
-    let bestStart = 0, bestLen = 0, curStart: number | null = null;
-    for (let i = 0; i <= steps; i++) {
-      const a = (i / steps) * Math.PI * 2;
-      if (i < steps && allowed(a)) { if (curStart === null) curStart = a; }
-      else if (curStart !== null) {
-        const len = a - curStart;
-        if (len > bestLen) { bestLen = len; bestStart = curStart; }
-        curStart = null;
-      }
-    }
-    if (bestLen === 0) { bestStart = 0; bestLen = Math.PI * 2; }
-    for (let i = 0; i < n; i++) {
-      const a = n === 1 ? bestStart + bestLen / 2 : bestStart + (bestLen * (i + 0.5)) / n;
-      out.push({ x: cx + Math.cos(a) * r, y: cy + Math.sin(a) * r });
-    }
-    return out;
+// Calcola i posti di TUTTI i tavoli di una sala in un colpo solo: ogni tavolo
+// vede le sedie già piazzate dai precedenti, così due tavoli vicini non si
+// contendono lo stesso spazio. I tavoli grandi hanno la precedenza.
+export function computeRoomSeats<T extends SeatTable & { id: string; label?: string }>(
+  tables: T[], poly: Point[], obstacles: Box[],
+): Map<string, Point[]> {
+  const order = [...tables].sort((a, b) =>
+    b.capacity - a.capacity || (a.label ?? a.id).localeCompare(b.label ?? b.id));
+  const boxes = new Map(order.map((t) => [t.id, aabb(t.x, t.y, t.width, t.height, t.rotation)]));
+  const taken: Point[] = [];
+  const result = new Map<string, Point[]>();
+  for (const t of order) {
+    const others = order.filter((o) => o.id !== t.id).map((o) => boxes.get(o.id)!);
+    const seats = tableSeats(t, { poly, obstacles: [...obstacles, ...others], taken });
+    result.set(t.id, seats);
+    for (const seat of seats) taken.push(seatToWorld(t, seat));
   }
-
-  // rettangolari e quadrati: quote proporzionali alla lunghezza dei lati liberi
-  const sides = [
-    { key: "top", len: w, free: !B.top },
-    { key: "bottom", len: w, free: !B.bottom },
-    { key: "left", len: h, free: !B.left },
-    { key: "right", len: h, free: !B.right },
-  ].filter((s) => s.free);
-  const usable = sides.length ? sides : [{ key: "top", len: w, free: true }];
-  const alloc = allocateBySide(n, usable.map(({ key, len }) => ({ key, len })));
-  for (const { key } of usable) {
-    const count = alloc.get(key) ?? 0;
-    for (let i = 0; i < count; i++) {
-      const t = (i + 1) / (count + 1);
-      if (key === "top") out.push({ x: t * w, y: -GAP });
-      if (key === "bottom") out.push({ x: t * w, y: h + GAP });
-      if (key === "left") out.push({ x: -GAP, y: t * h });
-      if (key === "right") out.push({ x: w + GAP, y: t * h });
-    }
-  }
-  return out;
+  return result;
 }
 
 // ── PERIMETRO ────────────────────────────────────────────────────────────────
@@ -234,8 +335,8 @@ export function centroid(poly: Point[]): Point {
 
 export function normalizeLayout(raw: unknown): RoomLayout {
   const l = (raw ?? {}) as Record<string, any>;
-  const w = Number(l.w) > 0 ? Math.round(l.w) : 1200;
-  const h = Number(l.h) > 0 ? Math.round(l.h) : 800;
+  const w = Number(l.w) > 0 ? clamp(Math.round(l.w), 400, MAX_ROOM_CM) : 1200;
+  const h = Number(l.h) > 0 ? clamp(Math.round(l.h), 400, MAX_ROOM_CM) : 800;
   const polygon = Array.isArray(l.polygon) && l.polygon.length >= 3
     ? l.polygon.map((p: any) => ({ x: Math.round(p.x), y: Math.round(p.y) }))
     : undefined;

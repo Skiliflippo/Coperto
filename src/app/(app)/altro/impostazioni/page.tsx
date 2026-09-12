@@ -10,6 +10,7 @@ import { useSession } from "@/store/session";
 import type { Bootstrap, Settings, StaffSession } from "@/lib/types";
 import { Btn, Field, SkeletonRows } from "@/components/ui";
 import { toast } from "@/components/toast";
+import { RoomsManager } from "@/components/rooms-manager";
 
 type PeriodDraft = { id: string; name: string; startTime: string; endTime: string };
 
@@ -99,7 +100,9 @@ function SettingsForm({ staff, boot }: { staff: StaffSession; boot: Bootstrap })
         <h1 className="font-display text-[24px] font-bold">Impostazioni</h1>
       </header>
 
-      <p className="mt-4 text-sm font-bold uppercase tracking-wide text-muted">Tavoli</p>
+      <RoomsManager boot={boot} />
+
+      <p className="mt-5 text-sm font-bold uppercase tracking-wide text-muted">Tavoli</p>
       <div className="mt-2 space-y-2">
         <button onClick={() => setSettings({ ...settings, allowTableJoin: !settings.allowTableJoin })}
           className="flex w-full items-center justify-between gap-3 rounded-2xl border border-line bg-surface px-4 py-3 text-left active:scale-[0.99]">
@@ -112,9 +115,9 @@ function SettingsForm({ staff, boot }: { staff: StaffSession; boot: Bootstrap })
           </span>
         </button>
         {settings.allowTableJoin && (
-          <Num label="Distanza max fra tavoli accostabili" value={settings.joinMaxGapCm ?? 90}
+          <Num label="Distanza max fra tavoli accostabili" value={settings.joinMaxGapCm ?? 150}
             onChange={(value) => setSettings({ ...settings, joinMaxGapCm: value })}
-            min={20} max={200} step={10} suffix="cm" />
+            min={20} max={500} step={10} suffix="cm" />
         )}
       </div>
 

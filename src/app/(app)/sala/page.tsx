@@ -7,12 +7,13 @@ import { useBootstrap, useDay, useNow } from "@/lib/hooks";
 import { useSession } from "@/store/session";
 import { computeTableStatuses, type TableStatus } from "@/lib/estimates";
 import { nowMin, toMin, todayISO } from "@/lib/time";
-import { TABLE_STATE, fmtCovers } from "@/lib/meta";
+import { TABLE_STATE } from "@/lib/meta";
 import { SkeletonRows } from "@/components/ui";
 import { TableSheet } from "@/components/table-sheet";
 import { CheckInSheet } from "@/components/checkin-sheet";
 import { WalkInSheet } from "@/components/seat-flow";
 import { FloorView } from "@/components/floor-view";
+import { StatusBar, type Tally } from "@/components/status-bar";
 import { RoomTabs, useActiveRoom } from "@/components/room-tabs";
 import type { Reservation, TableT } from "@/lib/types";
 
@@ -56,7 +57,9 @@ export default function SalaPage() {
     .sort((a, b) => toMin(a.time) - toMin(b.time));
 
   return (
-    <div className="px-3 pb-2">
+    // Colonna a tutta altezza: la mappa prende tutto lo spazio che avanza,
+    // così sotto non resta la fascia vuota che c'era con un'altezza fissa.
+    <div className="flex h-[calc(100dvh-72px-env(safe-area-inset-bottom))] flex-col px-3 pb-1">
       <Clock now={now} staff={staff?.name} />
 
       {/* Walk-in */}
@@ -116,29 +119,6 @@ function Clock({ now, staff }: { now: number; staff?: string }) {
   );
 }
 
-export type Tally = { freeT: number; freeC: number; busyT: number; busyC: number; overT: number; heldT: number };
-
-// Riepilogo di sala + legenda in una sola riga sottile: dice tutto senza rubare spazio.
-export function StatusBar({ counts, floating }: { counts: Tally; floating?: boolean }) {
-  const items = [
-    { dot: "bg-ok", n: counts.freeT, label: "liberi", extra: `${counts.freeC} coperti`, cls: "text-ok" },
-    { dot: "bg-soon", n: counts.heldT, label: "prenotati", extra: "", cls: "text-soon" },
-    { dot: "bg-busy", n: counts.busyT, label: "occupati", extra: `${counts.busyC} coperti`, cls: "text-busy" },
-    { dot: "bg-over", n: counts.overT, label: "oltre l'ora", extra: "", cls: "text-over" },
-  ];
-  return (
-    <div className={`no-scrollbar flex items-center gap-3 overflow-x-auto ${floating ? "rounded-full border border-line/70 bg-surface/85 px-3 py-1.5 shadow-md backdrop-blur" : "px-0.5"}`}>
-      {items.map((i) => (
-        <span key={i.label} className="flex shrink-0 items-center gap-1.5 text-[13px] font-semibold">
-          <span className={`h-2 w-2 rounded-full ${i.dot}`} />
-          <b className={`font-display text-[15px] font-extrabold tabular-nums ${i.cls}`}>{i.n}</b>
-          <span className="text-muted">{i.label}{i.extra && <span className="hidden sm:inline"> · {i.extra}</span>}</span>
-        </span>
-      ))}
-    </div>
-  );
-}
-
 // Toggle mappa/lista: una sola icona, quella della vista in cui puoi passare.
 export function ViewToggle({ view, setView }: { view: "mappa" | "lista"; setView: (v: "mappa" | "lista") => void }) {
   const next = view === "mappa" ? "lista" : "mappa";
@@ -160,34 +140,36 @@ function ListView({ boot, statuses, onPick, viewToggle, counts }: {
   const [roomId, setRoomId] = useActiveRoom(boot.rooms);
   const tables = boot.tables.filter((t) => t.roomId === roomId);
   return (
-    <div className="mt-2.5">
+    <div className="mt-2.5 flex min-h-0 flex-1 flex-col">
       <RoomTabs rooms={boot.rooms} active={roomId} onPick={setRoomId} right={viewToggle} />
-      <div className="mt-2"><StatusBar counts={counts} /></div>
-      <div className="mt-2.5 grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-4">
+      <div className="mt-1.5"><StatusBar counts={counts} /></div>
+      <div className="no-scrollbar mt-2.5 grid min-h-0 flex-1 grid-cols-3 gap-1.5 overflow-y-auto sm:grid-cols-4 lg:grid-cols-6">
         {tables.map((t) => {
           const st = statuses.get(t.id);
           const meta = TABLE_STATE[st?.state ?? "libero"];
           return (
             <button key={t.id} onClick={() => onPick(t)}
-              className={`flex min-h-[92px] flex-col justify-between rounded-2xl border-2 bg-surface p-3 text-left active:scale-[0.97] ${meta.card}`}>
-              <div className="flex items-start justify-between gap-1">
-                <span className="font-display text-[26px] font-extrabold leading-none">{t.label}</span>
-                <span className="flex items-center gap-1.5">
-                  {st?.seating?.billRequested && <Receipt className="h-4 w-4 text-soon" />}
-                  <span className={`h-2.5 w-2.5 rounded-full ${meta.dot}`} />
+              className={`flex h-[62px] flex-col justify-between rounded-xl border bg-surface px-2 py-1.5 text-left active:scale-[0.97] ${meta.card}`}>
+              <span className="flex items-start justify-between gap-1">
+                <span className="font-display text-[17px] font-extrabold leading-none">{t.label}</span>
+                <span className="flex items-center gap-1">
+                  {st?.seating?.billRequested && <Receipt className="h-3 w-3 text-soon" />}
+                  <span className={`h-2 w-2 rounded-full ${meta.dot}`} />
                 </span>
-              </div>
+              </span>
               {st?.seating ? (
-                <>
-                  <p className="truncate text-sm font-bold">{st.seating.name || "Walk-in"} · {st.seating.partySize}p</p>
-                  <p className={`text-[13px] font-semibold tabular-nums ${st.state === "oltre_tempo" ? "text-over" : "text-muted"}`}>
-                    da {st.minutesSeated}′{st.state === "oltre_tempo" ? " · oltre" : ""}
-                  </p>
-                </>
+                <span className="block leading-tight">
+                  <span className="block truncate text-[11px] font-bold">{st.seating.name || "Walk-in"}</span>
+                  <span className={`block text-[10px] font-semibold tabular-nums ${st.state === "oltre_tempo" ? "text-over" : "text-muted"}`}>
+                    {st.seating.partySize}p · {st.minutesSeated}′
+                  </span>
+                </span>
               ) : st?.state === "prenotato" ? (
-                <p className="text-[13px] font-bold text-soon">{st.reservation?.guestName} · {st.reservation?.time}</p>
+                <span className="block truncate text-[10px] font-bold leading-tight text-soon">
+                  {st.reservation?.time} {st.reservation?.guestName}
+                </span>
               ) : (
-                <p className={`text-[13px] font-bold ${meta.text}`}>{meta.label} · {fmtCovers(t.capacity)}</p>
+                <span className={`block text-[10px] font-bold leading-tight ${meta.text}`}>{meta.label} · {t.capacity}p</span>
               )}
             </button>
           );

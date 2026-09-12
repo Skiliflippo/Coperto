@@ -4,11 +4,16 @@
 // La navigazione è LIMITATA: non si può perdere di vista la sala, né rimpicciolirla
 // oltre il punto in cui sta tutta nello schermo.
 import { useCallback, useEffect, useRef, useState } from "react";
-import { MAX_ZOOM, MIN_ZOOM, clamp, fitView } from "./floor";
+import { MAX_ZOOM, MIN_ZOOM, clamp } from "./floor";
 
 export type Viewport = { zoom: number; panX: number; panY: number };
 
-export function useViewport(roomW: number, roomH: number, opts?: { padding?: number }) {
+type Bounds = { x1: number; y1: number; x2: number; y2: number };
+
+export function useViewport(
+  roomW: number, roomH: number,
+  opts?: { padding?: number; bounds?: Bounds },
+) {
   const ref = useRef<HTMLDivElement>(null);
   const [vp, setVp] = useState<Viewport>({ zoom: 0.4, panX: 0, panY: 0 });
   const vpRef = useRef(vp);
@@ -19,11 +24,16 @@ export function useViewport(roomW: number, roomH: number, opts?: { padding?: num
   const enabled = useRef(true);           // il pan si può sospendere (es. tap su un tavolo)
   const [isPanning, setPanning] = useState(false);
   const pad = opts?.padding ?? 40;
+  // Area da inquadrare: il perimetro reale della sala se disponibile, altrimenti
+  // il riquadro. Con una pianta a L o trapezoidale i due non coincidono.
+  const bx1 = opts?.bounds?.x1 ?? 0, by1 = opts?.bounds?.y1 ?? 0;
+  const bx2 = opts?.bounds?.x2 ?? roomW, by2 = opts?.bounds?.y2 ?? roomH;
+  const boundsW = Math.max(50, bx2 - bx1), boundsH = Math.max(50, by2 - by1);
 
   // Zoom minimo utile: quello che fa stare tutta la sala nello schermo.
   const minZoomFor = useCallback((el: HTMLElement) =>
-    Math.max(MIN_ZOOM, Math.min((el.clientWidth - pad) / roomW, (el.clientHeight - pad) / roomH) * 0.85),
-    [roomW, roomH, pad]);
+    Math.max(MIN_ZOOM, Math.min((el.clientWidth - pad) / boundsW, (el.clientHeight - pad) / boundsH) * 0.8),
+    [boundsW, boundsH, pad]);
 
   // Vincola il pan: la sala deve restare almeno per metà dentro la finestra.
   const clampVp = useCallback((v: Viewport): Viewport => {
@@ -31,22 +41,37 @@ export function useViewport(roomW: number, roomH: number, opts?: { padding?: num
     if (!el) return v;
     const zoom = clamp(v.zoom, minZoomFor(el), MAX_ZOOM);
     const vw = el.clientWidth, vh = el.clientHeight;
-    const w = roomW * zoom, h = roomH * zoom;
-    const marginX = Math.min(vw * 0.35, 160);
-    const marginY = Math.min(vh * 0.35, 160);
-    // se la sala è più piccola della finestra la centriamo, altrimenti limitiamo lo scorrimento
-    const panX = w <= vw ? clamp(v.panX, -marginX, vw - w + marginX) : clamp(v.panX, vw - w - marginX, marginX);
-    const panY = h <= vh ? clamp(v.panY, -marginY, vh - h + marginY) : clamp(v.panY, vh - h - marginY, marginY);
+    const w = boundsW * zoom, h = boundsH * zoom;
+    // posizione sullo schermo dell'angolo alto-sinistro dell'area inquadrata
+    const offX = bx1 * zoom, offY = by1 * zoom;
+    const marginX = Math.min(vw * 0.3, 140);
+    const marginY = Math.min(vh * 0.3, 140);
+    // se la sala è più piccola della finestra la si tiene visibile, altrimenti
+    // si limita lo scorrimento così non la si perde mai di vista
+    const panX = w <= vw
+      ? clamp(v.panX, -offX - marginX, vw - w - offX + marginX)
+      : clamp(v.panX, vw - w - offX - marginX, -offX + marginX);
+    const panY = h <= vh
+      ? clamp(v.panY, -offY - marginY, vh - h - offY + marginY)
+      : clamp(v.panY, vh - h - offY - marginY, -offY + marginY);
     return { zoom, panX, panY };
-  }, [roomW, roomH, minZoomFor]);
+  }, [boundsW, boundsH, bx1, by1, minZoomFor]);
 
   const apply = useCallback((fn: (v: Viewport) => Viewport) => setVp((v) => clampVp(fn(v))), [clampVp]);
 
+  // RICENTRA: porta al centro il baricentro della sala e riduce lo zoom quanto
+  // basta a vedere tutto il perimetro, con un margine di respiro.
   const fit = useCallback(() => {
     const el = ref.current;
     if (!el) return;
-    setVp(clampVp(fitView(roomW, roomH, el.clientWidth, el.clientHeight, pad)));
-  }, [roomW, roomH, pad, clampVp]);
+    const vw = el.clientWidth, vh = el.clientHeight;
+    const zoom = clamp(
+      Math.min((vw - pad * 2) / boundsW, (vh - pad * 2) / boundsH),
+      MIN_ZOOM, MAX_ZOOM,
+    );
+    const cx = (bx1 + bx2) / 2, cy = (by1 + by2) / 2;
+    setVp(clampVp({ zoom, panX: vw / 2 - cx * zoom, panY: vh / 2 - cy * zoom }));
+  }, [bx1, by1, bx2, by2, boundsW, boundsH, pad, clampVp]);
 
   useEffect(() => {
     fit();

@@ -10,7 +10,7 @@ import { useSession } from "@/store/session";
 import { computeTableStatuses } from "@/lib/estimates";
 import { nowMin, toMin, todayISO } from "@/lib/time";
 import { Btn, Sheet } from "@/components/ui";
-import { scheduleUndo } from "@/components/toast";
+import { runWithUndo } from "@/components/toast";
 import { PartyGrid, SuggestedTables, useSeat } from "@/components/seat-flow";
 import type { Reservation } from "@/lib/types";
 
@@ -32,7 +32,11 @@ export function CheckInSheet({ res, onClose }: { res: Reservation | null; onClos
     if (!res || !boot.data) return null;
     const table = boot.data.tables.find((t) => t.id === res.assignedTableId);
     const combo = boot.data.combos.find((c) => c.id === res.assignedComboId);
-    return { table, combo };
+    // tavoli accostati al volo dal Piano: si siede il gruppo su tutti
+    const joined = (res.joinedTableIds ?? [])
+      .map((id) => boot.data!.tables.find((t) => t.id === id))
+      .filter((t): t is NonNullable<typeof t> => !!t);
+    return { table, combo, joined };
   }, [res, boot.data]);
 
   if (!res || !boot.data || !day.data) return null;
@@ -51,8 +55,17 @@ export function CheckInSheet({ res, onClose }: { res: Reservation | null; onClos
     const st = statuses.get(info.table.id)?.state ?? "libero";
     assignedState = st === "prenotato" ? "libero" : st;   // tenuto per questa prenotazione
   }
-  const target = picked ?? (info?.table ? { tableIds: [info.table.id], tableLabel: info.table.label } : info?.combo ? { tableIds: info.combo.tableIds, tableLabel: info.combo.label } : null);
-  const targetCap = picked ? null : info?.table?.capacity ?? info?.combo?.capacity ?? null;
+  const joinedTables = info?.joined ?? [];
+  const target = picked ?? (info?.table
+    ? {
+        tableIds: [info.table.id, ...joinedTables.map((t) => t.id)],
+        tableLabel: [info.table.label, ...joinedTables.map((t) => t.label)].join("+"),
+      }
+    : info?.combo ? { tableIds: info.combo.tableIds, tableLabel: info.combo.label } : null);
+  const targetCap = picked ? null
+    : info?.table
+      ? [info.table, ...joinedTables].reduce((sum, t) => sum + Math.max(t.capacity, t.maxCapacity), 0)
+      : info?.combo?.capacity ?? null;
 
   const doSeat = async () => {
     if (!target || busy) return;
@@ -61,9 +74,18 @@ export function CheckInSheet({ res, onClose }: { res: Reservation | null; onClos
     setBusy(false);
     if (ok) { setParty(null); setPicked(null); setChangeTable(false); onClose(); }
   };
-  const markNoShow = () => scheduleUndo(`noshow:${res.id}`, `${res.guestName} segnato no-show`, () =>
-    api(`/api/reservations/${res.id}`, { method: "PATCH", body: { restaurantId: rid, staffName: me, action: "status", status: "no_show" } })
-      .then(() => qc.invalidateQueries({ queryKey: ["day", rid] })));
+  const setStatus = async (status: string) => {
+    await api(`/api/reservations/${res.id}`, {
+      method: "PATCH",
+      body: { restaurantId: rid, staffName: me, action: "status", status },
+    });
+    await qc.invalidateQueries({ queryKey: ["day", rid] });
+  };
+  const markNoShow = () => {
+    onClose();
+    runWithUndo(`${res.guestName} segnato no-show`,
+      () => setStatus("no_show"), () => setStatus("confermata"));
+  };
   return (
     <Sheet open={!!res} onClose={() => { setParty(null); setPicked(null); setChangeTable(false); onClose(); }}
       title={<span>Check-in · <span className="text-brand">{res.guestName}</span> <span className="text-sm font-medium text-muted">prenotato alle {res.time}</span></span>}>

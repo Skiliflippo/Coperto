@@ -11,7 +11,7 @@ export const dynamic = "force-dynamic";
 // e segna il locale come configurato. Solo il titolare.
 export async function POST(req: Request) {
   const b = await req.json();
-  const { restaurantId, staffId, staffName = "", roomName = "Sala", layout, finish } = b;
+  const { restaurantId, staffId, staffName = "", roomName = "Sala", layout, finish, createNew } = b;
   if (!(await isOwner(staffId))) {
     return NextResponse.json({ error: "Solo il titolare può configurare la sala" }, { status: 403 });
   }
@@ -21,14 +21,23 @@ export async function POST(req: Request) {
   if (layout) {
     const clean = normalizeLayout(layout);
     const existing = await db.select().from(s.rooms).where(eq(s.rooms.restaurantId, restaurantId));
-    const target = existing.find((r) => r.name === roomName) ?? existing[0];
+    // createNew = si sta aggiungendo un ambiente: non si tocca quello esistente.
+    const target = createNew ? undefined : (existing.find((r) => r.name === roomName) ?? existing[0]);
     if (target) {
       await db.update(s.rooms).set({ layout: clean, name: roomName }).where(eq(s.rooms.id, target.id));
       roomId = target.id;
     } else {
+      if (createNew && existing.some((r) => r.name.trim().toLowerCase() === roomName.trim().toLowerCase())) {
+        return NextResponse.json({ error: `Esiste già una sala "${roomName}"` }, { status: 409 });
+      }
       const [created] = await db.insert(s.rooms)
-        .values({ restaurantId, name: roomName, sortOrder: 0, layout: clean }).returning();
+        .values({ restaurantId, name: roomName, sortOrder: existing.length, layout: clean }).returning();
       roomId = created.id;
+      if (createNew) {
+        const msg = `${staffName} ha creato la sala ${roomName}`;
+        await logActivity(restaurantId, staffName, "room_created", msg);
+        broadcast(restaurantId, { actor: staffName, msg });
+      }
     }
   }
   if (finish) {

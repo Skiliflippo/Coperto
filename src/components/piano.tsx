@@ -3,7 +3,7 @@
 // Asse verticale = tempo (slot configurabili), colonne = tavoli + accorpamenti.
 // Drag & drop, conflitti evidenziati, Auto-sistema con motivazioni spiegate.
 import { useRef, useState } from "react";
-import { DndContext, DragOverlay, PointerSensor, useDraggable, useDroppable, useSensor, useSensors, type DragEndEvent, type DragStartEvent } from "@dnd-kit/core";
+import { DndContext, DragOverlay, PointerSensor, useDraggable, useDroppable, useSensor, useSensors, type DragEndEvent, type DragMoveEvent, type DragStartEvent } from "@dnd-kit/core";
 import { useQueryClient } from "@tanstack/react-query";
 import { Check, ListPlus, Printer, Zap } from "lucide-react";
 import { api } from "@/lib/api";
@@ -13,6 +13,7 @@ import { durationFor, freeTargetsAt, periodFor } from "@/lib/estimates";
 import { overlaps, toHHMM, toMin, todayISO } from "@/lib/time";
 import { Btn, Sheet } from "@/components/ui";
 import { toast } from "@/components/toast";
+import { findJoinProposals } from "@/lib/join";
 import type { AssignPlan } from "@/lib/autoassign";
 import type { Bootstrap, DayData, Reservation } from "@/lib/types";
 
@@ -28,6 +29,8 @@ export function Piano({ date, day, onTap }: { date: string; day: DayData; onTap:
   const nMin = useNow(30_000);
   const [periodId, setPeriodId] = useState<string | null>(null);
   const [dragRes, setDragRes] = useState<Reservation | null>(null);
+  // anteprima stile calendario: mostra in quale colonna e su quali slot finirebbe
+  const [preview, setPreview] = useState<{ col: string; top: number; height: number; time: string } | null>(null);
   const [assignRes, setAssignRes] = useState<Reservation | null>(null);
   const [plan, setPlan] = useState<AssignPlan | null>(null);
   const [planOpen, setPlanOpen] = useState(false);
@@ -56,7 +59,14 @@ export function Piano({ date, day, onTap }: { date: string; day: DayData; onTap:
     const t = toMin(r.time);
     return t + durationFor(r.partySize, period.name, settings) > startMin && t < toMin(period.endTime) + 60;
   });
-  const unassigned = inPeriod.filter((r) => r.status === "confermata" && !r.assignedTableId && !r.assignedComboId);
+  // I gruppi che non entrano in nessun tavolo singolo sono i più difficili da
+  // sistemare: vanno in cima al rail, con un segnale esplicito.
+  const biggestTable = Math.max(0, ...bootData.tables.map((t) => Math.max(t.capacity, t.maxCapacity || 0)));
+  const biggestCombo = Math.max(0, ...bootData.combos.map((c) => c.capacity));
+  const needsJoin = (r: Reservation) => r.partySize > Math.max(biggestTable, biggestCombo);
+  const unassigned = inPeriod
+    .filter((r) => r.status === "confermata" && !r.assignedTableId && !r.assignedComboId)
+    .sort((a, b) => Number(needsJoin(b)) - Number(needsJoin(a)) || b.partySize - a.partySize || toMin(a.time) - toMin(b.time));
   const assigned = inPeriod.filter((r) => r.assignedTableId || r.assignedComboId);
   const blocksByCol = new Map<string, Reservation[]>();
   for (const r of assigned) {
@@ -92,38 +102,74 @@ export function Piano({ date, day, onTap }: { date: string; day: DayData; onTap:
   })();
 
   const patchAssign = async (res: Reservation, patch: { tableId: string | null; comboId: string | null; time?: string; label?: string }) => {
+    const key = ["day", rid, date];
+    const prev = qc.getQueryData<DayData>(key);
+    // Ottimistico: il blocco si sposta e l'ora cambia all'istante, senza aspettare
+    // la risposta del server. In caso di errore si ripristina lo stato precedente.
+    qc.setQueryData<DayData>(key, (old) => old && ({
+      ...old,
+      reservations: old.reservations.map((r) => (r.id === res.id
+        ? { ...r, assignedTableId: patch.tableId, assignedComboId: patch.comboId, time: patch.time ?? r.time }
+        : r)),
+    }));
     try {
       await api(`/api/reservations/${res.id}`, {
         method: "PATCH",
         body: { restaurantId: rid, staffName: me, action: "assign", tableId: patch.tableId, comboId: patch.comboId, time: patch.time, label: patch.label },
       });
-      await qc.invalidateQueries({ queryKey: ["day", rid, date] });
-    } catch (e: any) { toast({ title: e.message, tone: "err" }); }
+      qc.invalidateQueries({ queryKey: key });
+    } catch (e: any) {
+      if (prev) qc.setQueryData(key, prev);
+      toast({ title: e.message, tone: "err" });
+    }
+  };
+
+  // Dove finirebbe il blocco: colonna + slot iniziale, dalla posizione corrente.
+  const dropTarget = (e: DragMoveEvent | DragEndEvent) => {
+    const res = e.active.data.current?.res as Reservation | undefined;
+    if (!res || !e.over) return null;
+    const key = String(e.over.id);
+    if (key === "rail") return { rail: true as const, res };
+    const [kind, id] = key.split(":");
+    const top = (e.active.rect.current.translated?.top ?? 0) - e.over.rect.top;
+    const dur = durationFor(res.partySize, period.name, settings);
+    const maxIdx = Math.max(0, Math.round((toMin(period.endTime) - startMin - dur) / settings.slotMinutes));
+    const idx = Math.min(maxIdx, Math.max(0, Math.round(top / ROW_H)));
+    return {
+      rail: false as const, res, kind, id, idx,
+      time: toHHMM(startMin + idx * settings.slotMinutes),
+      slots: Math.max(2, Math.round(dur / settings.slotMinutes)),
+      colKey: key,
+    };
   };
 
   const onDragStart = (e: DragStartEvent) => setDragRes(e.active.data.current?.res ?? null);
+
+  const onDragMove = (e: DragMoveEvent) => {
+    const t = dropTarget(e);
+    if (!t || t.rail) { setPreview(null); return; }
+    setPreview((prev) =>
+      prev && prev.col === t.colKey && prev.time === t.time
+        ? prev
+        : { col: t.colKey, top: t.idx * ROW_H, height: t.slots * ROW_H, time: t.time });
+  };
   const onDragEnd = (e: DragEndEvent) => {
     justDragged.current = true;
     queueMicrotask(() => { justDragged.current = false; });
     setDragRes(null);
-    const res = e.active.data.current?.res as Reservation | undefined;
-    if (!res || !e.over) return;
-    if (String(e.over.id) === "rail") {
-      if (res.assignedTableId || res.assignedComboId) patchAssign(res, { tableId: null, comboId: null });
+    setPreview(null);
+    const t = dropTarget(e);
+    if (!t) return;
+    if (t.rail) {
+      if (t.res.assignedTableId || t.res.assignedComboId) patchAssign(t.res, { tableId: null, comboId: null });
       return;
     }
-    const [kind, id] = String(e.over.id).split(":");
-    const overRect = e.over.rect;
-    const translated = e.active.rect.current.translated;
-    const top = translated ? translated.top - overRect.top : 0;
-    const dur = durationFor(res.partySize, period.name, settings);
-    const maxIdx = Math.max(0, Math.round((toMin(period.endTime) - startMin - dur) / settings.slotMinutes));
-    const idx = Math.min(maxIdx, Math.max(0, Math.round(top / ROW_H)));
-    const newTime = toHHMM(startMin + idx * settings.slotMinutes);
-    const samePlace = (kind === "table" && res.assignedTableId === id) || (kind === "combo" && res.assignedComboId === id);
-    if (samePlace && newTime === res.time) return;
-    const label = kind === "table" ? bootData.tables.find((t) => t.id === id)?.label : bootData.combos.find((c) => c.id === id)?.label;
-    patchAssign(res, { tableId: kind === "table" ? id : null, comboId: kind === "combo" ? id : null, time: newTime, label });
+    const samePlace = (t.kind === "table" && t.res.assignedTableId === t.id) || (t.kind === "combo" && t.res.assignedComboId === t.id);
+    if (samePlace && t.time === t.res.time) return;
+    const label = t.kind === "table"
+      ? bootData.tables.find((x) => x.id === t.id)?.label
+      : bootData.combos.find((c) => c.id === t.id)?.label;
+    patchAssign(t.res, { tableId: t.kind === "table" ? t.id : null, comboId: t.kind === "combo" ? t.id : null, time: t.time, label });
   };
 
   const runAuto = async () => {
@@ -138,7 +184,14 @@ export function Piano({ date, day, onTap }: { date: string; day: DayData; onTap:
     if (!plan) return;
     setPlanBusy(true);
     try {
-      const proposals = plan.proposals.map((p) => ({ reservationId: p.reservationId, kind: p.target.kind, id2: p.target.kind === "table" ? p.target.table.id : p.target.combo.id }));
+      const proposals = plan.proposals.map((p) => ({
+        reservationId: p.reservationId,
+        kind: p.target.kind === "combo" ? "combo" : "table",
+        id2: p.target.kind === "table" ? p.target.table.id
+          : p.target.kind === "combo" ? p.target.combo.id
+          : p.target.tables[0].id,
+        joinedTableIds: p.target.kind === "join" ? p.target.tables.slice(1).map((t) => t.id) : [],
+      }));
       await api("/api/autoassign", { method: "POST", body: { action: "apply", restaurantId: rid, date, periodId: period.id, staffName: me, proposals } });
       await qc.invalidateQueries({ queryKey: ["day", rid, date] });
       toast({ title: `${proposals.length} prenotazioni sistemate`, msg: "Il manuale ha sempre la priorità: sposta pure a mano.", tone: "ok" });
@@ -148,7 +201,7 @@ export function Piano({ date, day, onTap }: { date: string; day: DayData; onTap:
   };
 
   return (
-    <DndContext sensors={sensors} onDragStart={onDragStart} onDragEnd={onDragEnd}>
+    <DndContext sensors={sensors} onDragStart={onDragStart} onDragMove={onDragMove} onDragEnd={onDragEnd} onDragCancel={() => { setDragRes(null); setPreview(null); }}>
       <div className="mt-3">
         <div className="flex flex-wrap items-center gap-2">
           {bootData.periods.map((p) => (
@@ -178,7 +231,7 @@ export function Piano({ date, day, onTap }: { date: string; day: DayData; onTap:
 
         <Rail count={unassigned.length}>
           {unassigned.map((r) => (
-            <RailChip key={r.id} res={r} lateMin={isToday ? nMin - toMin(r.time) : 0} lateThr={settings.lateThresholdMinutes}
+            <RailChip key={r.id} res={r} needsJoin={needsJoin(r)} lateMin={isToday ? nMin - toMin(r.time) : 0} lateThr={settings.lateThresholdMinutes}
               onTap={() => { if (!justDragged.current) setAssignRes(r); }} />
           ))}
           {!unassigned.length && <p className="px-2 py-3 text-sm font-semibold text-ok">Tutto sistemato per il {period.name.toLowerCase()}.</p>}
@@ -210,7 +263,8 @@ export function Piano({ date, day, onTap }: { date: string; day: DayData; onTap:
                   {cols.map((c) => {
                     const key = colKey(c.kind, c.id)!;
                     return (
-                      <Column key={key} k={key} label={c.label} cap={c.cap} oos={c.oos} height={slotCount * ROW_H} rows={slotCount}>
+                      <Column key={key} k={key} label={c.label} cap={c.cap} oos={c.oos} height={slotCount * ROW_H} rows={slotCount}
+                        preview={preview?.col === key ? preview : null}>
                         {(blocksByCol.get(key) ?? []).map((r) => (
                           <Block key={r.id} res={r} boot={bootData} periodStart={startMin} periodName={period.name}
                             conflict={conflicts.has(r.id)}
@@ -241,12 +295,12 @@ export function Piano({ date, day, onTap }: { date: string; day: DayData; onTap:
         {planBusy && !plan && <div className="skeleton h-40 rounded-2xl" />}
         {plan && (
           <div className="grid gap-2.5">
-            <p className="text-sm font-semibold text-muted">L&apos;algoritmo propone, tu decidi. Gruppi grandi nei tavoli grandi, {settings.bufferMinutes}′ di riassetto tra un turno e l&apos;altro.</p>
+            <p className="text-sm font-semibold text-muted">{settings.bufferMinutes}′ di riassetto tra un turno e l&apos;altro.</p>
             {plan.proposals.map((p) => (
               <div key={p.reservationId} className="flex items-start gap-3 rounded-2xl border border-ok/40 bg-ok/10 p-3">
                 <Check className="mt-0.5 h-5 w-5 shrink-0 text-ok" />
                 <div>
-                  <p className="font-bold">{p.name} · {p.partySize} p. · {p.time} → {p.target.kind === "table" ? `Tavolo ${p.target.table.label}` : `Accorpati ${p.target.combo.label}`}</p>
+                  <p className="font-bold">{p.name} · {p.partySize} p. · {p.time} → {p.target.kind === "table" ? `Tavolo ${p.target.table.label}` : p.target.kind === "combo" ? `Accorpati ${p.target.combo.label}` : `Accosta ${p.target.label}`}</p>
                   <p className="text-[13px] font-medium text-muted">{p.reason}</p>
                 </div>
               </div>
@@ -282,22 +336,27 @@ function Rail({ children, count }: { children: React.ReactNode; count: number })
   );
 }
 
-function RailChip({ res, onTap, lateMin, lateThr }: { res: Reservation; onTap: () => void; lateMin: number; lateThr: number }) {
+function RailChip({ res, onTap, lateMin, lateThr, needsJoin }: {
+  res: Reservation; onTap: () => void; lateMin: number; lateThr: number; needsJoin?: boolean;
+}) {
   const { setNodeRef, listeners, attributes, isDragging } = useDraggable({ id: `rail-${res.id}`, data: { res } });
   const late = lateMin > lateThr;
   return (
     <button ref={setNodeRef} {...listeners} {...attributes} onClick={onTap}
       style={{ touchAction: "none", opacity: isDragging ? 0.3 : 1 }}
-      className={`flex min-h-[56px] shrink-0 items-center gap-2 rounded-xl border-2 px-3 active:scale-[0.97] ${late ? "border-soon bg-soon/15" : "border-line bg-surface"}`}>
+      className={`flex min-h-[56px] shrink-0 items-center gap-2 rounded-xl border-2 px-3 active:scale-[0.97] ${needsJoin ? "border-brand bg-brand/10" : late ? "border-soon bg-soon/15" : "border-line bg-surface"}`}>
       <span className="font-display font-bold tabular-nums">{res.time}</span>
       <span className="font-bold">{res.guestName}</span>
       <span className="rounded-full bg-raised px-2 py-0.5 text-[13px] font-bold">{res.partySize}p</span>
+      {needsJoin && <span className="text-[11px] font-bold text-brand">serve accorpare</span>}
     </button>
   );
 }
 
-function Column({ k, label, cap, oos, height, rows, children }: {
-  k: string; label: string; cap: number; oos: boolean; height: number; rows: number; children?: React.ReactNode;
+function Column({ k, label, cap, oos, height, rows, preview, children }: {
+  k: string; label: string; cap: number; oos: boolean; height: number; rows: number;
+  preview?: { top: number; height: number; time: string } | null;
+  children?: React.ReactNode;
 }) {
   const { setNodeRef, isOver } = useDroppable({ id: k });
   return (
@@ -310,6 +369,14 @@ function Column({ k, label, cap, oos, height, rows, children }: {
         {Array.from({ length: rows }).map((_, i) => (
           <div key={i} style={{ height: ROW_H }} className={`border-b ${i % 4 === 3 ? "border-line" : "border-line/50"}`} />
         ))}
+        {preview && (
+          <div className="pointer-events-none absolute inset-x-0.5 z-20 rounded-lg border-2 border-dashed border-brand bg-brand/20"
+            style={{ top: preview.top, height: preview.height }}>
+            <span className="absolute -top-1 left-1 rounded bg-brand px-1 font-sans text-[10px] font-bold leading-tight text-on-brand">
+              {preview.time}
+            </span>
+          </div>
+        )}
         {children}
       </div>
     </div>
@@ -333,59 +400,112 @@ function Block({ res, boot, periodStart, periodName, conflict, late, seated, onT
       className={`absolute inset-x-0.5 z-10 overflow-hidden rounded-lg border-2 px-1 py-0.5 text-left leading-tight ${cls}`}
       style={{ top, height, touchAction: "none", opacity: isDragging ? 0.25 : 1 }}>
       <span className="block truncate text-[12px] font-bold">{res.guestName}</span>
-      <span className="block text-[11px] font-semibold opacity-80">{res.partySize}p · {res.time.slice(0, 5)}{conflict ? " · conflitto" : ""}</span>
+      <span className="block text-[11px] font-semibold opacity-80">
+        {res.partySize}p · {res.time.slice(0, 5)}
+        {(res.joinedTableIds?.length ?? 0) > 0 && ` · +${res.joinedTableIds.length}`}
+        {conflict ? " · conflitto" : ""}
+      </span>
     </button>
   );
 }
 
 // Assegnazione rapida: tocca una prenotazione "da sistemare", scegli il tavolo.
+// Se il gruppo non entra in nessun tavolo singolo, propone di accostarne due o più
+// (stesso calcolo della vista Sala), così anche dal Piano si può sistemare un tavolata.
 export function AssignSheet({ res, date, onClose }: { res: Reservation | null; date: string; onClose: () => void }) {
   const boot = useBootstrap();
   const rid = useSession((s) => s.staff?.restaurantId);
   const me = useSession((s) => s.staff?.name) ?? "";
   const qc = useQueryClient();
-  const day = { resId: res?.id }; // placeholder riferimento
-  void day;
-  const reservations = useQueryClient().getQueryData<DayData>(["day", rid, date])?.reservations ?? [];
+  const reservations = qc.getQueryData<DayData>(["day", rid, date])?.reservations ?? [];
   if (!res || !boot.data) return null;
   const b = boot.data;
   const period = periodFor(toMin(res.time), b.periods);
   const dur = durationFor(res.partySize, period?.name ?? null, b.settings);
+  const busyAtTime = reservations.filter((r) =>
+    r.id !== res.id && (r.status === "confermata" || r.status === "seduta") &&
+    (r.assignedTableId || r.assignedComboId));
   const { tables, combos } = freeTargetsAt({
     timeMin: toMin(res.time), party: res.partySize, dur, buf: b.settings.bufferMinutes,
-    tables: b.tables, combos: b.combos,
-    assigned: reservations.filter((r) => r.id !== res.id && (r.status === "confermata" || r.status === "seduta") && (r.assignedTableId || r.assignedComboId)),
+    tables: b.tables, combos: b.combos, assigned: busyAtTime,
     durFor: (p) => durationFor(p, period?.name ?? null, b.settings),
   });
-  const opts = [
-    ...tables.map((t) => ({ label: `Tavolo ${t.label}`, sub: `${t.capacity} posti · ${b.rooms.find((r2) => r2.id === t.roomId)?.name}`, id: t.id, kind: "table" as const })),
-    ...combos.map((c) => ({ label: `Accorpati ${c.label}`, sub: `${c.capacity} posti · ${b.rooms.find((r2) => r2.id === c.roomId)?.name}`, id: c.id, kind: "combo" as const })),
-  ].sort((x, y) => Number(x.sub) - Number(y.sub));
+  const roomName = (roomId: string) => b.rooms.find((r) => r.id === roomId)?.name ?? "";
+  const preferred = res.preferredRoomId;
 
-  const pick = async (o: (typeof opts)[number]) => {
+  type Opt = { key: string; label: string; sub: string; tableId: string | null; comboId: string | null; joined: string[]; waste: number; pref: boolean };
+  const opts: Opt[] = [
+    ...tables.map((t) => ({
+      key: t.id, label: `Tavolo ${t.label}`, sub: `${Math.max(t.capacity, t.maxCapacity)} posti · ${roomName(t.roomId)}`,
+      tableId: t.id, comboId: null, joined: [], waste: Math.max(t.capacity, t.maxCapacity) - res.partySize,
+      pref: !!preferred && t.roomId === preferred,
+    })),
+    ...combos.map((c) => ({
+      key: c.id, label: `Accorpati ${c.label}`, sub: `${c.capacity} posti · ${roomName(c.roomId)}`,
+      tableId: null, comboId: c.id, joined: [], waste: c.capacity - res.partySize,
+      pref: !!preferred && c.roomId === preferred,
+    })),
+  ];
+
+  // Accorpamento al volo: solo se non basta un tavolo singolo. Si valutano i tavoli
+  // liberi in quella fascia oraria, non lo stato "adesso".
+  if (!opts.length && b.settings.allowTableJoin) {
+    const freeNow = freeTargetsAt({
+      timeMin: toMin(res.time), party: 1, dur, buf: b.settings.bufferMinutes,
+      tables: b.tables, combos: [], assigned: busyAtTime,
+      durFor: (p) => durationFor(p, period?.name ?? null, b.settings),
+    }).tables;
+    for (const j of findJoinProposals({
+      party: res.partySize, tables: freeNow, maxGapCm: b.settings.joinMaxGapCm ?? 150,
+    })) {
+      opts.push({
+        key: j.label, label: `Accosta ${j.label}`, sub: j.reason,
+        tableId: j.tableIds[0], comboId: null, joined: j.tableIds.slice(1),
+        waste: j.waste, pref: !!preferred && j.tables.every((t) => t.roomId === preferred),
+      });
+    }
+  }
+  // prima la sala richiesta dal cliente, poi chi spreca meno posti
+  opts.sort((x, y) => Number(y.pref) - Number(x.pref) || x.waste - y.waste);
+
+  const pick = async (o: Opt) => {
     await api(`/api/reservations/${res.id}`, {
       method: "PATCH",
-      body: { restaurantId: rid, staffName: me, action: "assign", tableId: o.kind === "table" ? o.id : null, comboId: o.kind === "combo" ? o.id : null, label: o.label.replace("Tavolo ", "") },
+      body: {
+        restaurantId: rid, staffName: me, action: "assign",
+        tableId: o.tableId, comboId: o.comboId, joinedTableIds: o.joined,
+        label: o.label.replace("Tavolo ", "").replace("Accorpati ", "").replace("Accosta ", ""),
+      },
     });
     await qc.invalidateQueries({ queryKey: ["day", rid, date] });
     onClose();
   };
 
   return (
-    <Sheet open={!!res} onClose={onClose} title={<span>Sistema <span className="text-brand">{res.guestName}</span> · {res.partySize} p. alle {res.time} · occupa ~{dur}′</span>}>
+    <Sheet open={!!res} onClose={onClose}
+      title={<span>Sistema <span className="text-brand">{res.guestName}</span> · {res.partySize} p. alle {res.time} · occupa ~{dur}′</span>}>
+      {preferred && (
+        <p className="mb-2 text-[13px] font-semibold text-soon">Ha chiesto: {roomName(preferred)}</p>
+      )}
       {opts.length ? (
         <div className="grid gap-2">
           {opts.map((o) => (
-            <button key={o.id} onClick={() => pick(o)}
-              className="flex min-h-[60px] items-center gap-3 rounded-2xl border-2 border-ok/40 bg-ok/10 px-4 text-left active:scale-[0.98]">
-              <span className="grid h-10 w-10 place-items-center rounded-xl bg-ok font-display text-sm font-bold text-white">{o.label.replace("Tavolo ", "").replace("Accorpati ", "")}</span>
-              <span className="flex-1 font-bold">{o.label}<span className="block text-[13px] font-medium text-muted">{o.sub}</span></span>
+            <button key={o.key} onClick={() => pick(o)}
+              className={`flex min-h-[60px] items-center gap-3 rounded-2xl border-2 px-4 text-left active:scale-[0.98] ${o.joined.length ? "border-soon/50 bg-soon/10" : "border-ok/40 bg-ok/10"}`}>
+              <span className={`grid h-10 shrink-0 place-items-center rounded-xl px-2 font-display text-sm font-bold text-white ${o.joined.length ? "bg-soon text-ink" : "bg-ok"}`}>
+                {o.label.replace("Tavolo ", "").replace("Accorpati ", "").replace("Accosta ", "")}
+              </span>
+              <span className="min-w-0 flex-1 font-bold">
+                {o.label}
+                <span className="block truncate text-[13px] font-medium text-muted">{o.sub}</span>
+              </span>
+              {o.pref && <span className="shrink-0 text-[11px] font-bold text-soon">sala giusta</span>}
             </button>
           ))}
         </div>
       ) : (
         <p className="rounded-2xl border border-soon/50 bg-soon/10 p-4 text-center font-semibold text-soon">
-          Nessun tavolo libero per {res.partySize} persone alle {res.time}. Sposta l&apos;orario o valuta un accorpamento già occupato.
+          Nessun tavolo libero per {res.partySize} persone alle {res.time}. Sposta l&apos;orario o libera un accorpamento.
         </p>
       )}
     </Sheet>

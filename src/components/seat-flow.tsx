@@ -98,7 +98,7 @@ export function SuggestedTables({ party, onPick, excludeIds = [], compact, forRe
   const joins = settings.allowTableJoin && !free.length
     ? findJoinProposals({
         party, tables: tables.filter((t) => !excludeIds.includes(t.id)), statuses,
-        maxGapCm: settings.joinMaxGapCm ?? 90,
+        maxGapCm: settings.joinMaxGapCm ?? 150,
       })
     : [];
 

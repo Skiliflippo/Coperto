@@ -1,6 +1,7 @@
 "use client";
-// Toast + pattern "Annulla per 10 secondi": l'azione distruttiva viene programmata,
-// la UI mostra subito lo stato come fatto (pending), Annulla ferma tutto. Niente popup.
+// Toast + pattern "Annulla per 10 secondi": l'azione viene eseguita SUBITO —
+// in sala non si aspetta — e per 10 secondi resta la possibilità di rimediare.
+// Annulla esegue l'operazione inversa. Niente popup di conferma.
 import { create } from "zustand";
 import { CheckCircle2, Info, TriangleAlert, X } from "lucide-react";
 
@@ -23,27 +24,39 @@ export const useToasts = create<Store>((set) => ({
 }));
 export const toast = (t: Omit<ToastItem, "id">) => useToasts.getState().push(t);
 
-// Registro delle azioni in attesa di commit (per il rendering ottimista)
-type Pending = { keys: Set<string>; add: (k: string) => void; remove: (k: string) => void };
-export const usePending = create<Pending>((set) => ({
-  keys: new Set(),
-  add: (k) => set((s) => ({ keys: new Set(s.keys).add(k) })),
-  remove: (k) => set((s) => { const n = new Set(s.keys); n.delete(k); return { keys: n }; }),
-}));
-
-export function scheduleUndo(key: string, title: string, commit: () => Promise<void> | void) {
-  const { add, remove } = usePending.getState();
-  add(key);
-  const timer = setTimeout(async () => {
-    remove(key);
-    useToasts.getState().dismiss(id);
-    try { await commit(); } catch (e: any) { toast({ title: e?.message ?? "Operazione non riuscita", tone: "err" }); }
-  }, 10_000);
+/**
+ * Esegue l'azione immediatamente e mostra per 10 secondi la possibilità di
+ * annullarla. `undo` è l'operazione inversa (riaprire un tavolo, riportare una
+ * prenotazione a confermata…), eseguita solo se l'operatore tocca "Annulla".
+ */
+export async function runWithUndo(
+  title: string,
+  action: () => Promise<void> | void,
+  undo: () => Promise<void> | void,
+) {
+  try {
+    await action();
+  } catch (e: any) {
+    toast({ title: e?.message ?? "Operazione non riuscita", tone: "err" });
+    return;
+  }
+  let undone = false;
   const id = useToasts.getState().push({
     title, tone: "warn", barMs: 10_000,
     actionLabel: "Annulla",
-    onAction: () => { clearTimeout(timer); remove(key); useToasts.getState().dismiss(id); },
+    onAction: async () => {
+      if (undone) return;
+      undone = true;
+      useToasts.getState().dismiss(id);
+      try {
+        await undo();
+        toast({ title: "Annullato", tone: "ok" });
+      } catch (e: any) {
+        toast({ title: e?.message ?? "Non è stato possibile annullare", tone: "err" });
+      }
+    },
   });
+  setTimeout(() => useToasts.getState().dismiss(id), 10_000);
 }
 
 const ICONS: Record<Tone, typeof Info> = { info: Info, ok: CheckCircle2, warn: TriangleAlert, err: TriangleAlert };
@@ -57,7 +70,7 @@ export function Toaster() {
   const dismiss = useToasts((s) => s.dismiss);
   if (!toasts.length) return null;
   return (
-    <div className="no-print fixed inset-x-3 bottom-[calc(env(safe-area-inset-bottom)+80px)] z-[130] flex flex-col gap-2 pointer-events-none sm:left-auto sm:right-4 sm:w-[380px]">
+    <div className="no-print fixed inset-x-3 top-[calc(env(safe-area-inset-top)+56px)] z-[130] flex flex-col gap-2 pointer-events-none sm:left-auto sm:right-4 sm:w-[380px]">
       {toasts.map((t) => {
         const Icon = ICONS[t.tone];
         return (

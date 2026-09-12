@@ -1,83 +1,14 @@
 "use client";
-// ─────────────────────────────────────────────────────────────────────────────
-// PRIMO ACCESSO · si dichiara la piantina della sala e si finisce nell'editor.
-// Tre passi, nessun testo lungo: com'è fatta la sala → quanto è grande →
-// aggiusta il perimetro e metti i tavoli.
-// ─────────────────────────────────────────────────────────────────────────────
-import { useState } from "react";
-import { useQueryClient } from "@tanstack/react-query";
-import { ArrowRight, Check, Pencil, Ruler } from "lucide-react";
-import { api } from "@/lib/api";
+// PRIMO ACCESSO · si dichiara la piantina della sala prima di iniziare il servizio.
+// Il percorso è lo stesso usato per aggiungere una sala in seguito (RoomWizard).
 import { useSession } from "@/store/session";
-import { toast } from "@/components/toast";
-import { Btn } from "@/components/ui";
-import { rectPolygon, type Point, type RoomLayout } from "@/lib/floor";
-import { FloorEditor } from "@/components/floor-editor";
+import { RoomWizard } from "@/components/room-wizard";
 import type { Bootstrap } from "@/lib/types";
-
-// Sagome tipiche: quasi ogni sala è una di queste, poi si aggiusta a mano.
-type ShapeKind = "rettangolo" | "elle" | "trapezio" | "libera";
-const SHAPES: { kind: ShapeKind; label: string; hint: string; make: (w: number, h: number) => Point[] }[] = [
-  { kind: "rettangolo", label: "Rettangolare", hint: "quattro muri dritti", make: (w, h) => rectPolygon(w, h) },
-  {
-    kind: "elle", label: "A elle", hint: "con un angolo rientrante",
-    make: (w, h) => [{ x: 0, y: 0 }, { x: w, y: 0 }, { x: w, y: h * 0.55 }, { x: w * 0.45, y: h * 0.55 }, { x: w * 0.45, y: h }, { x: 0, y: h }],
-  },
-  {
-    kind: "trapezio", label: "Con muro obliquo", hint: "una parete storta", 
-    make: (w, h) => [{ x: 0, y: 0 }, { x: w, y: 0 }, { x: w, y: h }, { x: w * 0.28, y: h }],
-  },
-  { kind: "libera", label: "La disegno io", hint: "parto da un rettangolo", make: (w, h) => rectPolygon(w, h) },
-];
 
 export function Onboarding({ boot }: { boot: Bootstrap }) {
   const staff = useSession((s) => s.staff);
-  const qc = useQueryClient();
-  const [step, setStep] = useState<0 | 1 | 2>(0);
-  const [shape, setShape] = useState<ShapeKind>("rettangolo");
-  const [name, setName] = useState(boot.rooms[0]?.name ?? "Sala interna");
-  const [w, setW] = useState(1200);
-  const [h, setH] = useState(800);
-  const [roomId, setRoomId] = useState<string | null>(null);
-  const [busy, setBusy] = useState(false);
 
-  const layout = (): RoomLayout => {
-    const poly = (SHAPES.find((s) => s.kind === shape) ?? SHAPES[0]).make(w, h)
-      .map((p) => ({ x: Math.round(p.x), y: Math.round(p.y) }));
-    return { w, h, polygon: poly, elements: [] };
-  };
-
-  const goToEditor = async () => {
-    setBusy(true);
-    try {
-      const r = await api<{ roomId: string }>("/api/onboarding", {
-        method: "POST",
-        body: { restaurantId: boot.restaurant.id, staffId: staff?.id, staffName: staff?.name, roomName: name, layout: layout() },
-      });
-      await qc.invalidateQueries({ queryKey: ["bootstrap", staff?.restaurantId] });
-      setRoomId(r.roomId);
-      setStep(2);
-    } catch (e: any) { toast({ title: e.message, tone: "err" }); }
-    setBusy(false);
-  };
-
-  const finish = async () => {
-    await api("/api/onboarding", {
-      method: "POST",
-      body: { restaurantId: boot.restaurant.id, staffId: staff?.id, staffName: staff?.name, finish: true },
-    });
-    await qc.invalidateQueries({ queryKey: ["bootstrap", staff?.restaurantId] });
-    toast({ title: "Sala pronta", msg: "Da qui in poi si lavora: buon servizio.", tone: "ok" });
-  };
-
-  // Passo finale: l'editor vero, dove si disegna il perimetro e si mettono i tavoli.
-  if (step === 2 && roomId) {
-    const room = boot.rooms.find((r) => r.id === roomId);
-    if (!room) return null;
-    return <FloorEditor boot={boot} roomId={roomId} onClose={finish} />;
-  }
-
-  // Solo il titolare configura la sala.
+  // Solo il titolare configura la sala: al personale si spiega cosa manca.
   if (staff?.role !== "titolare") {
     return (
       <div className="fixed inset-0 z-[95] grid place-items-center bg-bg px-6 text-center">
@@ -89,94 +20,5 @@ export function Onboarding({ boot }: { boot: Bootstrap }) {
     );
   }
 
-  return (
-    <div className="fixed inset-0 z-[95] overflow-y-auto bg-bg px-5 pb-10" style={{ paddingTop: "calc(env(safe-area-inset-top) + 28px)" }}>
-      <div className="mx-auto max-w-lg">
-        <div className="flex items-center gap-2">
-          {[0, 1, 2].map((i) => (
-            <span key={i} className={`h-1.5 flex-1 rounded-full ${i <= step ? "bg-brand" : "bg-raised"}`} />
-          ))}
-        </div>
-
-        {step === 0 && (
-          <div className="pt-8">
-            <div className="grid h-14 w-14 place-items-center rounded-2xl bg-brand font-display text-2xl font-bold text-on-brand">C</div>
-            <h1 className="mt-4 font-display text-[30px] font-bold leading-tight">Disegniamo la tua sala</h1>
-            <p className="mt-2 text-muted">
-              Serve una volta sola. Da qui in poi vedi i tavoli come sono davvero disposti,
-              e sedere qualcuno è questione di un tocco.
-            </p>
-
-            <p className="mt-7 text-sm font-bold uppercase tracking-wide text-muted">Come è fatta la sala?</p>
-            <div className="mt-2 grid gap-2">
-              {SHAPES.map((s) => (
-                <button key={s.kind} onClick={() => setShape(s.kind)}
-                  className={`flex min-h-[68px] items-center gap-3 rounded-2xl border-2 px-4 text-left active:scale-[0.98] ${shape === s.kind ? "border-brand bg-brand/10" : "border-line bg-surface"}`}>
-                  <ShapePreview points={s.make(100, 68)} active={shape === s.kind} />
-                  <span className="flex-1">
-                    <span className="block font-bold">{s.label}</span>
-                    <span className="block text-[13px] text-muted">{s.hint}</span>
-                  </span>
-                  {shape === s.kind && <Check className="h-5 w-5 text-brand" />}
-                </button>
-              ))}
-            </div>
-            <div className="mt-6"><Btn size="xl" onClick={() => setStep(1)}>Avanti <ArrowRight className="h-5 w-5" /></Btn></div>
-          </div>
-        )}
-
-        {step === 1 && (
-          <div className="pt-8">
-            <h1 className="font-display text-[28px] font-bold leading-tight">Quanto è grande?</h1>
-            <p className="mt-1.5 text-muted">Va bene anche a occhio: potrai correggere quando vuoi.</p>
-
-            <label className="mt-6 block">
-              <span className="mb-1.5 block text-sm font-semibold text-muted">Nome della sala</span>
-              <input value={name} onChange={(e) => setName(e.target.value.slice(0, 30))}
-                className="min-h-[56px] w-full rounded-2xl border border-line bg-surface px-4 font-semibold outline-none focus:border-brand" />
-            </label>
-
-            <div className="mt-4 space-y-2">
-              {([["Larghezza", w, setW], ["Profondità", h, setH]] as const).map(([label, val, set]) => (
-                <div key={label} className="flex items-center justify-between rounded-2xl border border-line bg-surface px-4 py-3">
-                  <span className="flex items-center gap-2 text-[15px] font-semibold"><Ruler className="h-4 w-4 text-muted" />{label}</span>
-                  <div className="flex items-center gap-2">
-                    <button onClick={() => set(Math.max(400, val - 100))} className="grid h-12 w-12 place-items-center rounded-xl bg-raised text-xl font-bold active:scale-95">−</button>
-                    <span className="w-20 text-center font-display text-xl font-extrabold tabular-nums">{(val / 100).toFixed(1)} m</span>
-                    <button onClick={() => set(Math.min(4000, val + 100))} className="grid h-12 w-12 place-items-center rounded-xl bg-raised text-xl font-bold active:scale-95">+</button>
-                  </div>
-                </div>
-              ))}
-            </div>
-
-            <div className="mt-5 grid place-items-center rounded-3xl border border-line bg-surface p-5">
-              <ShapePreview points={(SHAPES.find((s) => s.kind === shape) ?? SHAPES[0]).make(220, 220 * (h / w))} big />
-              <p className="mt-2 text-[13px] font-semibold text-muted">{(w / 100).toFixed(1)} × {(h / 100).toFixed(1)} metri</p>
-            </div>
-
-            <div className="mt-6 grid gap-2">
-              <Btn size="xl" disabled={busy} onClick={goToEditor}>
-                <Pencil className="h-5 w-5" /> Disegna muri e tavoli
-              </Btn>
-              <Btn variant="ghost" onClick={() => setStep(0)}>Indietro</Btn>
-            </div>
-          </div>
-        )}
-      </div>
-    </div>
-  );
-}
-
-function ShapePreview({ points, active, big }: { points: Point[]; active?: boolean; big?: boolean }) {
-  const maxX = Math.max(...points.map((p) => p.x)), maxY = Math.max(...points.map((p) => p.y));
-  const size = big ? 220 : 52;
-  const scale = size / Math.max(maxX, maxY);
-  return (
-    <svg width={maxX * scale} height={maxY * scale} viewBox={`-6 -6 ${maxX + 12} ${maxY + 12}`}
-      className={big ? "" : "shrink-0"} style={{ maxWidth: size, maxHeight: size }}>
-      <polygon points={points.map((p) => `${p.x},${p.y}`).join(" ")}
-        fill={active ? "var(--brand-soft)" : "var(--raised)"}
-        stroke={active ? "var(--brand)" : "var(--muted)"} strokeWidth={big ? 6 : 7} strokeLinejoin="round" />
-    </svg>
-  );
+  return <RoomWizard boot={boot} mode="primo-accesso" onDone={() => { /* il bootstrap si aggiorna da solo */ }} />;
 }

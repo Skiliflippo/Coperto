@@ -12,7 +12,7 @@ import { computeTableStatuses } from "@/lib/estimates";
 import { nowMin, todayISO } from "@/lib/time";
 import { TABLE_STATE, fmtCovers } from "@/lib/meta";
 import { Btn, Sheet, Chip } from "@/components/ui";
-import { scheduleUndo, usePending } from "@/components/toast";
+import { runWithUndo } from "@/components/toast";
 import { PartyGrid, SuggestedTables, useSeat } from "@/components/seat-flow";
 import type { TableT } from "@/lib/types";
 
@@ -23,7 +23,6 @@ export function TableSheet({ table, onClose }: { table: TableT | null; onClose: 
   const rid = useSession((s) => s.staff?.restaurantId);
   const me = useSession((s) => s.staff?.name) ?? "";
   const qc = useQueryClient();
-  const pending = usePending((s) => s.keys);
   const seat = useSeat();
   const [mode, setMode] = useState<"main" | "seat" | "move" | "party" | "note">("main");
   const [party, setParty] = useState(2);
@@ -39,7 +38,6 @@ export function TableSheet({ table, onClose }: { table: TableT | null; onClose: 
   const seating = status.seating;
   const state = status.state;
   const meta = TABLE_STATE[state];
-  const isPendingFree = seating && pending.has(`libera:${seating.id}`);
 
   const act = async (path: string, body: unknown) => {
     await api(path, { method: "PATCH", body: { restaurantId: rid, staffName: me, ...(body as object) } });
@@ -77,15 +75,15 @@ export function TableSheet({ table, onClose }: { table: TableT | null; onClose: 
               {seating.note && <p className="mt-1 text-sm text-muted">Nota: {seating.note}</p>}
             </div>
           )}
-          {isPendingFree ? (
-            <div className="rounded-2xl border-2 border-soon/50 bg-soon/10 p-4 text-center">
-              <p className="font-bold text-soon">Sto liberando il tavolo…</p>
-              <p className="text-sm text-muted">Tocca Annulla nel riquadro giallo per tornare indietro</p>
-            </div>
-          ) : seating ? (
+          {seating ? (
             <>
-              <Btn variant="ok" size="xl" onClick={() =>
-                scheduleUndo(`libera:${seating.id}`, `${seating.tableIds.length > 1 ? `Tavoli ${seating.tableLabel} liberati` : `Tavolo ${table.label} liberato`}`, () => act(`/api/seatings/${seating.id}`, { action: "libera" }))}>
+              <Btn variant="ok" size="xl" onClick={() => {
+                const label = seating.tableIds.length > 1 ? `Tavoli ${seating.tableLabel} liberati` : `Tavolo ${table.label} liberato`;
+                onClose();
+                runWithUndo(label,
+                  () => act(`/api/seatings/${seating.id}`, { action: "libera" }),
+                  () => act(`/api/seatings/${seating.id}`, { action: "riapri" }));
+              }}>
                 <DoorOpen className="h-6 w-6" /> Libera il tavolo
               </Btn>
               <div className="grid grid-cols-2 gap-3">
@@ -102,7 +100,12 @@ export function TableSheet({ table, onClose }: { table: TableT | null; onClose: 
               <Btn size="xl" onClick={() => { setParty(2); setMode("seat"); }}><Users className="h-6 w-6" /> Siedi qualcuno qui</Btn>
               <div className="grid grid-cols-2 gap-3">
                 <Btn variant="soft" onClick={() => { setNote(table.note); setMode("note"); }}><StickyNote className="h-5 w-5" /> Nota tavolo</Btn>
-                <Btn variant="soft" onClick={() => scheduleUndo(`oos:${table.id}`, `Tavolo ${table.label} fuori servizio`, () => act(`/api/tables/${table.id}`, { action: "fuori_servizio" }))}>
+                <Btn variant="soft" onClick={() => {
+                  onClose();
+                  runWithUndo(`Tavolo ${table.label} fuori servizio`,
+                    () => act(`/api/tables/${table.id}`, { action: "fuori_servizio" }),
+                    () => act(`/api/tables/${table.id}`, { action: "in_servizio" }));
+                }}>
                   <Ban className="h-5 w-5" /> Fuori servizio
                 </Btn>
               </div>

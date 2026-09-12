@@ -20,6 +20,19 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
     // di segnare "da pulire" e poi "pronto".
     await db.update(s.seatings).set({ status: "chiuso", actualEndAt: new Date() }).where(eq(s.seatings.id, id));
     msg = `${staffName} ha liberato il tavolo ${cur.tableLabel}`;
+  } else if (action === "riapri") {
+    // annulla una liberazione: il gruppo torna seduto dov'era
+    const clash = await db.select().from(s.seatings)
+      .where(and(eq(s.seatings.restaurantId, restaurantId), eq(s.seatings.status, "seduto")));
+    if (clash.some((x) => x.tableIds.some((id: string) => cur.tableIds.includes(id)))) {
+      return NextResponse.json({ error: `Tavolo ${cur.tableLabel} nel frattempo è stato occupato` }, { status: 409 });
+    }
+    await db.update(s.seatings).set({ status: "seduto", actualEndAt: null }).where(eq(s.seatings.id, id));
+    if (cur.reservationId) {
+      await db.update(s.reservations).set({ status: "seduta", updatedAt: new Date() })
+        .where(eq(s.reservations.id, cur.reservationId));
+    }
+    msg = `${staffName} ha riaperto il tavolo ${cur.tableLabel}`;
   } else if (action === "extend") {
     const mins = Number(b.minutes ?? 15);
     await db.update(s.seatings).set({ expectedEndAt: new Date(new Date(cur.expectedEndAt).getTime() + mins * 60000) }).where(eq(s.seatings.id, id));

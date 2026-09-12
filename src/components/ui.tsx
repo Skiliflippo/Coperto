@@ -92,8 +92,10 @@ export function Chip({ children, cls = "" }: { children: ReactNode; cls?: string
 }
 
 export function Field({ label, children }: { label: string; children: ReactNode }) {
+  // min-w-0: dentro un grid i figli non si restringono da soli e un carosello
+  // largo (es. gli slot orario di un giorno intero) allargherebbe tutto il popup.
   return (
-    <label className="block">
+    <label className="block min-w-0">
       <span className="mb-1.5 block text-sm font-semibold text-muted">{label}</span>
       {children}
     </label>

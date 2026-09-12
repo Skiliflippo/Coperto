@@ -17,10 +17,11 @@ import { useSession } from "@/store/session";
 import { toast } from "@/components/toast";
 import { useViewport } from "@/lib/use-viewport";
 import {
-  DECOR_PRESETS, aabb, blockedSides, boxInsideRoom, boxesOverlap, clamp, clampPointToRoom,
+  DECOR_PRESETS, MAX_ROOM_CM, aabb, boxInsideRoom, boxesOverlap, clamp, clampPointToRoom, computeRoomSeats,
+  polygonBounds,
   elementBox, iconFromLabel, normalizeLayout, polygonOf, rectPolygon,
   snapBoxToWalls, snapTo, suggestShape, tableGeometry, uid,
-  type Box, type DecorIcon, type FloorElement, type RoomLayout, type TableShape,
+  type Box, type DecorIcon, type FloorElement, type Point, type RoomLayout, type TableShape,
 } from "@/lib/floor";
 import { ElementNode, GridBackdrop, RoomShell, TableNode, type TableNodeData } from "@/components/floor-shapes";
 import type { Bootstrap, Room, TableT } from "@/lib/types";
@@ -58,10 +59,17 @@ export function FloorEditor({ boot, roomId, onClose }: { boot: Bootstrap; roomId
   const [confirmClose, setConfirmClose] = useState(false);
 
   const { ref, vp, fit, zoomBy, toWorld, isPanning, bind, revealRect, cancelPan } =
-    useViewport(draft.layout.w, draft.layout.h, { padding: 80 });
+    useViewport(draft.layout.w, draft.layout.h, {
+      padding: 90, bounds: polygonBounds(polygonOf(draft.layout)),
+    });
   const nodeRefs = useRef(new Map<string, HTMLDivElement>());
   const dirty = past.length > 0;
   const poly = polygonOf(draft.layout);
+  const seatsByTable = useMemo(
+    () => computeRoomSeats(draft.tables, poly, draft.layout.elements.map(elementBox)),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [draft.tables, draft.layout],
+  );
 
   // Ingombri di tutto ciò che occupa spazio: serve a evitare sovrapposizioni.
   const tableBox = (t: TableNodeData): Box => aabb(t.x, t.y, t.width, t.height, t.rotation);
@@ -209,31 +217,70 @@ export function FloorEditor({ boot, roomId, onClose }: { boot: Bootstrap; roomId
   };
 
   // ── Perimetro: trascina un angolo (anche obliquo), doppio tap per aggiungerlo ──
+  // Ogni vertice può andare in tutte le direzioni: se l'angolo esce dal bordo
+  // alto/sinistro, si trasla l'intera piantina (poligono, tavoli, arredi) così
+  // l'origine resta 0,0 e la sala cresce davvero anche da quei lati.
   const dragCorner = (e: React.PointerEvent, index: number) => {
     e.stopPropagation();
     cancelPan();
-    const boxes = allBoxes();
-    const move = (ev: PointerEvent) => {
-      const p = toWorld(ev.clientX, ev.clientY);
-      const np = { x: Math.max(0, snapG(p.x)), y: Math.max(0, snapG(p.y)) };
+    const before = draft;                 // snapshot: un solo passo di undo per trascinamento
+    const origin = toWorld(e.clientX, e.clientY);
+    const startPoint = polygonOf(draft.layout)[index];
+    const DAMP = 0.55;                    // il muro segue il dito a metà velocità:
+                                          // si evita di sbracare oltre il punto voluto
+    let pending: Point | null = null;
+    let frame = 0;
+
+    const applyPoint = (np: Point) => {
       setDraft((d) => {
         const pts = polygonOf(d.layout).map((q, i) => (i === index ? np : q));
+        // traslazione: quanto sborda oltre il bordo alto/sinistro
+        const shiftX = Math.max(0, -Math.min(...pts.map((q) => q.x)));
+        const shiftY = Math.max(0, -Math.min(...pts.map((q) => q.y)));
+        const moved = pts.map((q) => ({ x: q.x + shiftX, y: q.y + shiftY }));
+        const w = Math.max(400, Math.ceil(Math.max(...moved.map((q) => q.x)) / 50) * 50);
+        const h = Math.max(400, Math.ceil(Math.max(...moved.map((q) => q.y)) / 50) * 50);
+        // la sala non può crescere all'infinito: oltre il limite il vertice si ferma
+        if (w > MAX_ROOM_CM || h > MAX_ROOM_CM) return d;
+
+        const elements = shiftX || shiftY
+          ? d.layout.elements.map((el) => ({ ...el, x: el.x + shiftX, y: el.y + shiftY }))
+          : d.layout.elements;
+        const tables = shiftX || shiftY
+          ? d.tables.map((t) => ({ ...t, x: t.x + shiftX, y: t.y + shiftY }))
+          : d.tables;
+
         // il muro si ferma al contatto: se lascerebbe fuori un tavolo o un arredo, non si muove
-        if (boxes.some((b) => !boxInsideRoom(b, pts))) return d;
-        return { ...d, layout: { ...d.layout, polygon: pts } };
+        const boxes = [
+          ...tables.map((t) => aabb(t.x, t.y, t.width, t.height, t.rotation)),
+          ...elements.map(elementBox),
+        ];
+        if (boxes.some((b) => !boxInsideRoom(b, moved))) return d;
+
+        return { ...d, tables, layout: { ...d.layout, w, h, polygon: moved, elements } };
+      });
+    };
+
+    const move = (ev: PointerEvent) => {
+      const p = toWorld(ev.clientX, ev.clientY);
+      pending = {
+        x: snapG(startPoint.x + (p.x - origin.x) * DAMP),
+        y: snapG(startPoint.y + (p.y - origin.y) * DAMP),
+      };
+      // un aggiornamento per frame: il pavimento segue il dito senza scatti
+      if (frame) return;
+      frame = requestAnimationFrame(() => {
+        frame = 0;
+        if (pending) applyPoint(pending);
       });
     };
     const up = () => {
       window.removeEventListener("pointermove", move);
       window.removeEventListener("pointerup", up);
-      // ricalcola il riquadro contenitore e registra un solo passo di undo
-      setDraft((d) => {
-        const pts = polygonOf(d.layout);
-        const w = Math.max(400, Math.ceil(Math.max(...pts.map((p) => p.x)) / 50) * 50);
-        const h = Math.max(400, Math.ceil(Math.max(...pts.map((p) => p.y)) / 50) * 50);
-        setPast((prev) => [...prev.slice(-40), draft]);
-        return { ...d, layout: { ...d.layout, w, h, polygon: pts } };
-      });
+      if (frame) { cancelAnimationFrame(frame); frame = 0; }
+      if (pending) applyPoint(pending);
+      setPast((prev) => [...prev.slice(-40), before]);
+      setFuture([]);
     };
     window.addEventListener("pointermove", move);
     window.addEventListener("pointerup", up);
@@ -443,7 +490,7 @@ export function FloorEditor({ boot, roomId, onClose }: { boot: Bootstrap; roomId
             <TableNode key={t.id} t={t} tone="border-busy/50"
               sub={`${t.capacity}${(t.maxCapacity ?? t.capacity) > t.capacity ? `-${t.maxCapacity}` : ""}p`}
               invalid={badId === t.id}
-              blocked={blockedSides(tableBox(t), poly, allBoxes(t.id))}
+              seats={seatsByTable.get(t.id)}
               selected={sel?.kind === "table" && sel.id === t.id}
               ref={(n) => { if (n) nodeRefs.current.set(t.id, n); }}
               onPointerDown={(e) => dragNode(e, t.id, "table")} />

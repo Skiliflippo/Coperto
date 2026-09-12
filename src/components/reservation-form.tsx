@@ -12,22 +12,28 @@ import { durationFor, freeTargetsAt, periodFor } from "@/lib/estimates";
 import { Btn, Field, Input, Sheet } from "@/components/ui";
 import { PartyGrid } from "@/components/seat-flow";
 import { toast } from "@/components/toast";
-import type { DayData } from "@/lib/types";
+import type { DayData, Reservation } from "@/lib/types";
 
 const NOTE_CHIPS = ["Tavolo tranquillo", "Seggiolone", "Compleanno", "Senza glutine", "Intolleranze", "Dehors se libero"];
 
-export function ReservationFormSheet({ open, onClose, defaultDate }: { open: boolean; onClose: () => void; defaultDate?: string }) {
+export function ReservationFormSheet({ open, onClose, defaultDate, edit }: {
+  open: boolean; onClose: () => void; defaultDate?: string;
+  edit?: Reservation | null;      // se presente si modifica invece di creare
+}) {
   const boot = useBootstrap();
   const rid = useSession((s) => s.staff?.restaurantId);
   const me = useSession((s) => s.staff?.name) ?? "";
   const qc = useQueryClient();
-  const [day, setDay] = useState<"stasera" | "domani" | "altro">(defaultDate && defaultDate !== todayISO() ? (defaultDate === todayISO(1) ? "domani" : "altro") : "stasera");
-  const [altDate, setAltDate] = useState(defaultDate ?? todayISO(1));
-  const [time, setTime] = useState("");
-  const [party, setParty] = useState(2);
-  const [name, setName] = useState("");
-  const [phone, setPhone] = useState("");
-  const [notes, setNotes] = useState("");
+  const startDate = edit?.date ?? defaultDate;
+  const [day, setDay] = useState<"stasera" | "domani" | "altro">(
+    startDate && startDate !== todayISO() ? (startDate === todayISO(1) ? "domani" : "altro") : "stasera");
+  const [altDate, setAltDate] = useState(startDate ?? todayISO(1));
+  const [time, setTime] = useState(edit?.time ?? "");
+  const [party, setParty] = useState(edit?.partySize ?? 2);
+  const [name, setName] = useState(edit?.guestName ?? "");
+  const [phone, setPhone] = useState(edit?.guestPhone ?? "");
+  const [notes, setNotes] = useState(edit?.notes ?? "");
+  const [roomId, setRoomId] = useState<string | null>(edit?.preferredRoomId ?? null);
   const [dups, setDups] = useState<{ id: string; guestName: string; time: string; partySize: number }[] | null>(null);
   const [busy, setBusy] = useState(false);
 
@@ -78,13 +84,31 @@ export function ReservationFormSheet({ open, onClose, defaultDate }: { open: boo
     if (!name.trim() || !time || busy) return;
     setBusy(true);
     try {
+      if (edit) {
+        // modifica: nome, giorno, ora, coperti, telefono, note, sala preferita
+        await api(`/api/reservations/${edit.id}`, {
+          method: "PATCH",
+          body: {
+            restaurantId: rid, staffName: me,
+            guestName: name.trim(), guestPhone: phone, date, time,
+            partySize: party, notes, preferredRoomId: roomId,
+          },
+        });
+        await qc.invalidateQueries({ queryKey: ["day", rid] });
+        toast({ title: `${name.trim()} aggiornata`, msg: `${relDay(date)} alle ${time} · ${party} p.`, tone: "ok" });
+        onClose();
+        return;
+      }
       await api("/api/reservations", {
         method: "POST",
-        body: { restaurantId: rid, date, time, partySize: party, name, phone, notes, source: "telefono", createdBy: me, force },
+        body: {
+          restaurantId: rid, date, time, partySize: party, name, phone, notes,
+          source: "telefono", createdBy: me, force, preferredRoomId: roomId,
+        },
       });
       await qc.invalidateQueries({ queryKey: ["day", rid] });
       toast({ title: `Prenotato: ${name.trim()}, ${party} p. alle ${time}`, msg: `${relDay(date)} · inserita da te`, tone: "ok" });
-      setName(""); setPhone(""); setNotes(""); setTime(""); setParty(2); setDups(null);
+      setName(""); setPhone(""); setNotes(""); setTime(""); setParty(2); setRoomId(null); setDups(null);
       onClose();
     } catch (e) {
       const err = e as ApiError;
@@ -97,7 +121,7 @@ export function ReservationFormSheet({ open, onClose, defaultDate }: { open: boo
     `min-h-[52px] shrink-0 rounded-2xl px-3.5 font-display text-[15px] font-bold tabular-nums active:scale-95 ${active ? "bg-brand text-on-brand shadow" : "bg-raised"}`;
 
   return (
-    <Sheet open={open} onClose={onClose} title="Prenotazione">
+    <Sheet open={open} onClose={onClose} title={edit ? "Modifica prenotazione" : "Prenotazione"}>
       <div className="grid min-w-0 gap-3.5">
         {/* 1 · GIORNO */}
         <Field label="Giorno">
@@ -118,14 +142,14 @@ export function ReservationFormSheet({ open, onClose, defaultDate }: { open: boo
 
         {/* 2 · ORARIO (slot da 15 min + input libero) */}
         <Field label="Orario">
-          <div className="space-y-2">
+          <div className="min-w-0 space-y-2">
             {boot.data?.periods.map((p) => {
               const list = slots[p.name.toLowerCase()] ?? [];
               if (!list.length) return null;
               return (
                 <div key={p.id}>
                   <p className="mb-1 text-xs font-bold uppercase tracking-wide text-muted">{p.name}</p>
-                  <div className="no-scrollbar -mx-4 flex gap-2 overflow-x-auto px-4">
+                  <div className="no-scrollbar -mx-4 flex min-w-0 gap-2 overflow-x-auto px-4">
                     {list.map((t) => <button key={t} onClick={() => setTime(t)} className={chipCls(time === t)}>{t}</button>)}
                   </div>
                 </div>
@@ -147,11 +171,29 @@ export function ReservationFormSheet({ open, onClose, defaultDate }: { open: boo
         </Field>
 
         {/* 5 · TELEFONO + NOTE opzionali */}
-        <div className="grid gap-2.5">
+        {/* SALA (opzionale): alcuni clienti la chiedono al telefono */}
+        {(boot.data?.rooms.length ?? 0) > 1 && (
+          <Field label="Sala richiesta (opzionale)">
+            <div className="no-scrollbar -mx-4 flex min-w-0 gap-2 overflow-x-auto px-4">
+              <button onClick={() => setRoomId(null)}
+                className={`min-h-[48px] shrink-0 rounded-2xl px-4 text-[15px] font-semibold active:scale-95 ${!roomId ? "bg-brand text-on-brand" : "bg-raised text-muted"}`}>
+                Indifferente
+              </button>
+              {boot.data?.rooms.map((r) => (
+                <button key={r.id} onClick={() => setRoomId(roomId === r.id ? null : r.id)}
+                  className={`min-h-[48px] shrink-0 rounded-2xl px-4 text-[15px] font-semibold active:scale-95 ${roomId === r.id ? "bg-brand text-on-brand" : "bg-raised text-muted"}`}>
+                  {r.name}
+                </button>
+              ))}
+            </div>
+          </Field>
+        )}
+
+        <div className="grid min-w-0 gap-2.5">
           <Field label="Telefono (opzionale)">
             <Input value={phone} onChange={(e) => setPhone(e.target.value)} inputMode="tel" placeholder="333…" />
           </Field>
-          <div className="no-scrollbar -mx-4 flex gap-2 overflow-x-auto px-4">
+          <div className="no-scrollbar -mx-4 flex min-w-0 gap-2 overflow-x-auto px-4">
             {NOTE_CHIPS.map((n) => (
               <button key={n} onClick={() => setNotes((v) => (v.includes(n) ? v.replace(n, "").replace(/,\s*,/g, ",").trim() : (v ? `${v}, ${n}` : n)))}
                 className={`min-h-[44px] shrink-0 rounded-full px-3.5 text-sm font-semibold active:scale-95 ${notes.includes(n) ? "bg-brand text-on-brand" : "bg-raised text-muted"}`}>
@@ -187,7 +229,7 @@ export function ReservationFormSheet({ open, onClose, defaultDate }: { open: boo
         )}
 
         <Btn size="xl" disabled={!name.trim() || !time || busy} onClick={() => submit(false)}>
-          <Check className="h-6 w-6" /> Prenota {name ? `${name.trim()} · ` : ""}{party} p. {time ? `alle ${time}` : ""}
+          <Check className="h-6 w-6" /> {edit ? "Salva modifiche" : `Prenota ${name ? `${name.trim()} · ` : ""}${party} p. ${time ? `alle ${time}` : ""}`}
         </Btn>
       </div>
     </Sheet>

@@ -36,7 +36,8 @@ export type ResStatus = "confermata" | "seduta" | "no_show" | "cancellata";
 export type Reservation = {
   id: string; guestName: string; guestPhone: string; date: string; time: string;
   partySize: number; partySizeActual: number | null; status: ResStatus; source: string;
-  assignedTableId: string | null; assignedComboId: string | null; notes: string;
+  assignedTableId: string | null; assignedComboId: string | null;
+  preferredRoomId: string | null; joinedTableIds: string[]; notes: string;
   createdBy: string; createdAt: string; customerId: string | null;
 };
 export type Seating = {

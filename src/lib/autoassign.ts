@@ -5,12 +5,16 @@
 // NON applica mai da solo: produce una proposta con motivazioni da confermare.
 // ─────────────────────────────────────────────────────────────────────────────
 import type { Combo, Period, Reservation, Settings, TableT } from "./types";
+import { findJoinProposals } from "./join";
 import { toMin } from "./time";
 import { durationFor } from "./estimates";
 
 export type Proposal = {
   reservationId: string; name: string; partySize: number; time: string;
-  target: { kind: "table"; table: TableT } | { kind: "combo"; combo: Combo };
+  target:
+    | { kind: "table"; table: TableT }
+    | { kind: "combo"; combo: Combo }
+    | { kind: "join"; tables: TableT[]; label: string };   // tavoli da accostare
   reason: string;
 };
 export type Skipped = { reservationId: string; name: string; partySize: number; time: string; reason: string };
@@ -21,6 +25,7 @@ export function autoAssign(params: {
   period: Period; settings: Settings; scope?: "all" | "unassigned";
 }): AssignPlan {
   const { tables, combos, period, settings } = params;
+  const gap = settings.joinMaxGapCm ?? 150;
   const buf = settings.bufferMinutes;
   const pName = period.name;
   const inPeriod = (t: number) => t >= toMin(period.startTime) && t < toMin(period.endTime) + settings.slotMinutes;
@@ -61,12 +66,27 @@ export function autoAssign(params: {
     type Cand = { kind: "table" | "combo"; t?: TableT; c?: Combo; waste: number };
     const cands: Cand[] = [];
     for (const t of tables) {
-      if (t.capacity < r.partySize || t.state === "fuori_servizio") continue;
-      if (freeAt(t.id, s, e)) cands.push({ kind: "table", t, waste: t.capacity - r.partySize });
+      const seats = Math.max(t.capacity, t.maxCapacity || 0);
+      if (seats < r.partySize || t.state === "fuori_servizio") continue;
+      if (freeAt(t.id, s, e)) cands.push({ kind: "table", t, waste: seats - r.partySize });
     }
     for (const c of combos) {
       if (c.capacity < r.partySize) continue;
       if (c.tableIds.every((id) => freeAt(id, s, e))) cands.push({ kind: "combo", c, waste: c.capacity - r.partySize });
+    }
+    // Nessun tavolo singolo basta: si prova ad accostarne due o più, come in sala.
+    if (!cands.length && settings.allowTableJoin) {
+      const libere = tables.filter((t) => t.state !== "fuori_servizio" && freeAt(t.id, s, e));
+      const [best] = findJoinProposals({ party: r.partySize, tables: libere, maxGapCm: gap, limit: 1 });
+      if (best) {
+        proposals.push({
+          reservationId: r.id, name: r.guestName, partySize: r.partySize, time: r.time,
+          target: { kind: "join", tables: best.tables, label: best.label },
+          reason: `Accosta i tavoli ${best.label}${best.waste > 0 ? ` · avanzano ${best.waste} posti` : ""}`,
+        });
+        for (const t of best.tables) pushBusy(t.id, s, e, r.guestName);
+        continue;
+      }
     }
     if (!cands.length) {
       skipped.push({
@@ -78,12 +98,11 @@ export function autoAssign(params: {
     cands.sort((a, b) => a.waste - b.waste);
     const pick = cands[0];
     const label = pick.kind === "table" ? `Tavolo ${pick.t!.label}` : `Accorpati ${pick.c!.label}`;
-    const cap = pick.kind === "table" ? pick.t!.capacity : pick.c!.capacity;
     const note = /tranquill/i.test(r.notes) ? " · nota: chiesto tavolo tranquillo" : "";
     proposals.push({
       reservationId: r.id, name: r.guestName, partySize: r.partySize, time: r.time,
       target: pick.kind === "table" ? { kind: "table", table: pick.t! } : { kind: "combo", combo: pick.c! },
-      reason: `${label} libero alle ${r.time}, ${cap} posti per ${r.partySize}${pick.waste > 0 ? ` (avanza ${pick.waste})` : ""}${note}`,
+      reason: `${label}${pick.waste > 0 ? ` · avanzano ${pick.waste} posti` : " · nessun posto sprecato"}${note}`,
     });
     // simula l'occupazione per i successivi
     if (pick.kind === "table") pushBusy(pick.t!.id, s, e, r.guestName);

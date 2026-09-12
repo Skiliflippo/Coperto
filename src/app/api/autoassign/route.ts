@@ -24,6 +24,7 @@ export async function POST(req: Request) {
     await db.update(s.reservations).set({
       assignedTableId: p.kind === "table" ? p.id2 : null,
       assignedComboId: p.kind === "combo" ? p.id2 : null,
+      joinedTableIds: Array.isArray(p.joinedTableIds) ? p.joinedTableIds : [],
       updatedAt: new Date(),
     }).where(and(eq(s.reservations.id, p.reservationId), eq(s.reservations.status, "confermata")));
     n++;

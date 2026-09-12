@@ -1,10 +1,10 @@
 // ─────────────────────────────────────────────────────────────────────────────
 // ACCORPAMENTI INTELLIGENTI
-// Se un gruppo non entra in nessun tavolo, l'app cerca due (o tre) tavoli VICINI
-// sulla piantina, entrambi completamente liberi — né occupati né prenotati — la cui
-// somma di posti basta per il gruppo. Propone, non decide: il tavolo unito nasce
-// solo quando l'operatore conferma, e resta unito finché non lo si libera.
-// L'adiacenza è geometrica: usa le posizioni reali dei tavoli sulla mappa.
+// Se un gruppo non entra in nessun tavolo, l'app cerca tavoli VICINI sulla
+// piantina, tutti completamente liberi — né occupati né prenotati — la cui somma
+// di posti basta per il gruppo. Propone, non decide.
+// I tavoli devono formare una CATENA di elementi consecutivi, come quando in sala
+// si accostano fisicamente uno di fianco all'altro.
 // ─────────────────────────────────────────────────────────────────────────────
 import type { TableT } from "./types";
 import type { TableStatus } from "./estimates";
@@ -13,7 +13,7 @@ export const seatsOf = (t: TableT, withExtraChairs = true) =>
   withExtraChairs ? Math.max(t.capacity, t.maxCapacity || 0) : t.capacity;
 
 // Ingombro allineato agli assi (i tavoli ruotati vengono racchiusi nel loro riquadro)
-function bbox(t: TableT) {
+export function tableBBox(t: TableT) {
   const rad = (t.rotation * Math.PI) / 180;
   const c = Math.abs(Math.cos(rad)), s = Math.abs(Math.sin(rad));
   const w = t.width * c + t.height * s;
@@ -25,19 +25,45 @@ function bbox(t: TableT) {
 // (si "vedono" su un lato) e distano meno di maxGap centimetri.
 export function areAdjacent(a: TableT, b: TableT, maxGap: number): boolean {
   if (a.roomId !== b.roomId) return false;
-  const A = bbox(a), B = bbox(b);
+  const A = tableBBox(a), B = tableBBox(b);
   const gapX = Math.max(0, Math.max(A.x1 - B.x2, B.x1 - A.x2));
   const gapY = Math.max(0, Math.max(A.y1 - B.y2, B.y1 - A.y2));
-  // sovrapposizione sull'asse perpendicolare: almeno un terzo del lato più corto
   const overlapX = Math.min(A.x2, B.x2) - Math.max(A.x1, B.x1);
   const overlapY = Math.min(A.y2, B.y2) - Math.max(A.y1, B.y1);
   const minW = Math.min(A.x2 - A.x1, B.x2 - B.x1);
   const minH = Math.min(A.y2 - A.y1, B.y2 - B.y1);
-  const sideBySide = gapY === 0 || overlapY > minH / 3;   // accostati in orizzontale
-  const stacked = gapX === 0 || overlapX > minW / 3;      // accostati in verticale
-  if (gapX <= maxGap && sideBySide && overlapY > 0) return true;
-  if (gapY <= maxGap && stacked && overlapX > 0) return true;
+  // affiancati in orizzontale: distanza laterale piccola e si sovrappongono in verticale
+  if (gapX <= maxGap && overlapY > minH / 3) return true;
+  // impilati in verticale: distanza sopra/sotto piccola e si sovrappongono in orizzontale
+  if (gapY <= maxGap && overlapX > minW / 3) return true;
   return false;
+}
+
+// Riquadro complessivo di un gruppo accostato: è la somma reale dei tavoli,
+// non un rettangolone. Serve a disegnare in mappa un unico blocco delle
+// dimensioni giuste.
+export function groupBBox(tables: TableT[], pad = 8) {
+  const boxes = tables.map(tableBBox);
+  const x1 = Math.min(...boxes.map((b) => b.x1)) - pad;
+  const y1 = Math.min(...boxes.map((b) => b.y1)) - pad;
+  const x2 = Math.max(...boxes.map((b) => b.x2)) + pad;
+  const y2 = Math.max(...boxes.map((b) => b.y2)) + pad;
+  return { x: x1, y: y1, w: x2 - x1, h: y2 - y1 };
+}
+
+// Un gruppo è "compatto" se il riquadro che lo contiene non è molto più grande
+// della somma dei tavoli: evita di disegnare un blocco enorme quando due tavoli
+// accorpati (magari da una vecchia configurazione) stanno in punti lontani.
+// tolerance bassa: scarta le catene "con buchi" (es. 1+3 saltando il 2), che
+// richiederebbero di spostare fisicamente un tavolo in mezzo.
+export function isCompactGroup(tables: TableT[], tolerance = 1.45): boolean {
+  if (tables.length < 2) return true;
+  const box = groupBBox(tables, 0);
+  const own = tables.reduce((sum, t) => {
+    const b = tableBBox(t);
+    return sum + (b.x2 - b.x1) * (b.y2 - b.y1);
+  }, 0);
+  return box.w * box.h <= own * tolerance;
 }
 
 export type JoinProposal = {
@@ -52,19 +78,19 @@ export type JoinProposal = {
 };
 
 // Un tavolo è "unibile" solo se completamente libero: occupato o prenotato non vale.
-const isFree = (id: string, statuses: Map<string, TableStatus>) => statuses.get(id)?.state === "libero";
+const isFree = (id: string, statuses?: Map<string, TableStatus>) =>
+  !statuses || statuses.get(id)?.state === "libero";
 
 export function findJoinProposals(args: {
   party: number;
   tables: TableT[];
-  statuses: Map<string, TableStatus>;
+  statuses?: Map<string, TableStatus>;   // assente = si valuta solo la geometria (vista Piano)
   maxGapCm: number;
-  maxTables?: number;   // quanti tavoli al massimo accostare (default 3)
+  maxTables?: number;
   limit?: number;
 }): JoinProposal[] {
-  const { party, tables, statuses, maxGapCm, maxTables = 3, limit = 4 } = args;
+  const { party, tables, statuses, maxGapCm, maxTables = 4, limit = 4 } = args;
   const free = tables.filter((t) => t.state !== "fuori_servizio" && isFree(t.id, statuses));
-  const out: JoinProposal[] = [];
 
   const make = (group: TableT[]): JoinProposal => {
     const seats = group.reduce((a, t) => a + seatsOf(t), 0);
@@ -81,34 +107,32 @@ export function findJoinProposals(args: {
     };
   };
 
-  // coppie adiacenti
-  for (let i = 0; i < free.length; i++) {
-    for (let j = i + 1; j < free.length; j++) {
-      if (!areAdjacent(free[i], free[j], maxGapCm)) continue;
-      const p = make([free[i], free[j]]);
-      if (p.seats >= party) out.push(p);
+  // Catene di tavoli consecutivi: si parte da un tavolo e si aggiunge ogni volta
+  // un vicino della catena, finché i posti bastano o si raggiunge il massimo.
+  const found = new Map<string, JoinProposal>();
+  const grow = (chain: TableT[]) => {
+    const seats = chain.reduce((a, t) => a + seatsOf(t), 0);
+    if (chain.length >= 2 && seats >= party && isCompactGroup(chain)) {
+      const p = make(chain);
+      if (!found.has(p.label)) found.set(p.label, p);
+      return;   // catena minima sufficiente: non serve allungarla ancora
     }
-  }
-  // terzine: solo se nessuna coppia basta (gruppi molto grandi)
-  if (!out.length && maxTables >= 3) {
-    for (let i = 0; i < free.length; i++) {
-      for (let j = i + 1; j < free.length; j++) {
-        if (!areAdjacent(free[i], free[j], maxGapCm)) continue;
-        for (let k = j + 1; k < free.length; k++) {
-          const catena = areAdjacent(free[k], free[i], maxGapCm) || areAdjacent(free[k], free[j], maxGapCm);
-          if (!catena) continue;
-          const p = make([free[i], free[j], free[k]]);
-          if (p.seats >= party) out.push(p);
-        }
-      }
+    if (chain.length >= maxTables) return;
+    for (const candidate of free) {
+      if (chain.includes(candidate)) continue;
+      if (!chain.some((t) => areAdjacent(t, candidate, maxGapCm))) continue;
+      grow([...chain, candidate]);
     }
-  }
+  };
+  for (const start of free) grow([start]);
 
+  const out = [...found.values()];
   // meno spreco, meno tavoli da spostare, meno sedie da aggiungere
   out.sort((a, b) => a.waste - b.waste || a.tables.length - b.tables.length || a.extraChairs - b.extraChairs);
   for (const p of out) {
     const chairs = p.extraChairs > 0 ? `, aggiungendo ${p.extraChairs} sedi${p.extraChairs === 1 ? "a" : "e"}` : "";
-    p.reason = `Tavoli ${p.label} sono vicini e liberi: ${p.seats} posti per ${party}${chairs}`;
+    const quanti = p.tables.length > 2 ? `${p.tables.length} tavoli vicini` : "Tavoli vicini";
+    p.reason = `${quanti} e liberi: ${p.seats} posti${chairs}`;
   }
   return out.slice(0, limit);
 }

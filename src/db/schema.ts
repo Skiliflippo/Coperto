@@ -37,7 +37,7 @@ export const restaurantSettings = pgTable("restaurant_settings", {
   // accostare due tavoli vicini e liberi. Alcuni locali non lo vogliono (spazi stretti).
   allowTableJoin: boolean("allow_table_join").notNull().default(true),
   // Distanza massima (cm) fra due tavoli perché siano considerati accostabili.
-  joinMaxGapCm: integer("join_max_gap_cm").notNull().default(90),
+  joinMaxGapCm: integer("join_max_gap_cm").notNull().default(150),
   // Durate medie occupazione per turno e fascia coperti
   durations: jsonb("durations").notNull().default({
     pranzo: { base: 60, large: 90, xl: 120 },   // large = 7-8 coperti, xl = 9+
@@ -154,6 +154,11 @@ export const reservations = pgTable("reservations", {
   source: text("source").notNull().default("telefono"),   // telefono | walk_in | online (fase 2)
   assignedTableId: uuid("assigned_table_id").references(() => tables.id, { onDelete: "set null" }),
   assignedComboId: uuid("assigned_combo_id").references(() => tableCombinations.id, { onDelete: "set null" }),
+  // Sala chiesta dal cliente al telefono ("fuori se possibile"): guida l'auto-sistema.
+  preferredRoomId: uuid("preferred_room_id").references(() => rooms.id, { onDelete: "set null" }),
+  // Tavoli accostati per questo gruppo (oltre ad assigned_table_id): accorpamento
+  // deciso al momento, senza doverlo predefinire in configurazione.
+  joinedTableIds: jsonb("joined_table_ids").notNull().default([]).$type<string[]>(),
   notes: text("notes").notNull().default(""),
   createdBy: text("created_by").notNull().default(""), // chi ha risposto al telefono
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),

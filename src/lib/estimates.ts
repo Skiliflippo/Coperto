@@ -151,7 +151,7 @@ export function freeTargetsAt(params: {
   }
   const free = (id: string) => !(busyByTable.get(id) ?? []).some(([a, b]) => s < b && a < e);
   return {
-    tables: tables.filter((t) => t.capacity >= party && t.state !== "fuori_servizio" && free(t.id)),
+    tables: tables.filter((t) => Math.max(t.capacity, t.maxCapacity || 0) >= party && t.state !== "fuori_servizio" && free(t.id)),
     combos: combos.filter((c) => c.capacity >= party && c.tableIds.every(free)),
   };
 }

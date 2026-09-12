@@ -9,7 +9,7 @@ export const dynamic = "force-dynamic";
 // Crea prenotazione telefonica. Anti-duplicati: stesso giorno + telefono o nome simile.
 export async function POST(req: Request) {
   const b = await req.json();
-  const { restaurantId, date, time, partySize, name, phone = "", notes = "", source = "telefono", createdBy = "", force = false } = b;
+  const { restaurantId, date, time, partySize, name, phone = "", notes = "", source = "telefono", createdBy = "", force = false, preferredRoomId = null } = b;
   if (!restaurantId || !date || !time || !partySize || !name?.trim()) {
     return NextResponse.json({ error: "Campi mancanti" }, { status: 400 });
   }
@@ -41,7 +41,7 @@ export async function POST(req: Request) {
   }
   const [row] = await db.insert(s.reservations).values({
     restaurantId, customerId, guestName: name.trim(), guestPhone: String(phone),
-    date, time, partySize, notes, source, createdBy,
+    date, time, partySize, notes, source, createdBy, preferredRoomId,
   }).returning();
   await logActivity(restaurantId, createdBy, "reservation_created", `${createdBy} ha preso: ${name.trim()}, ${partySize} p. alle ${time}`);
   broadcast(restaurantId, { actor: createdBy, msg: `${createdBy} ha aggiunto ${name.trim()} alle ${time}` });
