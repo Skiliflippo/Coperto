@@ -6,13 +6,16 @@
 // ─────────────────────────────────────────────────────────────────────────────
 import { useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import { ArrowRight, Check, CircleDot, Pencil, RectangleHorizontal, Ruler, Square, X } from "lucide-react";
+import { ArrowRight, Check, CircleDot, Maximize2, Pencil, RectangleHorizontal, Ruler, Square, TriangleAlert, X } from "lucide-react";
 import { api } from "@/lib/api";
 import { useSession } from "@/store/session";
 import { toast } from "@/components/toast";
 import { Btn } from "@/components/ui";
 import { MAX_ROOM_CM, rectPolygon, type Point, type RoomLayout, type TableShape } from "@/lib/floor";
-import { defaultBulkRows, layoutBulkTables, totalCovers, totalTables, type BulkRow } from "@/lib/bulk-tables";
+import {
+  defaultBulkRows, fitRoomToTables, layoutBulkTables, totalCovers, totalTables,
+  type BulkRow, type BulkTable,
+} from "@/lib/bulk-tables";
 import { FloorEditor } from "@/components/floor-editor";
 import type { Bootstrap } from "@/lib/types";
 
@@ -83,6 +86,12 @@ export function RoomWizard({ boot, mode, onDone, onCancel }: {
   const qc = useQueryClient();
   const [step, setStep] = useState<0 | 1 | 2 | 3>(0);
   const [rows, setRows] = useState<BulkRow[]>(() => defaultBulkRows());
+  // Proposta di allargamento: compare quando i tavoli dichiarati non ci stanno.
+  const [overflow, setOverflow] = useState<{
+    placed: number; requested: number;
+    grown: { w: number; h: number; tables: BulkTable[]; skipped: number; fits: boolean };
+    asIs: BulkTable[];
+  } | null>(null);
   const [shape, setShape] = useState<ShapeKind>("rettangolo");
   const [name, setName] = useState(mode === "primo-accesso" ? (boot.rooms[0]?.name ?? "Sala interna") : "");
   const [w, setW] = useState(1200);
@@ -90,12 +99,14 @@ export function RoomWizard({ boot, mode, onDone, onCancel }: {
   const [roomId, setRoomId] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
-  const layout = (): RoomLayout => ({
-    w, h,
-    polygon: (SHAPES.find((s) => s.kind === shape) ?? SHAPES[0]).make(w, h)
-      .map((p) => ({ x: Math.round(p.x), y: Math.round(p.y) })),
+  const makePolygon = (width: number, height: number) =>
+    (SHAPES.find((s) => s.kind === shape) ?? SHAPES[0]).make(width, height);
+  const layoutFor = (width: number, height: number): RoomLayout => ({
+    w: width, h: height,
+    polygon: makePolygon(width, height).map((p) => ({ x: Math.round(p.x), y: Math.round(p.y) })),
     elements: [],
   });
+  const layout = (): RoomLayout => layoutFor(w, h);
 
   const goToEditor = async () => {
     const roomName = name.trim() || "Sala";
@@ -119,32 +130,41 @@ export function RoomWizard({ boot, mode, onDone, onCancel }: {
     setBusy(false);
   };
 
-  // I tavoli dichiarati vengono disposti su griglia e salvati: si entra
-  // nell'editor con la sala già popolata, pronta solo da aggiustare.
-  const saveBulkTables = async () => {
+  // Scrive sul server il layout scelto (eventualmente allargato) con i suoi tavoli.
+  const persistBulk = async (roomLayout: RoomLayout, tables: BulkTable[]) => {
     if (!roomId) return;
     setBusy(true);
     try {
-      const { tables, skipped } = layoutBulkTables(rows, layout());
-      if (tables.length) {
-        await api(`/api/rooms/${roomId}/floor`, {
-          method: "PUT",
-          body: { staffId: staff?.id, staffName: staff?.name, layout: layout(), tables, deleted: [] },
-        });
-        await qc.invalidateQueries({ queryKey: ["bootstrap", staff?.restaurantId] });
-      }
-      if (skipped > 0) {
-        toast({
-          title: `${skipped} tavoli non ci stavano`,
-          msg: "Ingrandisci la sala o aggiungili a mano dall'editor.",
-          tone: "warn",
-        });
-      }
+      await api(`/api/rooms/${roomId}/floor`, {
+        method: "PUT",
+        body: { staffId: staff?.id, staffName: staff?.name, layout: roomLayout, tables, deleted: [] },
+      });
+      await qc.invalidateQueries({ queryKey: ["bootstrap", staff?.restaurantId] });
+      setW(roomLayout.w);
+      setH(roomLayout.h);
+      setOverflow(null);
       setStep(3);
     } catch (error: unknown) {
       toast({ title: error instanceof Error ? error.message : "Non riuscito", tone: "err" });
+      setBusy(false);
     }
-    setBusy(false);
+  };
+
+  // I tavoli dichiarati vengono disposti su griglia. Se non ci stanno tutti si
+  // chiede cosa fare: allargare la sala o tenere solo quelli che entrano.
+  const saveBulkTables = async () => {
+    if (!roomId || busy) return;
+    const requested = totalTables(rows);
+    if (requested === 0) { setStep(3); return; }
+
+    const attempt = layoutBulkTables(rows, layout());
+    if (attempt.skipped === 0) {
+      await persistBulk(layout(), attempt.tables);
+      return;
+    }
+    // misure spesso approssimative: si propone l'allargamento invece di scartare
+    const grown = fitRoomToTables(rows, makePolygon, w, h);
+    setOverflow({ placed: attempt.tables.length, requested, grown, asIs: attempt.tables });
   };
 
   const finish = async () => {
@@ -165,6 +185,7 @@ export function RoomWizard({ boot, mode, onDone, onCancel }: {
   }
 
   return (
+    <>
     <div className="fixed inset-0 z-[95] overflow-y-auto bg-bg px-5 pb-10" style={{ paddingTop: "calc(env(safe-area-inset-top) + 28px)" }}>
       <div className="mx-auto max-w-lg">
         <div className="flex items-center gap-3">
@@ -324,7 +345,53 @@ export function RoomWizard({ boot, mode, onDone, onCancel }: {
             </div>
           </div>
         )}
+        </div>
       </div>
-    </div>
+
+      {/* I tavoli dichiarati non ci stanno: si sceglie come procedere. */}
+      {overflow && (
+        <div className="fixed inset-0 z-[110] grid place-items-center bg-black/55 px-5">
+          <div className="w-full max-w-sm rounded-3xl border border-line bg-surface p-5 shadow-2xl">
+            <p className="flex items-center gap-2 font-display text-xl font-bold">
+              <TriangleAlert className="h-5 w-5 text-soon" /> Non ci stanno tutti
+            </p>
+            <p className="mt-2 text-sm text-muted">
+              In una sala di {(w / 100).toFixed(1)}×{(h / 100).toFixed(1)} m entrano{" "}
+              <b className="text-ink">{overflow.placed} tavoli su {overflow.requested}</b>.
+              Le misure a occhio si correggono facilmente: posso allargare la sala.
+            </p>
+
+            <div className="mt-4 grid gap-2">
+              {overflow.grown.fits ? (
+                <Btn size="xl" disabled={busy}
+                  onClick={() => persistBulk(layoutFor(overflow.grown.w, overflow.grown.h), overflow.grown.tables)}>
+                  <Maximize2 className="h-5 w-5" />
+                  Allarga a {(overflow.grown.w / 100).toFixed(1)}×{(overflow.grown.h / 100).toFixed(1)} m
+                </Btn>
+              ) : (
+                <Btn size="xl" disabled={busy || overflow.grown.tables.length <= overflow.placed}
+                  onClick={() => persistBulk(layoutFor(overflow.grown.w, overflow.grown.h), overflow.grown.tables)}>
+                  <Maximize2 className="h-5 w-5" />
+                  Allarga al massimo · {overflow.grown.tables.length} tavoli
+                </Btn>
+              )}
+              <Btn variant="soft" disabled={busy}
+                onClick={() => persistBulk(layout(), overflow.asIs)}>
+                Tieni la sala così · {overflow.placed} tavoli
+              </Btn>
+              <Btn variant="ghost" disabled={busy} onClick={() => setOverflow(null)}>
+                Torna a modificare
+              </Btn>
+            </div>
+
+            <p className="mt-3 text-center text-[12px] text-muted">
+              {overflow.grown.fits
+                ? "Potrai comunque ritoccare misure e tavoli nell'editor."
+                : `Anche alla dimensione massima ne entrano ${overflow.grown.tables.length}: gli altri li aggiungi a mano.`}
+            </p>
+          </div>
+        </div>
+      )}
+    </>
   );
 }
