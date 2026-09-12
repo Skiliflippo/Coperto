@@ -42,15 +42,24 @@ export function ShapePreview({ points, active, big, maxSize }: {
   const shapeH = Math.max(1, Math.max(...ys) - minY);
 
   const box = maxSize ?? (big ? 240 : 52);
+
+  // Il bordo è disegnato con vectorEffect="non-scaling-stroke": lo spessore è in
+  // PIXEL DELLO SCHERMO, quindi dev'essere una costante. Calcolarlo come frazione
+  // delle misure della sala (in cm) faceva ingrassare il muro all'aumentare delle
+  // dimensioni, fino a coprire tutto il pavimento.
+  const strokePx = big ? 3 : 2;
+
+  // Nessun margine nel viewBox: il riquadro coincide esattamente con la sala,
+  // quindi le proporzioni mostrate sono quelle reali anche su sale molto
+  // allungate. Il mezzo tratto che sborda si vede grazie a overflow-visible.
   const scale = Math.min(box / shapeW, box / shapeH);   // stessa scala sui due assi
-  const pad = Math.max(shapeW, shapeH) * 0.06;
 
   return (
     <svg
       width={shapeW * scale}
       height={shapeH * scale}
-      viewBox={`${minX - pad} ${minY - pad} ${shapeW + pad * 2} ${shapeH + pad * 2}`}
-      className={big ? "" : "shrink-0"}
+      viewBox={`${minX} ${minY} ${shapeW} ${shapeH}`}
+      className={`overflow-visible ${big ? "" : "shrink-0"}`}
       preserveAspectRatio="xMidYMid meet"
       role="img"
       aria-label="Anteprima della forma della sala"
@@ -58,7 +67,7 @@ export function ShapePreview({ points, active, big, maxSize }: {
       <polygon points={points.map((p) => `${p.x},${p.y}`).join(" ")}
         fill={active ? "var(--brand-soft)" : "var(--raised)"}
         stroke={active ? "var(--brand)" : "var(--muted)"}
-        strokeWidth={Math.max(shapeW, shapeH) * 0.03}
+        strokeWidth={strokePx}
         strokeLinejoin="round" vectorEffect="non-scaling-stroke" />
     </svg>
   );
