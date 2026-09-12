@@ -20,13 +20,31 @@ In produzione: `npm run build && npm start`. Deploy tipico: Vercel + qualsiasi P
 
 ## Cosa copiare nel tuo progetto
 
-Copia **tutto tranne**: `.env`, `node_modules/`, `.next/`. Il file `.gitignore`
-esclude già le cose giuste. Se parti dal progetto scaricato da git basta:
+Copia **tutto tranne**: `.env`, `node_modules/`, `.next/`. Attenzione: copiare i file
+nuovi sopra una vecchia cartella **non elimina le route ritirate**. Prima della build
+esegui sempre lo script di pulizia cross-platform:
 
 ```bash
-git pull   # oppure sovrascrivi la cartella con questi file
+node scripts/prepare-deploy.mjs
 npm install
 npx drizzle-kit push   # solo se lo schema è cambiato
+npm run build
+```
+
+Lo script rimuove esclusivamente cache e percorsi legacy noti: `attesa`, `waitlist`,
+la vecchia `floorplan.tsx`, la vecchia route `api/rooms/[id]/route.ts` e la config
+Drizzle JSON. Non tocca `.env`, database o sorgenti correnti. Se usi Git, preferisci
+`git pull`: Git applica anche le cancellazioni, una copia manuale no.
+
+Se non hai ancora copiato lo script aggiornato, in PowerShell puoi pulire manualmente:
+
+```powershell
+Remove-Item -Recurse -Force -LiteralPath "src\app\(app)\attesa" -ErrorAction SilentlyContinue
+Remove-Item -Recurse -Force -LiteralPath "src\app\api\waitlist" -ErrorAction SilentlyContinue
+Remove-Item -Force -LiteralPath "src\components\floorplan.tsx" -ErrorAction SilentlyContinue
+Remove-Item -Force -LiteralPath "src\app\api\rooms\[id]\route.ts" -ErrorAction SilentlyContinue
+Remove-Item -Recurse -Force -LiteralPath ".next" -ErrorAction SilentlyContinue
+Remove-Item -Force -LiteralPath "tsconfig.tsbuildinfo" -ErrorAction SilentlyContinue
 ```
 
 ## Struttura
