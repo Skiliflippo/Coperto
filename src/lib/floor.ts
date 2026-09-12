@@ -7,7 +7,7 @@
 export const CM_PER_CELL = 50;          // lato di una cella della griglia
 export const SNAP = 10;                 // aggancio fine: 10 cm
 export const MIN_ZOOM = 0.06;
-export const MAX_ROOM_CM = 1500;        // 15 m per lato: oltre non è una sala di ristorante
+export const MAX_ROOM_CM = 3000;        // 30 m per lato: copre anche le sale grandi
 export const MAX_ZOOM = 2.4;
 
 export type ElementKind = "wall" | "decor";

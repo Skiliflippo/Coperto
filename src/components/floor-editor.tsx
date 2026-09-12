@@ -182,22 +182,42 @@ export function FloorEditor({ boot, roomId, onClose }: { boot: Bootstrap; roomId
   };
 
   // ── Ridimensionamento muri/arredi dai bordi ────────────────────────────────
+  // Ridimensionamento di muri e arredi, corretto anche quando l'oggetto è ruotato:
+  // lo spostamento del dito viene proiettato negli assi DELL'OGGETTO, e il lato
+  // opposto resta fermo (il centro si sposta di conseguenza). Senza la proiezione,
+  // su un elemento ruotato trascinare un vertice dava effetti imprevedibili.
   const resizeEl = (e: React.PointerEvent, el: FloorElement, hx: -1 | 0 | 1, hy: -1 | 0 | 1) => {
     e.stopPropagation();
     cancelPan();
     const node = nodeRefs.current.get(el.id);
     if (!node) return;
     const start = toWorld(e.clientX, e.clientY);
+    const rad = (el.rotation * Math.PI) / 180;
+    const cos = Math.cos(rad), sin = Math.sin(rad);
+    const center0 = { x: el.x + el.w / 2, y: el.y + el.h / 2 };
     let box = { x: el.x, y: el.y, w: el.w, h: el.h };
+
     const move = (ev: PointerEvent) => {
       const p = toWorld(ev.clientX, ev.clientY);
-      const dx = p.x - start.x, dy = p.y - start.y;
-      let { x, y, w, h } = { x: el.x, y: el.y, w: el.w, h: el.h };
-      if (hx === 1) w = Math.max(15, snapG(el.w + dx));
-      if (hx === -1) { const nx = snapG(el.x + dx); w = Math.max(15, el.w + (el.x - nx)); x = nx; }
-      if (hy === 1) h = Math.max(15, snapG(el.h + dy));
-      if (hy === -1) { const ny = snapG(el.y + dy); h = Math.max(15, el.h + (el.y - ny)); y = ny; }
-      const cand: Box = el.rotation ? aabb(x + w / 2, y + h / 2, w, h, el.rotation) : { x, y, w, h };
+      const dxWorld = p.x - start.x, dyWorld = p.y - start.y;
+      // mondo → assi locali dell'oggetto (rotazione inversa)
+      const dxLocal = dxWorld * cos + dyWorld * sin;
+      const dyLocal = -dxWorld * sin + dyWorld * cos;
+
+      const w = hx === 0 ? el.w : Math.max(15, snapG(el.w + hx * dxLocal));
+      const h = hy === 0 ? el.h : Math.max(15, snapG(el.h + hy * dyLocal));
+
+      // il bordo opposto resta fisso: il centro si sposta di metà della crescita,
+      // riportata in coordinate mondo
+      const shiftLocalX = (hx * (w - el.w)) / 2;
+      const shiftLocalY = (hy * (h - el.h)) / 2;
+      const center = {
+        x: center0.x + shiftLocalX * cos - shiftLocalY * sin,
+        y: center0.y + shiftLocalX * sin + shiftLocalY * cos,
+      };
+      const x = center.x - w / 2, y = center.y - h / 2;
+
+      const cand: Box = el.rotation ? aabb(center.x, center.y, w, h, el.rotation) : { x, y, w, h };
       const fits = boxFits(cand, el.id);
       setBadId(fits ? null : el.id);
       if (!fits) return;                       // non si ridimensiona dentro un muro o sopra un altro oggetto
@@ -478,7 +498,7 @@ export function FloorEditor({ boot, roomId, onClose }: { boot: Bootstrap; roomId
                       width: 26 / vp.zoom, height: 26 / vp.zoom,
                       left: `calc(${hx === -1 ? "0%" : hx === 1 ? "100%" : "50%"} - ${13 / vp.zoom}px)`,
                       top: `calc(${hy === -1 ? "0%" : hy === 1 ? "100%" : "50%"} - ${13 / vp.zoom}px)`,
-                      cursor: hx === 0 ? "ns-resize" : hy === 0 ? "ew-resize" : hx === hy ? "nwse-resize" : "nesw-resize",
+                      cursor: rotatedCursor(hx, hy, el.rotation),
                     }} />
                 ))
               )}
@@ -605,7 +625,7 @@ export function FloorEditor({ boot, roomId, onClose }: { boot: Bootstrap; roomId
 
       {selEl && (
         <ContextPanel onClose={() => setSel(null)} title={selEl.kind === "wall" ? "Muro" : "Arredo"}
-          subtitle={`${Math.round(selEl.w)}×${Math.round(selEl.h)} cm · trascina i pallini per ridimensionare`}>
+          subtitle={`${Math.round(selEl.w)}×${Math.round(selEl.h)} cm${selEl.rotation ? ` · ruotato ${selEl.rotation}°` : ""} · trascina i pallini per ridimensionare`}>
           <div className="flex flex-wrap items-center gap-1.5">
             {selEl.kind === "decor" && (
               <>
@@ -620,16 +640,29 @@ export function FloorEditor({ boot, roomId, onClose }: { boot: Bootstrap; roomId
                 </select>
               </>
             )}
-            <button onClick={() => patchEl(selEl.id, { rotation: selEl.rotation + 45 })}
-              className="flex h-12 items-center gap-1 rounded-xl bg-raised px-3 text-sm font-bold active:scale-95"><RotateCw className="h-4 w-4" />45°</button>
-            <button onClick={() => patchEl(selEl.id, { w: selEl.h, h: selEl.w })}
-              className="h-12 rounded-xl bg-raised px-3 text-sm font-bold active:scale-95">Gira</button>
+            <button onClick={() => patchEl(selEl.id, { rotation: (selEl.rotation + 90) % 360 })}
+              className="flex h-12 items-center gap-1 rounded-xl bg-raised px-3 text-sm font-bold active:scale-95">
+              <RotateCw className="h-4 w-4" />90°
+            </button>
+            <button onClick={() => patchEl(selEl.id, { rotation: (selEl.rotation + 15) % 360 })}
+              className="h-12 rounded-xl bg-raised px-3 text-sm font-bold active:scale-95">+15°</button>
             <button onClick={removeSel} className="grid h-12 w-12 place-items-center rounded-xl bg-over/15 text-over active:scale-95" aria-label="Elimina"><Trash2 className="h-5 w-5" /></button>
           </div>
         </ContextPanel>
       )}
     </div>
   );
+}
+
+// Il cursore deve indicare la direzione REALE di ridimensionamento: su un oggetto
+// ruotato di 90° la maniglia destra allarga in verticale.
+function rotatedCursor(hx: -1 | 0 | 1, hy: -1 | 0 | 1, rotation: number): string {
+  const base = Math.atan2(hy, hx) * (180 / Math.PI);
+  const angle = ((base + rotation) % 180 + 180) % 180;
+  if (angle < 22.5 || angle >= 157.5) return "ew-resize";
+  if (angle < 67.5) return "nwse-resize";
+  if (angle < 112.5) return "ns-resize";
+  return "nesw-resize";
 }
 
 function Spin({ label, value, onMinus, onPlus }: { label: string; value: number; onMinus: () => void; onPlus: () => void }) {

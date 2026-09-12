@@ -171,7 +171,7 @@ export function RoomShell({ w, h, polygon }: { w: number; h: number; polygon?: P
   // browser perderebbe il riferimento url(#id) mentre trascini un angolo e il
   // pavimento sparirebbe a intermittenza.
   const id = useId();
-  const T = 22;   // spessore muro in cm, tutto verso l'esterno
+  const T = 15;   // spessore muro in cm, tutto verso l'esterno
   return (
     <svg className="pointer-events-none absolute" width={vw} height={vh}
       style={{ left: minX, top: minY }} viewBox={`${minX} ${minY} ${vw} ${vh}`}>
