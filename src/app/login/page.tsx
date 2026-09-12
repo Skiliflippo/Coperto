@@ -23,10 +23,15 @@ export default function LoginPage() {
 
   useEffect(() => { if (staff) router.replace("/sala"); }, [staff, router]);
   useEffect(() => {
-    api<{ restaurantName: string; staff: StaffLite[] }>("/api/staff")
-      .then((d) => { setRestName(d.restaurantName); setList(d.staff); })
+    api<{ needsSetup?: boolean; restaurantName: string | null; staff: StaffLite[] }>("/api/staff")
+      .then((d) => {
+        // Database vuoto o senza account: si passa al primo avvio guidato.
+        if (d.needsSetup) { router.replace("/setup"); return; }
+        setRestName(d.restaurantName ?? "");
+        setList(d.staff);
+      })
       .catch(() => setErr("Server non raggiungibile. Riprova tra poco."));
-  }, []);
+  }, [router]);
 
   const submitPin = async (completePin: string) => {
     if (!sel || completePin.length !== 4 || busy) return;

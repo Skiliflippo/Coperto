@@ -3,7 +3,25 @@
 App per la sala di un ristorante ad alta affluenza: tavoli in tempo reale, prenotazioni
 telefoniche e walk-in. Veloce come la carta, pensata per mani occupate.
 
-## Avvio rapido (3 comandi dopo il clone)
+## Primo avvio su database vuoto
+
+Con un database appena creato (o svuotato) l'app si configura da sola: alla prima
+visita mostra `/setup`, dove si inseriscono **nome del locale, nome del titolare e
+PIN**. Subito dopo parte il percorso guidato della piantina, poi si entra in servizio.
+
+Serve solo che lo schema sia applicato:
+
+```bash
+npx drizzle-kit push     # crea le tabelle (nessun seed necessario)
+```
+
+L'endpoint `/api/setup` accetta una sola configurazione: appena esiste un titolare
+attivo si chiude e restituisce `409`. Da quel momento si entra da `/login`.
+
+Per ripartire davvero da zero: svuota le tabelle e ricarica la pagina, oppure
+disattiva l'ultimo titolare — l'app tornerà a proporre il primo avvio.
+
+## Avvio rapido con dati demo (sviluppo)
 
 ```bash
 npm install                      # 1 · dipendenze

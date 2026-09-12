@@ -32,6 +32,14 @@ function Shell({ children }: { children: ReactNode }) {
     if (hydrated && !staff) router.replace("/login");
   }, [hydrated, staff, router]);
 
+  // Database svuotato o non ancora configurato: la sessione salvata nel browser
+  // non vale più. Si riparte dal primo avvio invece di restare a caricare.
+  useEffect(() => {
+    if (!boot.isError) return;
+    useSession.getState().setStaff(null);
+    router.replace("/setup");
+  }, [boot.isError, router]);
+
   if (!hydrated || !staff) {
     return (
       <div className="grid min-h-dvh place-items-center">
