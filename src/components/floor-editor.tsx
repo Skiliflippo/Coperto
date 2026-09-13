@@ -10,7 +10,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import {
   Check, CircleDot, MousePointer2, RectangleHorizontal, Redo2, RotateCw,
-  Square, Trash2, Undo2, Wallpaper, X, ZoomIn, ZoomOut, Blocks, Spline, Maximize2,
+  Square, Trash2, Undo2, Wallpaper, X, ZoomIn, ZoomOut, Blocks, Spline, Maximize2, Scissors,
 } from "lucide-react";
 import { api } from "@/lib/api";
 import { useSession } from "@/store/session";
@@ -609,6 +609,27 @@ export function FloorEditor({ boot, roomId, onClose }: { boot: Bootstrap; roomId
             ))}
             <button onClick={removeSel} className="grid h-12 w-12 place-items-center rounded-xl bg-over/15 text-over active:scale-95" aria-label="Elimina tavolo"><Trash2 className="h-5 w-5" /></button>
           </div>
+
+          {/* Un tavolo più grande dello standard di solito è più tavoli accostati.
+              L'app lo dà per scontato, ma i tavoloni massicci esistono: qui si dice
+              che questo è un pezzo unico e non va mai separato. */}
+          {selTable.capacity > std && selTable.shape !== "round" && (
+            <button
+              onClick={() => patchTable(selTable.id, {
+                splitInto: (selTable.splitInto ?? 0) >= 2 ? 0 : (suggestedSplitParts(selTable.capacity, selTable.shape, std) || 2),
+              })}
+              className="mt-2 flex w-full items-center gap-2 rounded-xl bg-raised/60 px-3 py-2 text-left active:scale-[0.99]">
+              <Scissors className="h-4 w-4 shrink-0 text-muted" />
+              <span className="min-w-0 flex-1 text-[13px] font-semibold text-muted">
+                {(selTable.splitInto ?? 0) >= 2
+                  ? <>Sono <span className="text-ink">{selTable.splitInto} tavoli da {std}</span> accostati: si possono staccare</>
+                  : <>È <span className="text-ink">un tavolo unico</span>: non si stacca mai</>}
+              </span>
+              <span className={`relative h-7 w-12 shrink-0 rounded-full transition-colors ${(selTable.splitInto ?? 0) >= 2 ? "bg-ok" : "bg-line"}`}>
+                <span className={`absolute top-1 h-5 w-5 rounded-full bg-surface shadow transition-all ${(selTable.splitInto ?? 0) >= 2 ? "left-6" : "left-1"}`} />
+              </span>
+            </button>
+          )}
         </ContextPanel>
       )}
 

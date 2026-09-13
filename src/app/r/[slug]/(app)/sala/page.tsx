@@ -13,6 +13,7 @@ import { TableSheet } from "@/components/table-sheet";
 import { CheckInSheet } from "@/components/checkin-sheet";
 import { WalkInSheet } from "@/components/seat-flow";
 import { FloorView } from "@/components/floor-view";
+import { useSplitMergePrompt } from "@/lib/use-split-prompt";
 import { StatusBar, type Tally } from "@/components/status-bar";
 import { RoomTabs, useActiveRoom } from "@/components/room-tabs";
 import type { Reservation, TableT } from "@/lib/types";
@@ -45,6 +46,13 @@ export default function SalaPage() {
     }
     return { statuses, freeT, freeC, busyT, busyC, overT, heldT };
   }, [boot.data, day.data, now]);
+
+  // Quando l'ultima parte di un tavolo staccato si libera, propone di riunirlo.
+  useSplitMergePrompt({
+    tables: boot.data?.tables ?? [],
+    statuses: derived?.statuses ?? new Map(),
+    enabled: !!derived,
+  });
 
   if (boot.isLoading || day.isLoading || !boot.data || !derived || !day.data) {
     return <div className="px-3 pt-6"><Clock now={now} /><div className="mt-3"><SkeletonRows n={4} h={92} /></div></div>;

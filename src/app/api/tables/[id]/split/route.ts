@@ -95,6 +95,22 @@ export async function DELETE(req: Request, { params }: { params: Promise<{ id: s
     );
   }
 
+  // Una parte può essere già assegnata a una prenotazione in arrivo: riunendo,
+  // quella prenotazione resterebbe senza tavolo senza che nessuno se ne accorga.
+  const booked = await db.select().from(s.reservations)
+    .where(and(
+      eq(s.reservations.restaurantId, parent.restaurantId),
+      eq(s.reservations.status, "confermata"),
+      inArray(s.reservations.assignedTableId, childIds.length ? childIds : [parentId]),
+    ));
+  if (booked.length) {
+    const who = booked.map((r) => `${r.guestName} alle ${r.time}`).join(", ");
+    return NextResponse.json(
+      { error: `Il tavolo è assegnato a ${who}: sposta la prenotazione prima di riunire` },
+      { status: 409 },
+    );
+  }
+
   await db.transaction(async (tx) => {
     if (childIds.length) await tx.delete(s.tables).where(inArray(s.tables.id, childIds));
     await tx.update(s.tables).set({ splitActive: false, updatedAt: new Date() }).where(eq(s.tables.id, parentId));

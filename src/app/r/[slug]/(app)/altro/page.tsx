@@ -50,51 +50,39 @@ export default function AltroPage() {
     if (!avg) return null;
     const d = Math.round(((cur - avg) / avg) * 100);
     return d === 0 ? <span className="text-muted">= media 7gg</span>
-      : d > 0 ? <span className="inline-flex items-center gap-0.5 text-ok"><TrendingUp className="h-3.5 w-3.5" />+{d}% vs 7gg</span>
-      : <span className="inline-flex items-center gap-0.5 text-over"><TrendingDown className="h-3.5 w-3.5" />{d}% vs 7gg</span>;
+      : d > 0 ? <span className="inline-flex items-center gap-0.5 text-ok"><TrendingUp className="h-3 w-3" />+{d}% vs 7gg</span>
+      : <span className="inline-flex items-center gap-0.5 text-over"><TrendingDown className="h-3 w-3" />{d}% vs 7gg</span>;
   };
 
   return (
     <div className="px-4 pb-6">
       <header className="pt-[calc(env(safe-area-inset-top)+14px)]">
-        <p className="text-sm font-bold uppercase tracking-widest text-brand">Coperto</p>
-        <h1 className="font-display text-[28px] font-bold leading-tight">Riepilogo · {relDay(date).toLowerCase()}</h1>
+        <h1 className="font-display text-[22px] font-bold leading-tight">Riepilogo · {relDay(date).toLowerCase()}</h1>
       </header>
 
       {summary.isLoading || !S ? <div className="mt-4"><SkeletonRows n={4} h={80} /></div> : (
         <>
-          <div className="mt-4 grid grid-cols-2 gap-2.5">
-            <Stat big icon={<Users className="h-5 w-5" />} label="Coperti serviti" value={String(S.covers)} sub={delta(S.covers, S.weekAvg.covers)} />
-            <Stat icon={<Armchair className="h-5 w-5" />} label="Girature" value={String(S.tablesTurned)} sub={`${S.seatings} gruppi seduti`} />
-            <Stat icon={<Timer className="h-5 w-5" />} label="Permanenza media" value={`${S.avgStay}′`} sub={topPeak ? `Picco: ${topPeak.hour}:00 (${topPeak.covers} coperti)` : undefined} />
-            <Stat icon={<Footprints className="h-5 w-5" />} label="Walk-in vs prenotati" value={`${S.walkInCovers}/${S.bookedCovers}`} sub={`${S.walkIns} gruppi senza prenotazione`} />
-          </div>
-
-          <div className="mt-2.5 grid grid-cols-2 gap-2.5">
-            <div className="rounded-3xl border border-line bg-surface p-4">
-              <p className="flex items-center gap-1.5 text-sm font-bold text-muted"><UserX className="h-4 w-4" /> No-show</p>
-              <p className="mt-1 font-display text-3xl font-extrabold">{S.noShows} <span className="text-base font-bold text-muted">({S.noShowPct}%)</span></p>
-              <p className="text-[13px] font-semibold text-over">{S.coversLost} coperti persi</p>
-              <p className="mt-0.5 text-[13px] text-muted">media 7gg: {S.weekAvg.noShows}</p>
-            </div>
-            <div className="rounded-3xl border border-line bg-surface p-4">
-              <p className="flex items-center gap-1.5 text-sm font-bold text-muted"><Hourglass className="h-4 w-4" /> Arrivi</p>
-              <p className="mt-1 font-display text-3xl font-extrabold">{S.arrived}<span className="text-base font-bold text-muted">/{S.booked}</span></p>
-              <p className="text-[13px] font-semibold text-soon">ritardo medio {S.avgLate}′</p>
-              <p className="mt-0.5 text-[13px] text-muted">{S.cancelled} cancellate</p>
-            </div>
+          <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-3">
+            <Stat icon={<Users className="h-3.5 w-3.5" />} label="Coperti" value={String(S.covers)} sub={delta(S.covers, S.weekAvg.covers)} />
+            <Stat icon={<Armchair className="h-3.5 w-3.5" />} label="Girature" value={String(S.tablesTurned)} sub={`${S.seatings} gruppi`} />
+            <Stat icon={<Timer className="h-3.5 w-3.5" />} label="Permanenza" value={`${S.avgStay}′`} sub={topPeak ? `picco ${topPeak.hour}:00` : undefined} />
+            <Stat icon={<UserX className="h-3.5 w-3.5" />} label="No-show" value={`${S.noShows}`}
+              sub={<span className="text-over">{S.noShowPct}% · {S.coversLost} coperti persi</span>} />
+            <Stat icon={<Hourglass className="h-3.5 w-3.5" />} label="Arrivi" value={`${S.arrived}/${S.booked}`}
+              sub={<span className="text-soon">ritardo {S.avgLate}′ · {S.cancelled} disdette</span>} />
+            <Stat icon={<Footprints className="h-3.5 w-3.5" />} label="Senza prenotare" value={String(S.walkIns)} sub={`${S.walkInCovers} coperti`} />
           </div>
 
           {S.peak.length > 0 && (
-            <div className="mt-2.5 rounded-3xl border border-line bg-surface p-4">
-              <p className="text-sm font-bold text-muted">Quando siete andati più forte (coperti seduti per ora)</p>
-              <div className="mt-3 flex h-24 items-end gap-1.5">
+            <div className="mt-2 rounded-2xl border border-line bg-surface px-3 py-2.5">
+              <p className="text-[11px] font-bold uppercase tracking-wide text-muted">Coperti per ora</p>
+              <div className="mt-2 flex h-14 items-end gap-1">
                 {[...S.peak].sort((a, b) => a.hour - b.hour).map((p) => {
                   const max = Math.max(...S.peak.map((x) => x.covers));
                   return (
                     <div key={p.hour} className="flex-1 text-center">
-                      <div className="mx-auto w-full max-w-10 rounded-t-lg bg-brand/80" style={{ height: `${Math.max(8, (p.covers / max) * 72)}px` }} title={`${p.covers}`} />
-                      <p className="mt-1 text-[11px] font-bold text-muted">{p.hour}</p>
+                      <div className="mx-auto w-full max-w-8 rounded-t bg-brand/80" style={{ height: `${Math.max(5, (p.covers / max) * 44)}px` }} title={`${p.covers} coperti`} />
+                      <p className="mt-0.5 text-[10px] font-bold text-muted">{p.hour}</p>
                     </div>
                   );
                 })}
@@ -103,8 +91,8 @@ export default function AltroPage() {
           )}
 
           <a href={`/api/summary?rid=${rid}&date=${date}&csv=1`} download
-            className="mt-3 flex min-h-[56px] items-center justify-center gap-2 rounded-2xl border-2 border-line bg-surface font-semibold active:scale-[0.98]">
-            <Download className="h-5 w-5" /> Esporta riepilogo CSV (oggi + 7 giorni)
+            className="mt-2 inline-flex items-center gap-1.5 rounded-xl px-2 py-1.5 text-[13px] font-semibold text-muted active:scale-95">
+            <Download className="h-4 w-4" /> Esporta CSV
           </a>
         </>
       )}
@@ -153,12 +141,14 @@ export default function AltroPage() {
   );
 }
 
-function Stat({ icon, label, value, sub, big }: { icon: React.ReactNode; label: string; value: string; sub?: React.ReactNode; big?: boolean }) {
+function Stat({ icon, label, value, sub }: {
+  icon: React.ReactNode; label: string; value: string; sub?: React.ReactNode;
+}) {
   return (
-    <div className="rounded-3xl border border-line bg-surface p-4">
-      <p className="flex items-center gap-1.5 text-sm font-bold text-muted">{icon} {label}</p>
-      <p className={`mt-1 font-display font-extrabold ${big ? "text-4xl" : "text-3xl"}`}>{value}</p>
-      {sub && <p className="mt-0.5 text-[13px] font-semibold">{sub}</p>}
+    <div className="rounded-2xl border border-line bg-surface px-3 py-2.5">
+      <p className="flex items-center gap-1 text-[11px] font-bold uppercase tracking-wide text-muted">{icon} {label}</p>
+      <p className="mt-0.5 font-display text-[22px] font-extrabold leading-none">{value}</p>
+      {sub && <p className="mt-1 text-[11px] font-semibold leading-tight">{sub}</p>}
     </div>
   );
 }
