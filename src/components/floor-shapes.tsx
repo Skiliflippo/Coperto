@@ -27,6 +27,7 @@ export function GridBackdrop({ vp, strong }: { vp: Viewport; strong?: boolean })
 export type TableNodeData = {
   id: string; label: string; capacity: number; maxCapacity?: number; shape: TableShape;
   x: number; y: number; width: number; height: number; rotation: number;
+  splitInto?: number;   // in quante parti si stacca (0 = tavolo unico)
 };
 
 // Un tavolo: piano + sedie + etichetta sempre dritta (contro-ruotata).
@@ -76,9 +77,14 @@ export const TableNode = forwardRef<HTMLDivElement, {
 });
 
 // Disegno dell'arredo in base al tipo: un bancone non è una scala.
-function DecorFace({ icon, w, h, label, rotation }: { icon: DecorIcon; w: number; h: number; label: string; rotation: number }) {
-  const fs = Math.max(16, Math.min(w, h) * 0.2);
+function DecorFace({ icon, w, h, label }: { icon: DecorIcon; w: number; h: number; label: string }) {
   const common = "absolute inset-0";
+  // L'etichetta resta SEMPRE dentro l'oggetto: il corpo scala con il lato corto,
+  // e si riduce ancora se il nome è lungo rispetto alla larghezza disponibile.
+  const usableW = w * 0.86, usableH = h * 0.7;
+  const byHeight = usableH * 0.5;
+  const byWidth = label ? (usableW / Math.max(3, label.length)) * 1.7 : byHeight;
+  const fs = Math.max(7, Math.min(byHeight, byWidth, Math.min(w, h) * 0.3));
   return (
     <>
       {icon === "scala" && (
@@ -98,8 +104,10 @@ function DecorFace({ icon, w, h, label, rotation }: { icon: DecorIcon; w: number
       )}
       {icon === "bagno" && <div className={`${common} m-[18%] rounded-full border-[5px] border-dashed border-oos/45`} />}
       {label && icon !== "pilastro" && (
-        <span className="absolute inset-0 grid place-items-center px-2 text-center font-sans font-bold uppercase leading-tight tracking-wide text-muted"
-          style={{ fontSize: fs, transform: `rotate(${-rotation}deg)` }}>
+        // Nessuna contro-rotazione: il nome segue l'orientamento dell'arredo,
+        // come è scritto davvero su una piantina.
+        <span className={`${common} grid place-items-center overflow-hidden px-[6%] text-center font-sans font-bold uppercase leading-none tracking-wide text-muted`}
+          style={{ fontSize: fs, wordBreak: "break-word" }}>
           {label}
         </span>
       )}
@@ -122,8 +130,8 @@ export const ElementNode = forwardRef<HTMLDivElement, {
         transform: `translate3d(${el.x}px, ${el.y}px, 0) rotate(${el.rotation}deg)`,
         willChange: "transform",
       }}>
-      <div className={`relative h-full w-full ${isWall ? "rounded-[4px] bg-oos" : "rounded-md border-[5px] border-oos/45 bg-oos/15"} ${selected && !invalid ? "outline outline-[6px] outline-brand" : ""} ${invalid ? "!border-[6px] !border-dashed !border-over !bg-over/25" : ""}`}>
-        {!isWall && <DecorFace icon={el.icon ?? "generico"} w={el.w} h={el.h} label={el.label} rotation={el.rotation} />}
+      <div className={`relative h-full w-full overflow-hidden ${isWall ? "rounded-[4px] bg-oos" : "rounded-md border-[5px] border-oos/45 bg-oos/15"} ${selected && !invalid ? "outline outline-[6px] outline-brand" : ""} ${invalid ? "!border-[6px] !border-dashed !border-over !bg-over/25" : ""}`}>
+        {!isWall && <DecorFace icon={el.icon ?? "generico"} w={el.w} h={el.h} label={el.label} />}
       </div>
       {children}
     </div>

@@ -62,9 +62,12 @@ export default function LoginPage() {
   return (
     <div className="mx-auto flex min-h-dvh max-w-md flex-col px-6 pb-[env(safe-area-inset-bottom)] pt-[max(env(safe-area-inset-top),2rem)]">
       <div className="flex flex-col items-center gap-2 pb-8 pt-4">
-        <div className="grid h-16 w-16 place-items-center rounded-[22px] bg-brand font-display text-3xl font-bold text-on-brand shadow-lg shadow-brand/30">C</div>
-        <h1 className="font-display text-3xl font-bold">Coperto</h1>
-        <p className="font-semibold text-muted">{restName || "La tua sala, in tasca"}</p>
+        <div className="grid h-14 w-14 place-items-center rounded-[20px] bg-brand font-display text-2xl font-bold text-on-brand shadow-lg shadow-brand/30">C</div>
+        {/* Il nome del locale è la cosa che identifica il dispositivo: va letto a colpo d'occhio. */}
+        <h1 className="text-balance px-2 text-center font-display text-[34px] font-bold leading-[1.1] tracking-tight">
+          {restName || "La tua sala, in tasca"}
+        </h1>
+        <p className="text-[13px] font-semibold uppercase tracking-[0.18em] text-muted">Coperto</p>
       </div>
 
       {!sel ? (
@@ -86,7 +89,6 @@ export default function LoginPage() {
             {!list.length && !err && <div className="skeleton h-[72px] rounded-3xl" />}
             {err && <p className="text-center font-semibold text-over">{err}</p>}
           </div>
-          <p className="mt-auto pb-6 pt-8 text-center text-sm text-muted">Demo: Marco PIN 1234 · Sara 1111 · Luca 2222</p>
         </>
       ) : (
         <>

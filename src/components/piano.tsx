@@ -64,6 +64,10 @@ export function Piano({ date, day, onTap }: { date: string; day: DayData; onTap:
   const biggestTable = Math.max(0, ...bootData.tables.map((t) => Math.max(t.capacity, t.maxCapacity || 0)));
   const biggestCombo = Math.max(0, ...bootData.combos.map((c) => c.capacity));
   const needsJoin = (r: Reservation) => r.partySize > Math.max(biggestTable, biggestCombo);
+  // Capienza totale della sala: oltre questa soglia nessun accorpamento salva la serata.
+  const roomSeats = bootData.tables
+    .filter((t) => t.state !== "fuori_servizio")
+    .reduce((a, t) => a + Math.max(t.capacity, t.maxCapacity || 0), 0);
   const unassigned = inPeriod
     .filter((r) => r.status === "confermata" && !r.assignedTableId && !r.assignedComboId)
     .sort((a, b) => Number(needsJoin(b)) - Number(needsJoin(a)) || b.partySize - a.partySize || toMin(a.time) - toMin(b.time));
@@ -228,6 +232,33 @@ export function Piano({ date, day, onTap }: { date: string; day: DayData; onTap:
             ))}
           </div>
         )}
+
+        {(() => {
+          // CASI DA CONTROLLARE: quelli che in una serata piena fanno perdere tempo.
+          const tooBig = unassigned.filter((r) => r.partySize > roomSeats);
+          const toJoin = unassigned.filter((r) => needsJoin(r) && r.partySize <= roomSeats);
+          const lastMinute = isToday
+            ? unassigned.filter((r) => toMin(r.time) - nMin <= 30 && nMin - toMin(r.time) < 90)
+            : [];
+          const items = [
+            tooBig.length && { k: "big", cls: "border-over/50 bg-over/10 text-over",
+              txt: `${tooBig.length} oltre la capienza della sala (${roomSeats} coperti)` },
+            toJoin.length && { k: "join", cls: "border-brand/50 bg-brand/10 text-brand",
+              txt: `${toJoin.length} da accorpare: non entrano in un tavolo solo` },
+            lastMinute.length && { k: "now", cls: "border-soon/50 bg-soon/10 text-soon",
+              txt: `${lastMinute.length} in arrivo entro mezz'ora, ancora senza tavolo` },
+            conflicts.size && { k: "cfl", cls: "border-over/50 bg-over/10 text-over",
+              txt: `${conflicts.size} sullo stesso tavolo nello stesso momento` },
+          ].filter(Boolean) as { k: string; cls: string; txt: string }[];
+          if (!items.length) return null;
+          return (
+            <div className="mt-2 flex flex-wrap gap-1.5">
+              {items.map((i) => (
+                <span key={i.k} className={`rounded-full border px-2.5 py-1 text-[12px] font-bold ${i.cls}`}>{i.txt}</span>
+              ))}
+            </div>
+          );
+        })()}
 
         <Rail count={unassigned.length}>
           {unassigned.map((r) => (

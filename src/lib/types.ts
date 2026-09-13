@@ -20,6 +20,9 @@ export type Room = { id: string; name: string; sortOrder: number; layout: RoomLa
 export type TableT = {
   id: string; roomId: string; label: string; capacity: number; minCapacity: number;
   maxCapacity: number;   // con sedie aggiunte (>= capacity)
+  splitInto: number;             // in quante parti si stacca (0 = unico)
+  splitActive: boolean;          // padre attualmente separato
+  splitParentId: string | null;  // parte generata da una separazione
   x: number; y: number; width: number; height: number; rotation: number; shape: TableShape;
   state: "libero" | "fuori_servizio"; note: string;
 };

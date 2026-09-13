@@ -146,7 +146,6 @@ export default function AltroPage() {
           className="flex min-h-[60px] w-full items-center gap-3 rounded-2xl border border-line bg-surface px-4 font-semibold text-over active:scale-[0.98]">
           <LogOut className="h-5 w-5" /> Cambia utente <span className="ml-auto text-sm font-medium text-muted">{staff?.name} · {staff?.role === "titolare" ? "Titolare" : "Staff"}</span>
         </button>
-        <p className="pt-2 text-center text-[13px] text-muted">Coperto · gestione sala e prenotazioni · i tuoi dati restano tuoi</p>
       </div>
     </div>
   );

@@ -106,6 +106,13 @@ export const tables = pgTable("tables", {
   // Coperti massimi aggiungendo sedie: un 2 può diventare un 4 stringendosi.
   // Usato per walk-in e per valutare gli accorpamenti.
   maxCapacity: integer("max_capacity").notNull().default(0), // 0 = come capacity
+  // TAVOLI STACCABILI: in sala un "otto" è quasi sempre due "quattro" accostati.
+  // splitInto = in quante parti si separa (0 = tavolo unico, non separabile).
+  splitInto: integer("split_into").notNull().default(0),
+  // true sul padre mentre è separato: al suo posto in mappa ci sono le parti.
+  splitActive: boolean("split_active").notNull().default(false),
+  // valorizzato sulle parti generate dalla separazione
+  splitParentId: uuid("split_parent_id"),
   // Geometria sulla piantina: x/y = centro del tavolo in unità stanza
   x: integer("x").notNull().default(0),
   y: integer("y").notNull().default(0),

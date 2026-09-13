@@ -42,7 +42,9 @@ export async function getRestaurantBundle(restaurantId?: string | null): Promise
   let [ft] = await db.select().from(s.restaurantFeatures).where(eq(s.restaurantFeatures.restaurantId, rid));
   if (!ft) [ft] = await db.insert(s.restaurantFeatures).values({ restaurantId: rid, flags: {} }).returning();
   const rooms = await db.select().from(s.rooms).where(eq(s.rooms.restaurantId, rid)).orderBy(asc(s.rooms.sortOrder));
-  let tables = (await db.select().from(s.tables).where(eq(s.tables.restaurantId, rid))).filter((t) => !t.archived);
+  // Un tavolo separato scompare dalla mappa: al suo posto ci sono le sue parti.
+  let tables = (await db.select().from(s.tables).where(eq(s.tables.restaurantId, rid)))
+    .filter((t) => !t.archived && !t.splitActive);
   tables.sort((a, b) => (Number(a.label) || 0) - (Number(b.label) || 0) || a.label.localeCompare(b.label));
 
   // Auto-riparazione planimetria: sale senza layout, o con il vecchio formato
@@ -86,6 +88,7 @@ export async function getRestaurantBundle(restaurantId?: string | null): Promise
     tables: tables.map((t) => ({
       id: t.id, roomId: t.roomId, label: t.label, capacity: t.capacity, minCapacity: t.minCapacity,
       maxCapacity: Math.max(t.capacity, t.maxCapacity || 0),   // 0 nel DB = nessuna sedia extra
+      splitInto: t.splitInto, splitActive: t.splitActive, splitParentId: t.splitParentId,
       x: t.x, y: t.y, width: t.width, height: t.height, rotation: t.rotation, shape: t.shape as any,
       state: t.state as any, note: t.note,
     })),

@@ -78,18 +78,21 @@ async function main() {
   }).returning();
 
   // TAVOLI: 6×2 · 8×4 · 3×6 · 1×10 = 72 coperti · geometria reale sulla piantina
-  // dimensioni realistiche (~65 cm di fronte a coperto), coerenti con src/lib/floor.ts
+  // Misure da arredamento vero (70 cm a coperto, profondità 90).
+  // Un rettangolare da 6 sono tre tavoli da 2 accostati: staccabile.
   const geo = (cap: number) => {
     const shape = cap <= 2 ? "round" : cap <= 4 ? "square" : "rect";
-    if (shape === "round") return { w: 80, h: 80, shape };
-    if (shape === "square") return { w: 90, h: 90, shape };
+    if (shape === "round") return { w: cap <= 2 ? 75 : 100, h: cap <= 2 ? 75 : 100, shape };
+    if (shape === "square") return { w: 85, h: 85, shape };
     const perSide = Math.max(2, Math.ceil(cap / 2));
-    return { w: Math.min(460, perSide * 65), h: 85, shape };
+    return { w: Math.min(700, perSide * 70), h: 90, shape };
   };
+  // in quante parti si stacca un tavolone (0 = pezzo unico)
+  const splitOf = (cap: number) => (cap >= 6 && cap % 2 === 0 ? 2 : 0);
+
   type T = { label: string; cap: number; room: string; x: number; y: number; rot?: number };
   const layout: T[] = [
     // Sala interna (44 coperti)
-    // 1-2-3 sono la fila dei due posti lungo la parete: accostabili fra loro
     { label: "1", cap: 2, room: sala.id, x: 150, y: 120 }, { label: "2", cap: 2, room: sala.id, x: 300, y: 120 },
     { label: "3", cap: 2, room: sala.id, x: 450, y: 120 }, { label: "4", cap: 4, room: sala.id, x: 160, y: 360 },
     { label: "5", cap: 4, room: sala.id, x: 310, y: 360 }, { label: "6", cap: 4, room: sala.id, x: 300, y: 620 },
@@ -103,12 +106,15 @@ async function main() {
     { label: "16", cap: 4, room: soppalco.id, x: 680, y: 160 }, { label: "17", cap: 4, room: soppalco.id, x: 830, y: 160 },
     { label: "18", cap: 6, room: soppalco.id, x: 560, y: 520, rot: 90 },
   ];
+
   const tableRows = await db.insert(s.tables).values(
     layout.map((t) => {
       const g = geo(t.cap);
       // molti tavoli reggono sedie extra: un 2 diventa 3, un 4 diventa 6…
       const maxCap = t.cap <= 2 ? t.cap + 1 : t.cap <= 4 ? t.cap + 2 : t.cap + 2;
-      return { restaurantId: rid, roomId: t.room, label: t.label, capacity: t.cap, maxCapacity: maxCap, x: t.x, y: t.y, width: g.w, height: g.h, shape: g.shape, rotation: t.rot ?? 0 };
+      return { restaurantId: rid, roomId: t.room, label: t.label, capacity: t.cap, maxCapacity: maxCap,
+        x: t.x, y: t.y, width: g.w, height: g.h, shape: g.shape, rotation: t.rot ?? 0,
+        splitInto: splitOf(t.cap) };
     })
   ).returning();
   const byLabel: Record<string, typeof tableRows[number]> = {};

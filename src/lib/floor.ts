@@ -59,18 +59,77 @@ export function iconFromLabel(label: string, fallback: DecorIcon = "generico"): 
 }
 
 // Dimensioni realistiche: ~60-65 cm di fronte per coperto.
+// Misure da arredamento vero: 70 cm di fronte a coperto, profondità 90 cm.
+// Un rettangolare da 8 (280×90) è esattamente due quattro-posti accostati:
+// è così che nascono le tavolate in sala, ed è la base dei tavoli staccabili.
+export const STANDARD_SEAT_WIDTH = 70;   // spazio per coperto sul lato lungo
+export const STANDARD_DEPTH = 90;        // profondità di un tavolo rettangolare
+
 export function tableGeometry(capacity: number, shape: TableShape): { width: number; height: number } {
-  const c = Math.max(1, Math.min(20, capacity));
+  const c = Math.max(1, Math.min(24, capacity));
   if (shape === "round") {
-    const d = c <= 2 ? 80 : c <= 4 ? 100 : c <= 6 ? 120 : c <= 8 ? 140 : 160;
+    const d = c <= 2 ? 75 : c <= 4 ? 100 : c <= 6 ? 120 : c <= 8 ? 140 : 160;
     return { width: d, height: d };
   }
   if (shape === "square") {
-    const s = c <= 2 ? 70 : c <= 4 ? 90 : 110;
+    const s = c <= 2 ? 70 : c <= 4 ? 85 : 105;
     return { width: s, height: s };
   }
   const perSide = Math.max(2, Math.ceil(c / 2));
-  return { width: clamp(perSide * 65, 130, 460), height: 85 };
+  return { width: clamp(perSide * STANDARD_SEAT_WIDTH, 120, 700), height: STANDARD_DEPTH };
+}
+
+// ── TAVOLI STACCABILI ────────────────────────────────────────────────────────
+// Quante parti standard compongono un tavolo grande. Si propone solo quando il
+// conto torna: un 8 rettangolare sono due 4, un 12 sono tre 4.
+export function suggestedSplitParts(capacity: number, shape: TableShape): number {
+  if (shape !== "rect" || capacity < 6) return 0;
+  // Si parte da due: in sala una tavolata nasce quasi sempre accostando due
+  // tavoli. Le divisioni più fini restano possibili, ma le sceglie l'operatore.
+  for (const parts of [2, 3, 4]) {
+    if (capacity % parts === 0 && capacity / parts >= 2) return parts;
+  }
+  return 0;
+}
+
+export type SplitPart = {
+  label: string; capacity: number;
+  x: number; y: number; width: number; height: number; rotation: number;
+};
+
+/**
+ * Divide un tavolo nelle sue parti reali: si taglia lungo il lato lungo, come
+ * quando in sala si staccano fisicamente due tavoli accostati. Le posizioni
+ * tengono conto della rotazione del tavolo originale.
+ */
+export function splitTableParts(
+  table: { label: string; capacity: number; maxCapacity?: number; x: number; y: number; width: number; height: number; rotation: number },
+  parts: number,
+): SplitPart[] {
+  const n = Math.max(2, Math.min(6, parts));
+  const alongWidth = table.width >= table.height;
+  const partW = alongWidth ? table.width / n : table.width;
+  const partH = alongWidth ? table.height : table.height / n;
+
+  const rad = (table.rotation * Math.PI) / 180;
+  const cos = Math.cos(rad), sin = Math.sin(rad);
+  const base = Math.floor(table.capacity / n);
+  const extra = table.capacity - base * n;
+
+  return Array.from({ length: n }, (_, i) => {
+    // offset del centro della parte rispetto al centro del tavolo, in assi locali
+    const localOffset = ((i + 0.5) / n - 0.5) * (alongWidth ? table.width : table.height);
+    const lx = alongWidth ? localOffset : 0;
+    const ly = alongWidth ? 0 : localOffset;
+    return {
+      label: `${table.label}${String.fromCharCode(97 + i)}`,   // 12a, 12b…
+      capacity: base + (i < extra ? 1 : 0),
+      x: Math.round(table.x + lx * cos - ly * sin),
+      y: Math.round(table.y + lx * sin + ly * cos),
+      width: Math.round(partW), height: Math.round(partH),
+      rotation: table.rotation,
+    };
+  });
 }
 
 export function suggestShape(capacity: number, current: TableShape): TableShape {

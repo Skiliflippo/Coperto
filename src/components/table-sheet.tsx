@@ -3,7 +3,7 @@
 import { useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import {
-  Check, Clock, DoorOpen, Receipt, ArrowLeftRight, Ban, StickyNote, Users, Timer, Undo2,
+  Check, Clock, DoorOpen, Receipt, ArrowLeftRight, Ban, StickyNote, Users, Timer, Undo2, Scissors, Link2,
 } from "lucide-react";
 import { api } from "@/lib/api";
 import { useBootstrap, useDay, useNow } from "@/lib/hooks";
@@ -12,7 +12,7 @@ import { computeTableStatuses } from "@/lib/estimates";
 import { nowMin, todayISO } from "@/lib/time";
 import { TABLE_STATE, fmtCovers } from "@/lib/meta";
 import { Btn, Sheet, Chip } from "@/components/ui";
-import { runWithUndo } from "@/components/toast";
+import { runWithUndo, toast } from "@/components/toast";
 import { PartyGrid, SuggestedTables, useSeat } from "@/components/seat-flow";
 import type { TableT } from "@/lib/types";
 
@@ -38,6 +38,28 @@ export function TableSheet({ table, onClose }: { table: TableT | null; onClose: 
   const seating = status.seating;
   const state = status.state;
   const meta = TABLE_STATE[state];
+
+  // Stacca/riunisce: azioni di sala, le fa chiunque sia in servizio.
+  const splitTable = async () => {
+    if (!table) return;
+    try {
+      await api(`/api/tables/${table.id}/split`, { method: "POST", body: { restaurantId: rid, staffName: me } });
+      await qc.invalidateQueries({ queryKey: ["bootstrap", rid] });
+      toast({ title: `Tavolo ${table.label} staccato`, msg: "Ora sono tavoli indipendenti.", tone: "ok" });
+      onClose();
+    } catch (e: any) { toast({ title: e?.message ?? "Non riuscito", tone: "err" }); }
+  };
+  const mergeTable = async () => {
+    if (!table) return;
+    try {
+      const res = await api<{ label: string }>(`/api/tables/${table.id}/split`, {
+        method: "DELETE", body: { staffName: me },
+      });
+      await qc.invalidateQueries({ queryKey: ["bootstrap", rid] });
+      toast({ title: `Tavolo ${res.label} riunito`, tone: "ok" });
+      onClose();
+    } catch (e: any) { toast({ title: e?.message ?? "Non riuscito", tone: "err" }); }
+  };
 
   const act = async (path: string, body: unknown) => {
     await api(path, { method: "PATCH", body: { restaurantId: rid, staffName: me, ...(body as object) } });
@@ -98,6 +120,21 @@ export function TableSheet({ table, onClose }: { table: TableT | null; onClose: 
           ) : state === "libero" ? (
             <>
               <Btn size="xl" onClick={() => { setParty(2); setMode("seat"); }}><Users className="h-6 w-6" /> Siedi qualcuno qui</Btn>
+
+              {/* Un tavolone che in realtà sono più tavoli accostati: si può separare
+                  al volo per non sprecare coperti con un gruppo piccolo. */}
+              {table.splitInto >= 2 && (
+                <Btn variant="soft" onClick={() => splitTable()}>
+                  <Scissors className="h-5 w-5" />
+                  Stacca in {table.splitInto} tavoli da {Math.floor(table.capacity / table.splitInto)}
+                </Btn>
+              )}
+              {table.splitParentId && (
+                <Btn variant="soft" onClick={() => mergeTable()}>
+                  <Link2 className="h-5 w-5" /> Riunisci il tavolo
+                </Btn>
+              )}
+
               <div className="grid grid-cols-2 gap-3">
                 <Btn variant="soft" onClick={() => { setNote(table.note); setMode("note"); }}><StickyNote className="h-5 w-5" /> Nota tavolo</Btn>
                 <Btn variant="soft" onClick={() => {

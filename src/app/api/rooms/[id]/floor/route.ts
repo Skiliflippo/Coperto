@@ -8,7 +8,7 @@ import { normalizeLayout, polygonOf, rectInsideRoom, tableGeometry, type TableSh
 export const dynamic = "force-dynamic";
 
 type TableDraft = {
-  id: string; label: string; capacity: number; maxCapacity?: number; shape: TableShape;
+  id: string; label: string; capacity: number; maxCapacity?: number; shape: TableShape; splitInto?: number;
   x: number; y: number; width: number; height: number; rotation: number; isNew?: boolean;
 };
 
@@ -63,6 +63,10 @@ export async function PUT(req: Request, { params }: { params: Promise<{ id: stri
       label: String(t.label).trim().slice(0, 6) || "?",
       capacity: cap,
       maxCapacity: Math.max(cap, Math.min(24, Math.round(t.maxCapacity ?? cap))),
+      // un tavolo si stacca al massimo nelle parti che i suoi coperti consentono
+      splitInto: Math.max(0, Math.min(6, Math.round(t.splitInto ?? 0))) >= 2
+        ? Math.min(Math.round(t.splitInto ?? 0), Math.floor(cap / 2))
+        : 0,
       shape,
       x: Math.round(t.x), y: Math.round(t.y),
       width: Math.max(50, Math.min(600, Math.round(t.width || fallback.width))),

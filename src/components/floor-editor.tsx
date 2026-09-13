@@ -18,6 +18,7 @@ import { toast } from "@/components/toast";
 import { useViewport } from "@/lib/use-viewport";
 import {
   DECOR_PRESETS, MAX_ROOM_CM, aabb, boxInsideRoom, boxesOverlap, clamp, clampPointToRoom, computeRoomSeats,
+  suggestedSplitParts,
   polygonBounds,
   elementBox, iconFromLabel, normalizeLayout, polygonOf, rectPolygon,
   snapBoxToWalls, snapTo, suggestShape, tableGeometry, uid,
@@ -341,6 +342,7 @@ export function FloorEditor({ boot, roomId, onClose }: { boot: Bootstrap; roomId
         tables: [...d.tables, {
           id, label: String(nextLabel(boot, d)), capacity: cap, maxCapacity: cap, shape: newShape,
           x: snapG(safe.x), y: snapG(safe.y), width: g.width, height: g.height, rotation: 0,
+          splitInto: suggestedSplitParts(cap, newShape),
         }],
       }));
       setSel({ kind: "table", id });
@@ -415,7 +417,8 @@ export function FloorEditor({ boot, roomId, onClose }: { boot: Bootstrap; roomId
   const setCapacity = (t: TableNodeData, cap: number) => {
     const c = clamp(cap, 1, 20);
     const shape = suggestShape(c, t.shape);
-    patchTable(t.id, { capacity: c, maxCapacity: Math.max(c, t.maxCapacity ?? c), shape, ...tableGeometry(c, shape) });
+    const parts = t.splitInto && c % t.splitInto === 0 ? t.splitInto : suggestedSplitParts(c, shape);
+    patchTable(t.id, { capacity: c, maxCapacity: Math.max(c, t.maxCapacity ?? c), shape, splitInto: parts, ...tableGeometry(c, shape) });
   };
   const setMaxCapacity = (t: TableNodeData, max: number) =>
     patchTable(t.id, { maxCapacity: clamp(max, t.capacity, 24) });
@@ -710,6 +713,7 @@ function ContextPanel({ title, subtitle, children, onClose }: {
 const toNode = (t: TableT): TableNodeData => ({
   id: t.id, label: t.label, capacity: t.capacity, maxCapacity: Math.max(t.capacity, t.maxCapacity || 0),
   shape: t.shape, x: t.x, y: t.y, width: t.width, height: t.height, rotation: t.rotation,
+  splitInto: t.splitInto,
 });
 
 function nextLabel(boot: Bootstrap, draft: Draft): number {

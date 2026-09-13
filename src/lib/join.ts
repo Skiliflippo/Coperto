@@ -89,8 +89,21 @@ export function findJoinProposals(args: {
   maxTables?: number;
   limit?: number;
 }): JoinProposal[] {
-  const { party, tables, statuses, maxGapCm, maxTables = 4, limit = 4 } = args;
+  const { party, tables, statuses, maxGapCm, limit = 4 } = args;
   const free = tables.filter((t) => t.state !== "fuori_servizio" && isFree(t.id, statuses));
+  if (!free.length) return [];
+
+  // Quante tavole servono al massimo: per una tavolata da 30 con tavoli da 4
+  // ce ne vogliono 8. Il tetto si adatta al gruppo invece di essere fisso.
+  const biggest = Math.max(...free.map((t) => seatsOf(t)));
+  const needed = Math.ceil(party / Math.max(2, biggest));
+  const maxTables = Math.max(2, Math.min(args.maxTables ?? 10, needed + 2));
+
+  // Vicinato precalcolato: evita di ricontrollare la geometria a ogni passo.
+  const neighbours = new Map<string, TableT[]>();
+  for (const t of free) {
+    neighbours.set(t.id, free.filter((o) => o.id !== t.id && areAdjacent(t, o, maxGapCm)));
+  }
 
   const make = (group: TableT[]): JoinProposal => {
     const seats = group.reduce((a, t) => a + seatsOf(t), 0);
@@ -107,24 +120,34 @@ export function findJoinProposals(args: {
     };
   };
 
-  // Catene di tavoli consecutivi: si parte da un tavolo e si aggiunge ogni volta
-  // un vicino della catena, finché i posti bastano o si raggiunge il massimo.
+  // Catene di tavoli consecutivi. Esplorazione con memoria delle combinazioni già
+  // viste e un tetto di passi: su sale grandi le combinazioni sarebbero milioni.
   const found = new Map<string, JoinProposal>();
-  const grow = (chain: TableT[]) => {
-    const seats = chain.reduce((a, t) => a + seatsOf(t), 0);
-    if (chain.length >= 2 && seats >= party && isCompactGroup(chain)) {
-      const p = make(chain);
-      if (!found.has(p.label)) found.set(p.label, p);
-      return;   // catena minima sufficiente: non serve allungarla ancora
+  const seen = new Set<string>();
+  let budget = 20000;
+
+  const grow = (chain: TableT[], seats: number) => {
+    if (budget-- <= 0) return;
+    if (chain.length >= 2 && seats >= party) {
+      if (isCompactGroup(chain)) {
+        const p = make(chain);
+        if (!found.has(p.label)) found.set(p.label, p);
+      }
+      return;   // catena minima sufficiente: allungarla sprecherebbe solo posti
     }
     if (chain.length >= maxTables) return;
-    for (const candidate of free) {
+    for (const candidate of chain.flatMap((t) => neighbours.get(t.id) ?? [])) {
       if (chain.includes(candidate)) continue;
-      if (!chain.some((t) => areAdjacent(t, candidate, maxGapCm))) continue;
-      grow([...chain, candidate]);
+      const key = [...chain, candidate].map((t) => t.id).sort().join("|");
+      if (seen.has(key)) continue;
+      seen.add(key);
+      grow([...chain, candidate], seats + seatsOf(candidate));
     }
   };
-  for (const start of free) grow([start]);
+  // prima i tavoli grandi: le tavolate si costruiscono attorno a quelli
+  for (const start of [...free].sort((a, b) => seatsOf(b) - seatsOf(a))) {
+    grow([start], seatsOf(start));
+  }
 
   const out = [...found.values()];
   // meno spreco, meno tavoli da spostare, meno sedie da aggiungere

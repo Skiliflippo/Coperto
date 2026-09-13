@@ -8,19 +8,88 @@ import { api } from "@/lib/api";
 import { useBootstrap } from "@/lib/hooks";
 import { useSession } from "@/store/session";
 import type { Bootstrap, Settings, StaffSession } from "@/lib/types";
-import { Btn, Field, SkeletonRows } from "@/components/ui";
+import { Btn, Field, Sheet, SkeletonRows } from "@/components/ui";
 import { toast } from "@/components/toast";
 import { RoomsManager } from "@/components/rooms-manager";
 
 type PeriodDraft = { id: string; name: string; startTime: string; endTime: string };
 
-function Num({ label, value, onChange, min = 0, max = 60, step = 5, suffix = "min" }: {
+// Ogni voce spiegata con parole di sala e un esempio concreto.
+type Help = { title: string; text: string; example: string };
+const HELP: Record<string, Help> = {
+  unisci: {
+    title: "Unire due tavoli",
+    text: "Se arriva un gruppo che non entra in nessun tavolo, l'app ti propone di accostarne due o tre vicini e liberi.",
+    example: "Arrivano in 6 e hai solo tavoli da 4: l'app dice «accosta il 3 e il 4».",
+  },
+  distanza: {
+    title: "Quanto lontani possono essere",
+    text: "Due tavoli si possono accostare solo se sono vicini. Qui decidi quanti centimetri di distanza accetti.",
+    example: "Con 150 cm, due tavoli a un metro e mezzo si possono unire. Più in là no.",
+  },
+  slot: {
+    title: "Ogni quanto si prenota",
+    text: "Gli orari che l'app ti propone quando prendi una prenotazione al telefono.",
+    example: "Con 15 minuti: 20:00, 20:15, 20:30. Con 30: solo 20:00 e 20:30.",
+  },
+  riassetto: {
+    title: "Tempo per riapparecchiare",
+    text: "Quanto serve per sparecchiare e rimettere a posto prima che si sieda il gruppo dopo. L'app lo tiene libero da solo.",
+    example: "Con 15 minuti: se un tavolo si libera alle 21:00, il prossimo può sedersi dalle 21:15.",
+  },
+  ritardo: {
+    title: "Quando segnalare un ritardo",
+    text: "Dopo quanti minuti dall'orario prenotato l'app colora di arancione chi non è ancora arrivato.",
+    example: "Prenotazione alle 20:00 e soglia 15: alle 20:15 diventa arancione.",
+  },
+  oltreora: {
+    title: "Quando un tavolo è «da girare»",
+    text: "Dopo quanto tempo un tavolo occupato diventa rosso, per ricordarti che è là da un pezzo.",
+    example: "Con 60 minuti: chi si è seduto alle 20:00 diventa rosso alle 21:00.",
+  },
+  tieni: {
+    title: "Quanto prima tenere il tavolo",
+    text: "Quanto tempo prima dell'orario prenotato il tavolo smette di comparire fra quelli liberi, così nessuno ci fa sedere altri.",
+    example: "Con 90 minuti: per una prenotazione alle 21:00, dalle 19:30 quel tavolo risulta impegnato.",
+  },
+  noshow: {
+    title: "Quando proporre «non è venuto»",
+    text: "Dopo quanto l'app ti propone di segnare la prenotazione come mancata. Non lo fa mai da sola: decidi tu.",
+    example: "Con 15 minuti: alle 20:15 compare il pulsante per una prenotazione delle 20:00.",
+  },
+  pieno: {
+    title: "Avviso sala piena",
+    text: "A che percentuale di posti prenotati l'app ti avvisa che quella fascia oraria è carica. È solo un avviso: puoi prenotare lo stesso.",
+    example: "Con 90%: su 100 coperti, l'avviso parte a 90 prenotati.",
+  },
+  durata: {
+    title: "Quanto stanno a tavola",
+    text: "Il tempo che l'app calcola per ogni gruppo, per capire quando il tavolo tornerà libero.",
+    example: "Una coppia a cena: 90 minuti. Una tavolata di 10: due ore.",
+  },
+  orario: {
+    title: "Orari del turno",
+    text: "Da che ora a che ora si serve. Sono gli estremi della griglia nella pagina Piano.",
+    example: "Cena dalle 19:00 alle 23:30.",
+  },
+};
+
+function Num({ label, value, onChange, min = 0, max = 60, step = 5, suffix = "min", onInfo }: {
   label: string; value: number; onChange: (v: number) => void;
   min?: number; max?: number; step?: number; suffix?: string;
+  onInfo?: () => void;
 }) {
   return (
     <div className="flex items-center justify-between gap-3 rounded-2xl border border-line bg-surface px-4 py-3">
-      <p className="text-[15px] font-semibold">{label}</p>
+      <p className="flex min-w-0 flex-1 items-center gap-1.5 text-[15px] font-semibold">
+        <span className="min-w-0">{label}</span>
+        {onInfo && (
+          <button onClick={onInfo} aria-label={`Cosa vuol dire: ${label}`}
+            className="grid h-6 w-6 shrink-0 place-items-center rounded-full bg-muted/15 text-[12px] font-bold text-muted/70 active:scale-90">
+            ?
+          </button>
+        )}
+      </p>
       <div className="flex items-center gap-2">
         <button onClick={() => onChange(Math.max(min, value - step))}
           className="grid h-12 w-12 place-items-center rounded-xl bg-raised text-2xl font-bold active:scale-95">−</button>
@@ -61,6 +130,7 @@ function SettingsForm({ staff, boot }: { staff: StaffSession; boot: Bootstrap })
     boot.periods.map(({ id, name, startTime, endTime }) => ({ id, name, startTime, endTime })),
   );
   const [busy, setBusy] = useState(false);
+  const [help, setHelp] = useState<Help | null>(null);
 
   const setBand = (turno: string, band: "base" | "large" | "xl", value: number) => {
     const current = settings.durations[turno] ?? settings.durations.cena;
@@ -107,29 +177,34 @@ function SettingsForm({ staff, boot }: { staff: StaffSession; boot: Bootstrap })
         <button onClick={() => setSettings({ ...settings, allowTableJoin: !settings.allowTableJoin })}
           className="flex w-full items-center justify-between gap-3 rounded-2xl border border-line bg-surface px-4 py-3 text-left active:scale-[0.99]">
           <span>
-            <span className="block text-[15px] font-semibold">Unisci tavoli</span>
-            <span className="block text-[13px] text-muted">Se un gruppo non entra, proponi di accostare due tavoli vicini e liberi</span>
+            <span className="block text-[15px] font-semibold">Unire due tavoli quando serve</span>
+            <span className="block text-[13px] text-muted">Se un gruppo non entra da nessuna parte, l&apos;app propone di accostarne due vicini</span>
           </span>
-          <span className={`relative h-8 w-14 shrink-0 rounded-full transition-colors ${settings.allowTableJoin ? "bg-ok" : "bg-raised"}`}>
-            <span className={`absolute top-1 h-6 w-6 rounded-full bg-surface shadow transition-all ${settings.allowTableJoin ? "left-7" : "left-1"}`} />
+          <span className="flex shrink-0 items-center gap-2">
+            <span onClick={(e) => { e.stopPropagation(); setHelp(HELP.unisci); }} role="button" tabIndex={-1}
+              aria-label="Cosa vuol dire: unire due tavoli"
+              className="grid h-6 w-6 place-items-center rounded-full bg-muted/15 text-[12px] font-bold text-muted/70 active:scale-90">?</span>
+            <span className={`relative h-8 w-14 rounded-full transition-colors ${settings.allowTableJoin ? "bg-ok" : "bg-raised"}`}>
+              <span className={`absolute top-1 h-6 w-6 rounded-full bg-surface shadow transition-all ${settings.allowTableJoin ? "left-7" : "left-1"}`} />
+            </span>
           </span>
         </button>
         {settings.allowTableJoin && (
-          <Num label="Distanza max fra tavoli accostabili" value={settings.joinMaxGapCm ?? 150}
+          <Num label="Quanto lontani possono essere" value={settings.joinMaxGapCm ?? 150}
             onChange={(value) => setSettings({ ...settings, joinMaxGapCm: value })}
-            min={20} max={500} step={10} suffix="cm" />
+            min={20} max={500} step={10} suffix="cm" onInfo={() => setHelp(HELP.distanza)} />
         )}
       </div>
 
-      <p className="mt-5 text-sm font-bold uppercase tracking-wide text-muted">Ritmo del servizio</p>
+      <p className="mt-5 text-sm font-bold uppercase tracking-wide text-muted">Come funziona il servizio</p>
       <div className="mt-2 space-y-2">
-        <Num label="Granularità slot piano" value={settings.slotMinutes} onChange={(value) => setSettings({ ...settings, slotMinutes: value })} min={5} max={30} step={5} />
-        <Num label="Buffer riassetto tra turni" value={settings.bufferMinutes} onChange={(value) => setSettings({ ...settings, bufferMinutes: value })} min={0} max={45} step={5} />
-        <Num label="Evidenzia in ritardo dopo" value={settings.lateThresholdMinutes} onChange={(value) => setSettings({ ...settings, lateThresholdMinutes: value })} min={5} max={30} step={5} />
-        <Num label="Tavolo oltre l'ora dopo" value={settings.overtimeMinutes ?? 60} onChange={(value) => setSettings({ ...settings, overtimeMinutes: value })} min={30} max={180} step={15} />
-        <Num label="Prenotazione blocca il tavolo da" value={settings.reservationHoldMinutes ?? 90} onChange={(value) => setSettings({ ...settings, reservationHoldMinutes: value })} min={15} max={180} step={15} />
-        <Num label="Proponi no-show dopo" value={settings.noShowThresholdMinutes} onChange={(value) => setSettings({ ...settings, noShowThresholdMinutes: value })} min={5} max={45} step={5} />
-        <Num label="Alert overbooking al" value={settings.overbookingPct} onChange={(value) => setSettings({ ...settings, overbookingPct: value })} min={50} max={110} step={5} suffix="%" />
+        <Num label="Ogni quanto si prenota" value={settings.slotMinutes} onChange={(value) => setSettings({ ...settings, slotMinutes: value })} min={5} max={30} step={5} onInfo={() => setHelp(HELP.slot)} />
+        <Num label="Tempo per riapparecchiare" value={settings.bufferMinutes} onChange={(value) => setSettings({ ...settings, bufferMinutes: value })} min={0} max={45} step={5} onInfo={() => setHelp(HELP.riassetto)} />
+        <Num label="Segnala chi è in ritardo dopo" value={settings.lateThresholdMinutes} onChange={(value) => setSettings({ ...settings, lateThresholdMinutes: value })} min={5} max={30} step={5} onInfo={() => setHelp(HELP.ritardo)} />
+        <Num label="Tavolo da girare dopo" value={settings.overtimeMinutes ?? 60} onChange={(value) => setSettings({ ...settings, overtimeMinutes: value })} min={30} max={180} step={15} onInfo={() => setHelp(HELP.oltreora)} />
+        <Num label="Tieni libero il tavolo da" value={settings.reservationHoldMinutes ?? 90} onChange={(value) => setSettings({ ...settings, reservationHoldMinutes: value })} min={15} max={180} step={15} onInfo={() => setHelp(HELP.tieni)} />
+        <Num label="Proponi «non è venuto» dopo" value={settings.noShowThresholdMinutes} onChange={(value) => setSettings({ ...settings, noShowThresholdMinutes: value })} min={5} max={45} step={5} onInfo={() => setHelp(HELP.noshow)} />
+        <Num label="Avvisa quando la sala è piena al" value={settings.overbookingPct} onChange={(value) => setSettings({ ...settings, overbookingPct: value })} min={50} max={110} step={5} suffix="%" onInfo={() => setHelp(HELP.pieno)} />
       </div>
 
       {boot.periods.map((period) => {
@@ -138,11 +213,11 @@ function SettingsForm({ staff, boot }: { staff: StaffSession; boot: Bootstrap })
         const draft = periods.find((item) => item.id === period.id) ?? period;
         return (
           <div key={period.id}>
-            <p className="mt-5 text-sm font-bold uppercase tracking-wide text-muted">Durata tavoli · {period.name}</p>
+            <p className="mt-5 text-sm font-bold uppercase tracking-wide text-muted">Quanto stanno a tavola · {period.name}</p>
             <div className="mt-2 space-y-2">
-              <Num label="Fino a 6 coperti" value={duration.base} onChange={(value) => setBand(key, "base", value)} min={30} max={150} step={15} />
-              <Num label="7–8 coperti" value={duration.large} onChange={(value) => setBand(key, "large", value)} min={45} max={180} step={15} />
-              <Num label="9+ coperti" value={duration.xl} onChange={(value) => setBand(key, "xl", value)} min={60} max={240} step={15} />
+              <Num label="Gruppi fino a 6 persone" value={duration.base} onChange={(value) => setBand(key, "base", value)} min={30} max={150} step={15} onInfo={() => setHelp(HELP.durata)} />
+              <Num label="Gruppi da 7 o 8 persone" value={duration.large} onChange={(value) => setBand(key, "large", value)} min={45} max={180} step={15} onInfo={() => setHelp(HELP.durata)} />
+              <Num label="Tavolate da 9 in su" value={duration.xl} onChange={(value) => setBand(key, "xl", value)} min={60} max={240} step={15} onInfo={() => setHelp(HELP.durata)} />
             </div>
             <div className="mt-2 grid grid-cols-2 gap-2">
               <Field label={`${period.name} inizia`}>
@@ -163,6 +238,17 @@ function SettingsForm({ staff, boot }: { staff: StaffSession; boot: Bootstrap })
       <div className="mt-6">
         <Btn size="xl" disabled={busy} onClick={save}><Check className="h-6 w-6" /> Salva impostazioni</Btn>
       </div>
+
+      <Sheet open={!!help} onClose={() => setHelp(null)} title={help?.title ?? ""}>
+        <div className="grid gap-3">
+          <p className="text-[17px] leading-snug">{help?.text}</p>
+          <p className="rounded-2xl bg-raised px-4 py-3 text-[15px] font-semibold">
+            <span className="block text-[12px] font-bold uppercase tracking-wide text-muted">Esempio</span>
+            {help?.example}
+          </p>
+          <Btn onClick={() => setHelp(null)}>Ho capito</Btn>
+        </div>
+      </Sheet>
     </div>
   );
 }

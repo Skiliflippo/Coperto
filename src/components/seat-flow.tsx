@@ -3,7 +3,7 @@
 // Tap 1: quanti siete · Tap 2: tavolo suggerito → seduti. Fine.
 import { useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import { Users, Clock, ArrowRight, Link2 } from "lucide-react";
+import { Users, Clock, ArrowRight, Link2, Scissors } from "lucide-react";
 import { api, ApiError } from "@/lib/api";
 import { useBootstrap, useDay, useNow } from "@/lib/hooks";
 import { useSession } from "@/store/session";
@@ -21,7 +21,8 @@ export function PartyGrid({ value, onChange }: { value: number; onChange: (v: nu
       <div className="flex items-center justify-center gap-3">
         <button onClick={() => onChange(Math.max(9, value - 1))} className="grid h-16 w-16 place-items-center rounded-2xl bg-raised text-3xl font-bold active:scale-95">−</button>
         <div className="w-24 text-center font-display text-5xl font-bold tabular-nums">{value}</div>
-        <button onClick={() => onChange(Math.min(30, value + 1))} className="grid h-16 w-16 place-items-center rounded-2xl bg-raised text-3xl font-bold active:scale-95">+</button>
+        <button onClick={() => onChange(Math.min(80, value + 10))} className="grid h-16 w-16 place-items-center rounded-2xl bg-raised text-lg font-bold active:scale-95">+10</button>
+        <button onClick={() => onChange(Math.min(80, value + 1))} className="grid h-16 w-16 place-items-center rounded-2xl bg-raised text-3xl font-bold active:scale-95">+</button>
       </div>
     );
   }
@@ -83,6 +84,10 @@ export function SuggestedTables({ party, onPick, excludeIds = [], compact, forRe
   const boot = useBootstrap();
   const day = useDay(todayISO());
   const now = useNow();
+  const qc = useQueryClient();
+  const rid = useSession((st) => st.staff?.restaurantId);
+  const me = useSession((st) => st.staff?.name) ?? "";
+  const [splitting, setSplitting] = useState<string | null>(null);
   if (!boot.data || !day.data) return <div className="skeleton h-24 rounded-2xl" />;
   const { tables, combos, rooms, settings } = boot.data;
   const statuses = computeTableStatuses({
@@ -94,6 +99,18 @@ export function SuggestedTables({ party, onPick, excludeIds = [], compact, forRe
   });
   const held = tables.filter((t) => statuses.get(t.id)?.state === "prenotato" && t.capacity >= party).length;
 
+  // TAVOLI DA STACCARE: un tavolone libero che in realtà sono più tavoli accostati.
+  // Si propone solo se staccandolo si risparmiano davvero coperti, cioè quando il
+  // gruppo entra comodo in una singola parte. Resta una scelta: il tavolo intero
+  // compare comunque nell'elenco qui sopra.
+  const splittable = tables
+    .filter((t) => !excludeIds.includes(t.id))
+    .filter((t) => t.splitInto >= 2 && statuses.get(t.id)?.state === "libero")
+    .map((t) => ({ table: t, partSeats: Math.floor(t.capacity / t.splitInto) }))
+    .filter(({ table, partSeats }) => partSeats >= party && table.capacity - party >= partSeats)
+    .sort((a, b) => (a.partSeats - party) - (b.partSeats - party))
+    .slice(0, 2);
+
   // Accorpamenti: solo se attivi in impostazioni e solo quando servono davvero
   const joins = settings.allowTableJoin && !free.length
     ? findJoinProposals({
@@ -102,7 +119,7 @@ export function SuggestedTables({ party, onPick, excludeIds = [], compact, forRe
       })
     : [];
 
-  if (!free.length && !joins.length) {
+  if (!free.length && !joins.length && !splittable.length) {
     return (
       <div className="rounded-2xl border border-soon/50 bg-soon/10 p-4 text-center">
         <p className="font-bold text-soon">Nessun tavolo disponibile per {party}</p>
@@ -142,6 +159,36 @@ export function SuggestedTables({ party, onPick, excludeIds = [], compact, forRe
           </button>
         );
       })}
+
+      {splittable.map(({ table, partSeats }) => (
+        <button key={`split-${table.id}`} disabled={splitting === table.id}
+          onClick={async () => {
+            setSplitting(table.id);
+            try {
+              const res = await api<{ parts: { id: string; label: string; capacity: number }[] }>(
+                `/api/tables/${table.id}/split`, { method: "POST", body: { restaurantId: rid, staffName: me } },
+              );
+              await qc.invalidateQueries({ queryKey: ["bootstrap", rid] });
+              const part = res.parts.find((p) => p.capacity >= party) ?? res.parts[0];
+              onPick({ tableIds: [part.id], tableLabel: part.label });
+            } catch (e: any) {
+              toast({ title: e?.message ?? "Non è stato possibile staccare il tavolo", tone: "err" });
+            }
+            setSplitting(null);
+          }}
+          className="flex min-h-[64px] items-center gap-3 rounded-2xl border-2 border-busy/40 bg-busy/10 px-4 text-left active:scale-[0.98] disabled:opacity-50">
+          <span className="grid h-11 w-11 shrink-0 place-items-center rounded-xl bg-busy text-white">
+            <Scissors className="h-5 w-5" />
+          </span>
+          <span className="min-w-0 flex-1">
+            <span className="block font-bold">Stacca il tavolo {table.label}</span>
+            <span className="block text-[13px] text-muted">
+              Diventa {table.splitInto} tavoli da {partSeats}: ne usi uno e resta libero il resto
+            </span>
+          </span>
+          <ArrowRight className="h-5 w-5 shrink-0 text-busy" />
+        </button>
+      ))}
 
       {joins.length > 0 && (
         <>
