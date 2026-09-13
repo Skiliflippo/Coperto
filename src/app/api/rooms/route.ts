@@ -4,7 +4,7 @@ import * as s from "@/db/schema";
 import { and, eq } from "drizzle-orm";
 import { createHash } from "node:crypto";
 import { broadcast } from "@/server/hub";
-import { logActivity } from "@/server/data";
+import { assertStaffInRestaurant, logActivity } from "@/server/data";
 export const dynamic = "force-dynamic";
 
 const sha = (pin: string) => createHash("sha256").update(pin).digest("hex");
@@ -15,10 +15,11 @@ export async function DELETE(req: Request) {
   const { restaurantId, staffId, pin, roomId } = await req.json();
   if (!restaurantId || !roomId) return NextResponse.json({ error: "Parametri mancanti" }, { status: 400 });
 
-  const [owner] = await db.select().from(s.staff).where(eq(s.staff.id, staffId ?? ""));
-  if (!owner || owner.role !== "titolare" || !owner.active || owner.restaurantId !== restaurantId) {
-    return NextResponse.json({ error: "Solo il titolare può eliminare una sala" }, { status: 403 });
+  const guard = await assertStaffInRestaurant(staffId, restaurantId, { requireOwner: true });
+  if (!guard.ok) {
+    return NextResponse.json({ error: guard.error === "Serve il titolare" ? "Solo il titolare può eliminare una sala" : guard.error }, { status: guard.status });
   }
+  const owner = guard.staff;
   if (!/^\d{4}$/.test(String(pin)) || owner.pinHash !== sha(String(pin))) {
     return NextResponse.json({ error: "PIN sbagliato" }, { status: 401 });
   }

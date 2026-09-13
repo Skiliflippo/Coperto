@@ -29,7 +29,7 @@ export function RoomsManager({ boot }: { boot: Bootstrap }) {
         method: "DELETE",
         body: { restaurantId: boot.restaurant.id, staffId: staff?.id, pin, roomId: target.id },
       });
-      await qc.invalidateQueries({ queryKey: ["bootstrap", staff?.restaurantId] });
+      await qc.invalidateQueries({ queryKey: ["bootstrap"] });
       toast({ title: `Sala "${target.name}" eliminata`, tone: "ok" });
       setTarget(null); setPin("");
     } catch (error: unknown) {

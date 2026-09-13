@@ -3,7 +3,7 @@
 import { useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import {
-  Check, Clock, DoorOpen, Receipt, ArrowLeftRight, Ban, StickyNote, Users, Timer, Undo2, Scissors, Link2,
+  Check, Clock, DoorOpen, ArrowLeftRight, Ban, StickyNote, Users, Timer, Undo2, Scissors, Link2,
 } from "lucide-react";
 import { api } from "@/lib/api";
 import { useBootstrap, useDay, useNow } from "@/lib/hooks";
@@ -44,7 +44,7 @@ export function TableSheet({ table, onClose }: { table: TableT | null; onClose: 
     if (!table) return;
     try {
       await api(`/api/tables/${table.id}/split`, { method: "POST", body: { restaurantId: rid, staffName: me } });
-      await qc.invalidateQueries({ queryKey: ["bootstrap", rid] });
+      await qc.invalidateQueries({ queryKey: ["bootstrap"] });
       toast({ title: `Tavolo ${table.label} staccato`, msg: "Ora sono tavoli indipendenti.", tone: "ok" });
       onClose();
     } catch (e: any) { toast({ title: e?.message ?? "Non riuscito", tone: "err" }); }
@@ -55,7 +55,7 @@ export function TableSheet({ table, onClose }: { table: TableT | null; onClose: 
       const res = await api<{ label: string }>(`/api/tables/${table.id}/split`, {
         method: "DELETE", body: { staffName: me },
       });
-      await qc.invalidateQueries({ queryKey: ["bootstrap", rid] });
+      await qc.invalidateQueries({ queryKey: ["bootstrap"] });
       toast({ title: `Tavolo ${res.label} riunito`, tone: "ok" });
       onClose();
     } catch (e: any) { toast({ title: e?.message ?? "Non riuscito", tone: "err" }); }
@@ -63,7 +63,7 @@ export function TableSheet({ table, onClose }: { table: TableT | null; onClose: 
 
   const act = async (path: string, body: unknown) => {
     await api(path, { method: "PATCH", body: { restaurantId: rid, staffName: me, ...(body as object) } });
-    await Promise.all([qc.invalidateQueries({ queryKey: ["day", rid] }), qc.invalidateQueries({ queryKey: ["bootstrap", rid] })]);
+    await Promise.all([qc.invalidateQueries({ queryKey: ["day", rid] }), qc.invalidateQueries({ queryKey: ["bootstrap"] })]);
   };
 
   return (
@@ -86,10 +86,7 @@ export function TableSheet({ table, onClose }: { table: TableT | null; onClose: 
         <div className="grid gap-3">
           {seating && (
             <div className="rounded-2xl bg-raised p-4">
-              <div className="flex items-center justify-between gap-2">
-                <p className="text-lg font-bold">{seating.name || "Walk-in"} · {seating.partySize} p.</p>
-                {seating.billRequested && <Chip cls="bg-soon/15 text-soon border-soon/40"><Receipt className="h-3.5 w-3.5" />Conto</Chip>}
-              </div>
+              <p className="text-lg font-bold">{seating.name || "Walk-in"} · {seating.partySize} p.</p>
               <p className="mt-1 flex items-center gap-1.5 text-sm font-semibold text-muted">
                 <Timer className="h-4 w-4" /> Seduti da {status.minutesSeated} min
                 {state === "oltre_tempo" && <span className="font-bold text-over">· oltre l&apos;ora</span>}
@@ -113,7 +110,6 @@ export function TableSheet({ table, onClose }: { table: TableT | null; onClose: 
                 <Btn variant="soft" onClick={() => act(`/api/seatings/${seating.id}`, { action: "extend", minutes: 30 })}><Clock className="h-5 w-5" /> +30 min</Btn>
                 <Btn variant="soft" onClick={() => { setParty(seating.partySize); setMode("party"); }}><Users className="h-5 w-5" /> Coperti: {seating.partySize}</Btn>
                 <Btn variant="soft" onClick={() => setMode("move")}><ArrowLeftRight className="h-5 w-5" /> Sposta tavolo</Btn>
-                <Btn variant={seating.billRequested ? "ok" : "soft"} onClick={() => act(`/api/seatings/${seating.id}`, { action: "bill" })}><Receipt className="h-5 w-5" /> {seating.billRequested ? "Conto richiesto ✓" : "Conto richiesto"}</Btn>
                 <Btn variant="soft" onClick={() => { setNote(seating.note); setMode("note"); }}><StickyNote className="h-5 w-5" /> Nota veloce</Btn>
               </div>
             </>
@@ -126,7 +122,7 @@ export function TableSheet({ table, onClose }: { table: TableT | null; onClose: 
               {table.splitInto >= 2 && (
                 <Btn variant="soft" onClick={() => splitTable()}>
                   <Scissors className="h-5 w-5" />
-                  Stacca in {table.splitInto} tavoli da {Math.floor(table.capacity / table.splitInto)}
+                  Stacca in {table.splitInto} tavoli da {boot.data.settings.standardTableSeats ?? 4}
                 </Btn>
               )}
               {table.splitParentId && (

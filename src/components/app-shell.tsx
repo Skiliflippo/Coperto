@@ -10,35 +10,44 @@ import { Providers } from "@/app/providers";
 import { useBootstrap } from "@/lib/hooks";
 import { Onboarding } from "@/components/onboarding";
 import { Toaster } from "@/components/toast";
+import { useTenantPath } from "@/lib/tenant";
 
 const TABS = [
-  { href: "/sala", label: "Sala", icon: Armchair },
-  { href: "/prenotazioni", label: "Prenotazioni", icon: CalendarRange },
-  { href: "/altro", label: "Altro", icon: Ellipsis },
+  { path: "/sala", label: "Sala", icon: Armchair },
+  { path: "/prenotazioni", label: "Prenotazioni", icon: CalendarRange },
+  { path: "/altro", label: "Altro", icon: Ellipsis },
 ];
 
 function Shell({ children }: { children: ReactNode }) {
   const staff = useSession((s) => s.staff);
   const theme = useSession((s) => s.theme);
   const router = useRouter();
+  const tp = useTenantPath();
   const path = usePathname();
   const hydrated = useSession((state) => state.hydrated);
   const conn = useRealtime();
   const boot = useBootstrap();
+  // Chiaro/scuro è una scelta del dispositivo; la palette è del locale.
+  const palette = boot.data?.settings?.theme ?? "terracotta";
   useEffect(() => {
-    document.documentElement.classList.toggle("dark", theme === "dark");
-  }, [theme]);
+    const root = document.documentElement;
+    root.classList.toggle("dark", theme === "dark");
+    for (const cls of Array.from(root.classList)) {
+      if (cls.startsWith("theme-")) root.classList.remove(cls);
+    }
+    root.classList.add(`theme-${palette}`);
+  }, [theme, palette]);
   useEffect(() => {
-    if (hydrated && !staff) router.replace("/login");
-  }, [hydrated, staff, router]);
+    if (hydrated && !staff) router.replace(tp("/login"));
+  }, [hydrated, staff, router, tp]);
 
   // Database svuotato o non ancora configurato: la sessione salvata nel browser
   // non vale più. Si riparte dal primo avvio invece di restare a caricare.
   useEffect(() => {
     if (!boot.isError) return;
     useSession.getState().setStaff(null);
-    router.replace("/setup");
-  }, [boot.isError, router]);
+    router.replace(tp("/setup"));
+  }, [boot.isError, router, tp]);
 
   if (!hydrated || !staff) {
     return (
@@ -68,7 +77,8 @@ function Shell({ children }: { children: ReactNode }) {
       <nav className="no-print pointer-events-none fixed inset-x-0 bottom-0 z-50 flex justify-center"
         style={{ paddingBottom: "calc(env(safe-area-inset-bottom) + 8px)" }}>
         <div className="pointer-events-auto flex items-center gap-0.5 rounded-full border border-line/60 bg-surface/75 p-1 shadow-lg backdrop-blur-xl">
-          {TABS.map(({ href, label, icon: Icon }) => {
+          {TABS.map(({ path: tabPath, label, icon: Icon }) => {
+            const href = tp(tabPath);
             const active = path.startsWith(href);
             return (
               <Link key={href} href={href} aria-label={label} title={label}

@@ -3,7 +3,7 @@ import { db } from "@/db";
 import * as s from "@/db/schema";
 import { and, eq } from "drizzle-orm";
 import { autoAssign } from "@/lib/autoassign";
-import { getRestaurantBundle, getDayData, logActivity } from "@/server/data";
+import { assertStaffInRestaurant, getRestaurantBundle, getDayData, logActivity } from "@/server/data";
 import { broadcast } from "@/server/hub";
 export const dynamic = "force-dynamic";
 
@@ -11,6 +11,8 @@ export const dynamic = "force-dynamic";
 export async function POST(req: Request) {
   const b = await req.json();
   const { restaurantId, date, periodId, staffName = "" } = b;
+  const guard = await assertStaffInRestaurant(b.staffId, restaurantId);
+  if (!guard.ok) return NextResponse.json({ error: guard.error }, { status: guard.status });
   const bundle = await getRestaurantBundle(restaurantId);
   const day = await getDayData(restaurantId, date);
   const period = bundle.periods.find((p) => p.id === periodId) ?? bundle.periods[0];

@@ -3,7 +3,7 @@ import { db } from "@/db";
 import * as s from "@/db/schema";
 import { and, eq, inArray } from "drizzle-orm";
 import { broadcast } from "@/server/hub";
-import { logActivity } from "@/server/data";
+import { assertStaffInRestaurant, logActivity } from "@/server/data";
 export const dynamic = "force-dynamic";
 
 // Siedi: crea l'occupazione reale. Se c'è prenotazione la collega (deviazioni = differenza tra le due).
@@ -14,6 +14,8 @@ export async function POST(req: Request) {
   if (!restaurantId || !tableIds?.length || !partySize || !expectedEndAt) {
     return NextResponse.json({ error: "Campi mancanti" }, { status: 400 });
   }
+  const guard = await assertStaffInRestaurant(b.staffId, restaurantId);
+  if (!guard.ok) return NextResponse.json({ error: guard.error }, { status: guard.status });
   // Conflitto multi-dispositivo: il tavolo è appena stato occupato da qualcun altro?
   const active = await db.select().from(s.seatings)
     .where(and(eq(s.seatings.restaurantId, restaurantId), eq(s.seatings.status, "seduto")));

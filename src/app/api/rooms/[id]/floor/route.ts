@@ -3,7 +3,7 @@ import { db } from "@/db";
 import * as s from "@/db/schema";
 import { and, eq, inArray } from "drizzle-orm";
 import { broadcast } from "@/server/hub";
-import { isOwner, logActivity } from "@/server/data";
+import { assertStaffInRestaurant, logActivity } from "@/server/data";
 import { normalizeLayout, polygonOf, rectInsideRoom, tableGeometry, type TableShape } from "@/lib/floor";
 export const dynamic = "force-dynamic";
 
@@ -20,12 +20,13 @@ export async function PUT(req: Request, { params }: { params: Promise<{ id: stri
   const { staffId, staffName = "", layout, tables = [], deleted = [] } = body as {
     staffId?: string; staffName?: string; layout?: unknown; tables?: TableDraft[]; deleted?: string[];
   };
-  if (!(await isOwner(staffId))) {
-    return NextResponse.json({ error: "Solo il titolare può modificare la mappa" }, { status: 403 });
-  }
   const [room] = await db.select().from(s.rooms).where(eq(s.rooms.id, roomId));
   if (!room) return NextResponse.json({ error: "Sala non trovata" }, { status: 404 });
   const rid = room.restaurantId;
+  const guard = await assertStaffInRestaurant(staffId, rid, { requireOwner: true });
+  if (!guard.ok) {
+    return NextResponse.json({ error: guard.error === "Serve il titolare" ? "Solo il titolare può modificare la mappa" : guard.error }, { status: guard.status });
+  }
 
   // Un tavolo con gente seduta non si può eliminare: il servizio viene prima dell'estetica.
   const active = await db.select().from(s.seatings)

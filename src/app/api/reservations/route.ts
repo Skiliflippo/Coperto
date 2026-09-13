@@ -3,7 +3,7 @@ import { db } from "@/db";
 import * as s from "@/db/schema";
 import { and, eq, or } from "drizzle-orm";
 import { broadcast } from "@/server/hub";
-import { logActivity } from "@/server/data";
+import { assertStaffInRestaurant, logActivity } from "@/server/data";
 export const dynamic = "force-dynamic";
 
 // Crea prenotazione telefonica. Anti-duplicati: stesso giorno + telefono o nome simile.
@@ -13,6 +13,8 @@ export async function POST(req: Request) {
   if (!restaurantId || !date || !time || !partySize || !name?.trim()) {
     return NextResponse.json({ error: "Campi mancanti" }, { status: 400 });
   }
+  const guard = await assertStaffInRestaurant(b.staffId, restaurantId);
+  if (!guard.ok) return NextResponse.json({ error: guard.error }, { status: guard.status });
   const cleanPhone = String(phone).replace(/\D/g, "");
   if (!force) {
     const sameDay = await db.select().from(s.reservations)

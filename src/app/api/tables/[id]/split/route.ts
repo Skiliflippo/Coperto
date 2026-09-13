@@ -3,7 +3,7 @@ import { db } from "@/db";
 import * as s from "@/db/schema";
 import { and, eq, inArray } from "drizzle-orm";
 import { broadcast } from "@/server/hub";
-import { logActivity } from "@/server/data";
+import { assertStaffInRestaurant, logActivity } from "@/server/data";
 import { splitTableParts } from "@/lib/floor";
 export const dynamic = "force-dynamic";
 
@@ -14,10 +14,12 @@ export const dynamic = "force-dynamic";
  */
 export async function POST(req: Request, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
-  const { restaurantId, staffName = "" } = await req.json().catch(() => ({}));
+  const { restaurantId, staffId, staffName = "" } = await req.json().catch(() => ({}));
 
   const [table] = await db.select().from(s.tables).where(eq(s.tables.id, id));
   if (!table) return NextResponse.json({ error: "Tavolo non trovato" }, { status: 404 });
+  const guard = await assertStaffInRestaurant(staffId, table.restaurantId);
+  if (!guard.ok) return NextResponse.json({ error: guard.error }, { status: guard.status });
   if (table.splitActive) return NextResponse.json({ error: "Questo tavolo è già staccato" }, { status: 409 });
   if (table.splitInto < 2) {
     return NextResponse.json({ error: `Il tavolo ${table.label} non è staccabile` }, { status: 409 });
@@ -30,7 +32,10 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     return NextResponse.json({ error: `C'è gente seduta al tavolo ${table.label}` }, { status: 409 });
   }
 
-  const parts = splitTableParts(table, table.splitInto);
+  const [settings] = await db.select().from(s.restaurantSettings)
+    .where(eq(s.restaurantSettings.restaurantId, table.restaurantId));
+  const std = settings?.standardTableSeats ?? 4;
+  const parts = splitTableParts(table, table.splitInto, std);
   const existing = await db.select().from(s.tables).where(eq(s.tables.restaurantId, table.restaurantId));
   const used = new Set(existing.filter((t) => !t.archived).map((t) => t.label));
   if (parts.some((p) => used.has(p.label))) {
@@ -66,10 +71,12 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
 /** RIUNISCE le parti: torna il tavolo grande di partenza. */
 export async function DELETE(req: Request, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
-  const { staffName = "" } = await req.json().catch(() => ({}));
+  const { staffId, staffName = "" } = await req.json().catch(() => ({}));
 
   const [target] = await db.select().from(s.tables).where(eq(s.tables.id, id));
   if (!target) return NextResponse.json({ error: "Tavolo non trovato" }, { status: 404 });
+  const guard = await assertStaffInRestaurant(staffId, target.restaurantId);
+  if (!guard.ok) return NextResponse.json({ error: guard.error }, { status: guard.status });
   // si può chiamare sia sul padre sia su una delle parti
   const parentId = target.splitParentId ?? target.id;
   const [parent] = await db.select().from(s.tables).where(eq(s.tables.id, parentId));

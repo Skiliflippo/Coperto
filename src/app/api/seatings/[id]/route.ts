@@ -3,7 +3,7 @@ import { db } from "@/db";
 import * as s from "@/db/schema";
 import { and, eq } from "drizzle-orm";
 import { broadcast } from "@/server/hub";
-import { logActivity } from "@/server/data";
+import { assertStaffInRestaurant, logActivity } from "@/server/data";
 export const dynamic = "force-dynamic";
 
 // Azioni sul tavolo occupato: libera · prolunga · coperti ± · sposta · conto · nota
@@ -13,6 +13,8 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
   const { restaurantId, staffName = "", action } = b;
   const [cur] = await db.select().from(s.seatings).where(eq(s.seatings.id, id));
   if (!cur) return NextResponse.json({ error: "Non trovata" }, { status: 404 });
+  const guard = await assertStaffInRestaurant(b.staffId, cur.restaurantId);
+  if (!guard.ok) return NextResponse.json({ error: guard.error }, { status: guard.status });
 
   let msg = "";
   if (action === "libera") {
@@ -48,9 +50,6 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
     if (clash) return NextResponse.json({ conflict: true, tableLabel: clash.tableLabel }, { status: 409 });
     await db.update(s.seatings).set({ tableIds, tableLabel: b.tableLabel }).where(eq(s.seatings.id, id));
     msg = `${staffName} ha spostato ${cur.name || "tavolo"} su ${b.tableLabel}`;
-  } else if (action === "bill") {
-    await db.update(s.seatings).set({ billRequested: !cur.billRequested }).where(eq(s.seatings.id, id));
-    msg = `${staffName}: conto ${!cur.billRequested ? "richiesto al" : "annullato al"} tavolo ${cur.tableLabel}`;
   } else if (action === "note") {
     await db.update(s.seatings).set({ note: String(b.note ?? "") }).where(eq(s.seatings.id, id));
     return NextResponse.json({ ok: true }); // le note non generano notifiche: la sala è rumorosa

@@ -3,7 +3,7 @@ import { db } from "@/db";
 import * as s from "@/db/schema";
 import { eq } from "drizzle-orm";
 import { broadcast } from "@/server/hub";
-import { isOwner, logActivity } from "@/server/data";
+import { assertStaffInRestaurant, logActivity } from "@/server/data";
 import { normalizeLayout } from "@/lib/floor";
 export const dynamic = "force-dynamic";
 
@@ -12,10 +12,10 @@ export const dynamic = "force-dynamic";
 export async function POST(req: Request) {
   const b = await req.json();
   const { restaurantId, staffId, staffName = "", roomName = "Sala", layout, finish, createNew } = b;
-  if (!(await isOwner(staffId))) {
-    return NextResponse.json({ error: "Solo il titolare può configurare la sala" }, { status: 403 });
+  const guard = await assertStaffInRestaurant(staffId, restaurantId, { requireOwner: true });
+  if (!guard.ok) {
+    return NextResponse.json({ error: guard.error === "Serve il titolare" ? "Solo il titolare può configurare la sala" : guard.error }, { status: guard.status });
   }
-  if (!restaurantId) return NextResponse.json({ error: "Ristorante mancante" }, { status: 400 });
 
   let roomId: string | null = null;
   if (layout) {

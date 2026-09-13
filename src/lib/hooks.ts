@@ -3,16 +3,19 @@ import { useEffect, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "./api";
 import { useSession } from "@/store/session";
+import { useTenant, withSlug } from "@/lib/tenant";
 import type { Bootstrap, DayData } from "./types";
 import { toast } from "@/components/toast";
 
 export function useBootstrap() {
   const staff = useSession((s) => s.staff);
+  const slug = useTenant();
   const rid = staff?.restaurantId;
   return useQuery({
-    queryKey: ["bootstrap", rid ?? "default"],
+    // La cache è per ristorante: aprendo un altro locale non si riusa la sua.
+    queryKey: ["bootstrap", slug || rid || "default"],
     queryFn: async () => {
-      const data = await api<Bootstrap>(`/api/bootstrap${rid ? `?rid=${encodeURIComponent(rid)}` : ""}`);
+      const data = await api<Bootstrap>(withSlug(slug, `/api/bootstrap${rid ? `?rid=${encodeURIComponent(rid)}` : ""}`));
       // Dopo clone/reseed il browser può conservare UUID di ristorante e staff
       // appartenenti al vecchio DB. Non trasferiamo un'identità fra tenant:
       // azzeriamo la sessione e AppShell riporta al login del database corrente.
@@ -68,7 +71,7 @@ export function useRealtime(): "online" | "offline" | "connecting" {
           const d = JSON.parse(e.data);
           if (d.kind === "ping" || d.kind === "hello") return;
           qc.invalidateQueries({ queryKey: ["day", rid] });
-          qc.invalidateQueries({ queryKey: ["bootstrap", rid] });
+          qc.invalidateQueries({ queryKey: ["bootstrap"] });
           qc.invalidateQueries({ queryKey: ["summary", rid] });
           if (d.msg && d.actor && d.actor !== myName) {
             toast({ title: d.msg, tone: d.kind === "seating" ? "ok" : "info" });

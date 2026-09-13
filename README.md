@@ -3,6 +3,19 @@
 App per la sala di un ristorante ad alta affluenza: tavoli in tempo reale, prenotazioni
 telefoniche e walk-in. Veloce come la carta, pensata per mani occupate.
 
+## Più ristoranti sullo stesso server
+
+Ogni locale ha il suo indirizzo: `/r/osteria-del-vicolo/login`. Chi entra da lì vede
+solo la propria sala, il proprio personale e le proprie prenotazioni: il controllo
+è sul server, non nell'interfaccia. Tentare di scrivere nei dati di un altro locale
+restituisce `403`, anche conoscendone gli identificativi.
+
+**Area sviluppatore** — `/admin`, protetta da `ADMIN_PASSWORD` nelle variabili
+d'ambiente (senza quella variabile il pannello resta chiuso, risponde `503`).
+Da lì registri un cliente inserendo nome del locale, nome del titolare e PIN:
+l'app crea tutto il necessario e ti restituisce il link pronto da inviare.
+Il pannello non è collegato da nessun menu dell'app.
+
 ## Primo avvio su database vuoto
 
 Con un database appena creato (o svuotato) l'app si configura da sola: alla prima

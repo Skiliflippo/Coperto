@@ -50,7 +50,7 @@ async function main() {
     onboardedAt: new Date(),   // il locale demo è già configurato
   }).returning();
   const rid = rest.id;
-  await db.insert(s.restaurantSettings).values({ restaurantId: rid });
+  await db.insert(s.restaurantSettings).values({ restaurantId: rid, standardTableSeats: 4, theme: "terracotta" });
   await db.insert(s.restaurantFeatures).values({ restaurantId: rid, flags: { online_widget: false } });
 
   // SALE con planimetria in centimetri reali (vista dall'alto, 1 cella griglia = 50 cm)

@@ -121,7 +121,7 @@ export function RoomWizard({ boot, mode, onDone, onCancel }: {
           createNew: mode === "nuova-sala",
         },
       });
-      await qc.invalidateQueries({ queryKey: ["bootstrap", staff?.restaurantId] });
+      await qc.invalidateQueries({ queryKey: ["bootstrap"] });
       setRoomId(res.roomId);
       setStep(mode === "primo-accesso" ? 2 : 3);
     } catch (error: unknown) {
@@ -139,7 +139,7 @@ export function RoomWizard({ boot, mode, onDone, onCancel }: {
         method: "PUT",
         body: { staffId: staff?.id, staffName: staff?.name, layout: roomLayout, tables, deleted: [] },
       });
-      await qc.invalidateQueries({ queryKey: ["bootstrap", staff?.restaurantId] });
+      await qc.invalidateQueries({ queryKey: ["bootstrap"] });
       setW(roomLayout.w);
       setH(roomLayout.h);
       setOverflow(null);
@@ -174,7 +174,7 @@ export function RoomWizard({ boot, mode, onDone, onCancel }: {
         body: { restaurantId: boot.restaurant.id, staffId: staff?.id, staffName: staff?.name, finish: true },
       });
     }
-    await qc.invalidateQueries({ queryKey: ["bootstrap", staff?.restaurantId] });
+    await qc.invalidateQueries({ queryKey: ["bootstrap"] });
     toast({ title: mode === "primo-accesso" ? "Sala pronta" : `Sala "${name.trim() || "Sala"}" creata`, tone: "ok" });
     onDone();
   };

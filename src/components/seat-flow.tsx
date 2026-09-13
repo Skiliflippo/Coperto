@@ -100,16 +100,22 @@ export function SuggestedTables({ party, onPick, excludeIds = [], compact, forRe
   const held = tables.filter((t) => statuses.get(t.id)?.state === "prenotato" && t.capacity >= party).length;
 
   // TAVOLI DA STACCARE: un tavolone libero che in realtà sono più tavoli accostati.
-  // Si propone solo se staccandolo si risparmiano davvero coperti, cioè quando il
-  // gruppo entra comodo in una singola parte. Resta una scelta: il tavolo intero
-  // compare comunque nell'elenco qui sopra.
-  const splittable = tables
-    .filter((t) => !excludeIds.includes(t.id))
-    .filter((t) => t.splitInto >= 2 && statuses.get(t.id)?.state === "libero")
-    .map((t) => ({ table: t, partSeats: Math.floor(t.capacity / t.splitInto) }))
-    .filter(({ table, partSeats }) => partSeats >= party && table.capacity - party >= partSeats)
-    .sort((a, b) => (a.partSeats - party) - (b.partSeats - party))
-    .slice(0, 2);
+  // Si propone quando sederci il gruppo sprecherebbe un tavolo intero: o perché
+  // non resta altro, o perché il posto migliore avanza troppi coperti.
+  // Resta una scelta: il tavolo intero compare comunque nell'elenco qui sopra.
+  const stdSeats = settings.standardTableSeats ?? 4;
+  const bestWaste = free.length ? free[0].waste : Infinity;
+  const wouldWasteATable = bestWaste >= stdSeats;   // sprecheremmo almeno un tavolo
+  const splittable = wouldWasteATable
+    ? tables
+        .filter((t) => !excludeIds.includes(t.id))
+        .filter((t) => t.splitInto >= 2 && statuses.get(t.id)?.state === "libero")
+        // il gruppo deve stare comodo in una sola parte: le altre restano libere
+        .filter((t) => stdSeats >= party)
+        .map((t) => ({ table: t, partSeats: stdSeats, freed: t.splitInto - 1 }))
+        .sort((a, b) => b.freed - a.freed || a.table.capacity - b.table.capacity)
+        .slice(0, 2)
+    : [];
 
   // Accorpamenti: solo se attivi in impostazioni e solo quando servono davvero
   const joins = settings.allowTableJoin && !free.length
@@ -168,7 +174,7 @@ export function SuggestedTables({ party, onPick, excludeIds = [], compact, forRe
               const res = await api<{ parts: { id: string; label: string; capacity: number }[] }>(
                 `/api/tables/${table.id}/split`, { method: "POST", body: { restaurantId: rid, staffName: me } },
               );
-              await qc.invalidateQueries({ queryKey: ["bootstrap", rid] });
+              await qc.invalidateQueries({ queryKey: ["bootstrap"] });
               const part = res.parts.find((p) => p.capacity >= party) ?? res.parts[0];
               onPick({ tableIds: [part.id], tableLabel: part.label });
             } catch (e: any) {
@@ -183,7 +189,7 @@ export function SuggestedTables({ party, onPick, excludeIds = [], compact, forRe
           <span className="min-w-0 flex-1">
             <span className="block font-bold">Stacca il tavolo {table.label}</span>
             <span className="block text-[13px] text-muted">
-              Diventa {table.splitInto} tavoli da {partSeats}: ne usi uno e resta libero il resto
+              Diventa {table.splitInto} tavoli da {partSeats} posti: ne usi uno, restano liberi gli altri {table.splitInto - 1}
             </span>
           </span>
           <ArrowRight className="h-5 w-5 shrink-0 text-busy" />

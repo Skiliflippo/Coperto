@@ -13,8 +13,10 @@ const slugify = (name: string) =>
     .replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 40) || "ristorante";
 
 /** Il primo avvio è possibile solo finché non esiste un titolare attivo. */
-async function setupState() {
-  const restaurants = await db.select().from(s.restaurants).limit(1);
+async function setupState(slug?: string | null) {
+  const restaurants = slug
+    ? await db.select().from(s.restaurants).where(eq(s.restaurants.slug, slug)).limit(1)
+    : await db.select().from(s.restaurants).limit(1);
   if (!restaurants.length) return { needsSetup: true, restaurant: null };
   const restaurant = restaurants[0];
   const staff = await db.select().from(s.staff).where(eq(s.staff.restaurantId, restaurant.id));
@@ -23,9 +25,10 @@ async function setupState() {
 }
 
 // Il client chiede se l'app è già configurata: guida verso /setup o /login.
-export async function GET() {
+export async function GET(req: Request) {
   try {
-    const { needsSetup, restaurant } = await setupState();
+    const slug = new URL(req.url).searchParams.get("slug");
+    const { needsSetup, restaurant } = await setupState(slug);
     return NextResponse.json({
       needsSetup,
       restaurantName: restaurant?.name ?? null,
@@ -45,7 +48,7 @@ export async function GET() {
 // una sola volta: appena c'è un titolare attivo, l'endpoint si chiude.
 export async function POST(req: Request) {
   try {
-    const { restaurantName, ownerName, pin } = await req.json();
+    const { restaurantName, ownerName, pin, slug } = await req.json();
     const name = String(restaurantName ?? "").trim().slice(0, 60);
     const owner = String(ownerName ?? "").trim().slice(0, 20);
     const code = String(pin ?? "");
@@ -54,7 +57,7 @@ export async function POST(req: Request) {
     if (!owner) return NextResponse.json({ error: "Serve il tuo nome" }, { status: 400 });
     if (!/^\d{4}$/.test(code)) return NextResponse.json({ error: "Il PIN deve avere 4 cifre" }, { status: 400 });
 
-    const { needsSetup, restaurant: existing } = await setupState();
+    const { needsSetup, restaurant: existing } = await setupState(slug);
     if (!needsSetup) {
       return NextResponse.json({ error: "L'app è già configurata: entra con il tuo PIN" }, { status: 409 });
     }

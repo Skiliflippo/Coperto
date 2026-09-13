@@ -33,6 +33,11 @@ export const restaurantSettings = pgTable("restaurant_settings", {
   overtimeMinutes: integer("overtime_minutes").notNull().default(60),
   // Quanto prima una prenotazione "blocca" il tavolo, togliendolo dai liberi.
   reservationHoldMinutes: integer("reservation_hold_minutes").notNull().default(90),
+  // Capienza di un tavolo SINGOLO in questo locale: quasi ovunque i tavoli sono
+  // tutti uguali. Un tavolo con più coperti di così è in realtà più tavoli uniti.
+  standardTableSeats: integer("standard_table_seats").notNull().default(4),
+  // Tema colori dell'app (dati, non codice: ogni locale ha il suo).
+  theme: text("theme").notNull().default("terracotta"),
   // "Unisci tavoli": se il gruppo non entra da nessuna parte, l'app propone di
   // accostare due tavoli vicini e liberi. Alcuni locali non lo vogliono (spazi stretti).
   allowTableJoin: boolean("allow_table_join").notNull().default(true),
@@ -185,7 +190,6 @@ export const seatings = pgTable("seatings", {
   name: text("name").notNull().default(""),   // nome prenotazione o "Walk-in"
   partySize: integer("party_size").notNull(),
   note: text("note").notNull().default(""),
-  billRequested: boolean("bill_requested").notNull().default(false),
   status: text("status").notNull().default("seduto"), // seduto | chiuso
   seatedAt: timestamp("seated_at", { withTimezone: true }).notNull().defaultNow(),
   expectedEndAt: timestamp("expected_end_at", { withTimezone: true }).notNull(),

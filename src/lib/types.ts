@@ -7,6 +7,8 @@ export type Settings = {
   noShowThresholdMinutes: number; overbookingPct: number;
   overtimeMinutes: number;          // oltre tempo dopo N min dal momento in cui si sono seduti
   reservationHoldMinutes: number;   // quanto prima una prenotazione blocca il tavolo
+  standardTableSeats: number;       // posti di un tavolo singolo standard
+  theme: string;                    // palette colori del locale
   allowTableJoin: boolean;          // proponi accorpamenti quando il gruppo non entra
   joinMaxGapCm: number;             // distanza max fra tavoli accostabili
   durations: { pranzo: DurationBands; cena: DurationBands; [k: string]: DurationBands };
@@ -46,7 +48,7 @@ export type Reservation = {
 export type Seating = {
   id: string; reservationId: string | null;
   tableIds: string[]; tableLabel: string; name: string; partySize: number; note: string;
-  billRequested: boolean; status: "seduto" | "chiuso";
+  status: "seduto" | "chiuso";
   seatedAt: string; expectedEndAt: string; actualEndAt: string | null; createdBy: string;
 };
 export type DayData = { date: string; reservations: Reservation[]; seatings: Seating[] };

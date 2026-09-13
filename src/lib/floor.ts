@@ -82,14 +82,19 @@ export function tableGeometry(capacity: number, shape: TableShape): { width: num
 // ── TAVOLI STACCABILI ────────────────────────────────────────────────────────
 // Quante parti standard compongono un tavolo grande. Si propone solo quando il
 // conto torna: un 8 rettangolare sono due 4, un 12 sono tre 4.
-export function suggestedSplitParts(capacity: number, shape: TableShape): number {
-  if (shape !== "rect" || capacity < 6) return 0;
-  // Si parte da due: in sala una tavolata nasce quasi sempre accostando due
-  // tavoli. Le divisioni più fini restano possibili, ma le sceglie l'operatore.
-  for (const parts of [2, 3, 4]) {
-    if (capacity % parts === 0 && capacity / parts >= 2) return parts;
-  }
-  return 0;
+export const DEFAULT_STANDARD_SEATS = 4;
+
+/**
+ * In quante parti si stacca un tavolo. Il conto parte dalla capienza del tavolo
+ * SINGOLO del locale: se i tavoli standard sono da 4 e questo ne dichiara 6,
+ * allora sono due tavoli accostati (uniti si perdono i posti di testa).
+ */
+export function suggestedSplitParts(
+  capacity: number, shape: TableShape, standardSeats = DEFAULT_STANDARD_SEATS,
+): number {
+  const std = Math.max(2, standardSeats);
+  if (shape === "round" || capacity <= std) return 0;
+  return Math.min(6, Math.ceil(capacity / std));
 }
 
 export type SplitPart = {
@@ -98,32 +103,35 @@ export type SplitPart = {
 };
 
 /**
- * Divide un tavolo nelle sue parti reali: si taglia lungo il lato lungo, come
- * quando in sala si staccano fisicamente due tavoli accostati. Le posizioni
- * tengono conto della rotazione del tavolo originale.
+ * Divide un tavolo nelle sue parti reali, tagliando lungo il lato lungo come si
+ * fa in sala staccando due tavoli accostati.
+ *
+ * Ogni parte torna a essere un tavolo NORMALE del locale: se lo standard è 4,
+ * un tavolone da 6 si stacca in due tavoli da 4 posti l'uno. I 6 coperti erano
+ * il massimo da uniti, dove le teste di giunzione non si usano.
  */
 export function splitTableParts(
-  table: { label: string; capacity: number; maxCapacity?: number; x: number; y: number; width: number; height: number; rotation: number },
+  table: { label: string; capacity: number; x: number; y: number; width: number; height: number; rotation: number },
   parts: number,
+  standardSeats = DEFAULT_STANDARD_SEATS,
 ): SplitPart[] {
   const n = Math.max(2, Math.min(6, parts));
+  const std = Math.max(2, standardSeats);
   const alongWidth = table.width >= table.height;
   const partW = alongWidth ? table.width / n : table.width;
   const partH = alongWidth ? table.height : table.height / n;
 
   const rad = (table.rotation * Math.PI) / 180;
   const cos = Math.cos(rad), sin = Math.sin(rad);
-  const base = Math.floor(table.capacity / n);
-  const extra = table.capacity - base * n;
 
   return Array.from({ length: n }, (_, i) => {
-    // offset del centro della parte rispetto al centro del tavolo, in assi locali
     const localOffset = ((i + 0.5) / n - 0.5) * (alongWidth ? table.width : table.height);
     const lx = alongWidth ? localOffset : 0;
     const ly = alongWidth ? 0 : localOffset;
     return {
       label: `${table.label}${String.fromCharCode(97 + i)}`,   // 12a, 12b…
-      capacity: base + (i < extra ? 1 : 0),
+      // posti REALI del tavolo singolo, non una frazione dei coperti dichiarati
+      capacity: std,
       x: Math.round(table.x + lx * cos - ly * sin),
       y: Math.round(table.y + lx * sin + ly * cos),
       width: Math.round(partW), height: Math.round(partH),

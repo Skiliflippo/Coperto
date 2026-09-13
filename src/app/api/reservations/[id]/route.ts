@@ -3,7 +3,7 @@ import { db } from "@/db";
 import * as s from "@/db/schema";
 import { eq } from "drizzle-orm";
 import { broadcast } from "@/server/hub";
-import { logActivity } from "@/server/data";
+import { assertStaffInRestaurant, logActivity } from "@/server/data";
 export const dynamic = "force-dynamic";
 
 // Modifica prenotazione: assegna/sposta tavolo, cambia ora/giorno/coperti, stato.
@@ -13,6 +13,8 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
   const { restaurantId, staffName = "", action, ...f } = b;
   const [cur] = await db.select().from(s.reservations).where(eq(s.reservations.id, id));
   if (!cur) return NextResponse.json({ error: "Non trovata" }, { status: 404 });
+  const guard = await assertStaffInRestaurant(b.staffId, cur.restaurantId);
+  if (!guard.ok) return NextResponse.json({ error: guard.error }, { status: guard.status });
 
   const patch: Partial<typeof s.reservations.$inferInsert> = { updatedAt: new Date() };
   let msg = "";

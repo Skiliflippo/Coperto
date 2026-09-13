@@ -4,7 +4,7 @@ import * as s from "@/db/schema";
 import { and, eq } from "drizzle-orm";
 import { createHash } from "node:crypto";
 import { broadcast } from "@/server/hub";
-import { isOwner, logActivity } from "@/server/data";
+import { assertStaffInRestaurant, logActivity } from "@/server/data";
 export const dynamic = "force-dynamic";
 
 const sha = (pin: string) => createHash("sha256").update(pin).digest("hex");
@@ -15,8 +15,9 @@ const COLORS = ["#E4572E", "#3B6FD9", "#2E9A5B", "#8E44AD", "#D19220", "#0E9AA7"
 export async function POST(req: Request) {
   const b = await req.json();
   const { restaurantId, staffId, staffName = "", action } = b;
-  if (!(await isOwner(staffId))) {
-    return NextResponse.json({ error: "Solo il titolare gestisce il personale" }, { status: 403 });
+  const guard = await assertStaffInRestaurant(staffId, restaurantId, { requireOwner: true });
+  if (!guard.ok) {
+    return NextResponse.json({ error: guard.error === "Serve il titolare" ? "Solo il titolare gestisce il personale" : guard.error }, { status: guard.status });
   }
   const list = await db.select().from(s.staff).where(eq(s.staff.restaurantId, restaurantId));
 

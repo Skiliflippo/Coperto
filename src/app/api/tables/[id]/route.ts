@@ -3,7 +3,7 @@ import { db } from "@/db";
 import * as s from "@/db/schema";
 import { eq } from "drizzle-orm";
 import { broadcast } from "@/server/hub";
-import { logActivity } from "@/server/data";
+import { assertStaffInRestaurant, logActivity } from "@/server/data";
 export const dynamic = "force-dynamic";
 
 // Azioni sul tavolo "di base": pronto · fuori servizio · nota · posizione mappa
@@ -13,6 +13,8 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
   const { restaurantId, staffName = "", action } = b;
   const [cur] = await db.select().from(s.tables).where(eq(s.tables.id, id));
   if (!cur) return NextResponse.json({ error: "Non trovata" }, { status: 404 });
+  const guard = await assertStaffInRestaurant(b.staffId, cur.restaurantId);
+  if (!guard.ok) return NextResponse.json({ error: guard.error }, { status: guard.status });
 
   let msg = "";
   if (action === "pronto") {

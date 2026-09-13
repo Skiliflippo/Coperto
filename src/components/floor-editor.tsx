@@ -66,6 +66,7 @@ export function FloorEditor({ boot, roomId, onClose }: { boot: Bootstrap; roomId
   const nodeRefs = useRef(new Map<string, HTMLDivElement>());
   const dirty = past.length > 0;
   const poly = polygonOf(draft.layout);
+  const std = boot.settings.standardTableSeats ?? 4;   // tavolo singolo del locale
   const seatsByTable = useMemo(
     () => computeRoomSeats(draft.tables, poly, draft.layout.elements.map(elementBox)),
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -342,7 +343,7 @@ export function FloorEditor({ boot, roomId, onClose }: { boot: Bootstrap; roomId
         tables: [...d.tables, {
           id, label: String(nextLabel(boot, d)), capacity: cap, maxCapacity: cap, shape: newShape,
           x: snapG(safe.x), y: snapG(safe.y), width: g.width, height: g.height, rotation: 0,
-          splitInto: suggestedSplitParts(cap, newShape),
+          splitInto: suggestedSplitParts(cap, newShape, std),
         }],
       }));
       setSel({ kind: "table", id });
@@ -417,7 +418,7 @@ export function FloorEditor({ boot, roomId, onClose }: { boot: Bootstrap; roomId
   const setCapacity = (t: TableNodeData, cap: number) => {
     const c = clamp(cap, 1, 20);
     const shape = suggestShape(c, t.shape);
-    const parts = t.splitInto && c % t.splitInto === 0 ? t.splitInto : suggestedSplitParts(c, shape);
+    const parts = suggestedSplitParts(c, shape, std);
     patchTable(t.id, { capacity: c, maxCapacity: Math.max(c, t.maxCapacity ?? c), shape, splitInto: parts, ...tableGeometry(c, shape) });
   };
   const setMaxCapacity = (t: TableNodeData, max: number) =>
@@ -452,7 +453,7 @@ export function FloorEditor({ boot, roomId, onClose }: { boot: Bootstrap; roomId
         method: "PUT",
         body: { staffId: staff?.id, staffName: staff?.name, layout: draft.layout, tables: draft.tables, deleted: draft.deleted },
       });
-      await qc.invalidateQueries({ queryKey: ["bootstrap", staff?.restaurantId] });
+      await qc.invalidateQueries({ queryKey: ["bootstrap"] });
       toast({ title: `Piantina di ${room.name} salvata`, msg: "Visibile subito su tutti i dispositivi.", tone: "ok" });
       onClose();
     } catch (e: any) {

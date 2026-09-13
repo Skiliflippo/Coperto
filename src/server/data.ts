@@ -15,16 +15,50 @@ export class BootstrapDataError extends Error {
   }
 }
 
-export async function getRestaurantBundle(restaurantId?: string | null): Promise<Bootstrap> {
+/**
+ * ISOLAMENTO FRA RISTORANTI.
+ * Ogni azione che modifica dati deve passare di qui: si verifica che la persona
+ * appartenga davvero al locale su cui sta operando. Senza questo controllo,
+ * conoscere un UUID basterebbe per scrivere nella sala di un altro cliente.
+ */
+export async function assertStaffInRestaurant(
+  staffId: string | null | undefined,
+  restaurantId: string | null | undefined,
+  opts?: { requireOwner?: boolean },
+): Promise<{ ok: true; staff: typeof s.staff.$inferSelect } | { ok: false; status: number; error: string }> {
+  if (!restaurantId) return { ok: false, status: 400, error: "Ristorante mancante" };
+  if (!staffId) return { ok: false, status: 401, error: "Serve l'accesso col PIN" };
+  const [row] = await db.select().from(s.staff).where(eq(s.staff.id, staffId));
+  if (!row || !row.active) return { ok: false, status: 401, error: "Accesso non valido" };
+  if (row.restaurantId !== restaurantId) {
+    return { ok: false, status: 403, error: "Questo non è il tuo ristorante" };
+  }
+  if (opts?.requireOwner && row.role !== "titolare") {
+    return { ok: false, status: 403, error: "Serve il titolare" };
+  }
+  return { ok: true, staff: row };
+}
+
+/** Risolve un ristorante dal suo indirizzo pubblico (/r/<slug>). */
+export async function getRestaurantBySlug(slug: string) {
+  const [row] = await db.select().from(s.restaurants).where(eq(s.restaurants.slug, slug)).limit(1);
+  return row ?? null;
+}
+
+export async function getRestaurantBundle(restaurantId?: string | null, slug?: string | null): Promise<Bootstrap> {
   // Una sessione persistita nel browser può contenere l'UUID di un altro database
   // (tipico dopo clone, import o reseed). In locale non deve produrre una pagina vuota:
   // prova l'ID richiesto, poi il tenant demo, infine il primo tenant disponibile.
-  const validUuid = !!restaurantId && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(restaurantId);
-  let rest = validUuid
-    ? (await db.select().from(s.restaurants).where(eq(s.restaurants.id, restaurantId!)).limit(1))[0]
+  // Lo slug dell'indirizzo ha la precedenza: è il locale che il cliente sta usando.
+  let rest = slug
+    ? (await db.select().from(s.restaurants).where(eq(s.restaurants.slug, slug)).limit(1))[0]
     : undefined;
-  if (!rest) {
-    rest = (await db.select().from(s.restaurants).where(eq(s.restaurants.slug, "osteria-del-vicolo")).limit(1))[0];
+  if (slug && !rest) {
+    throw new BootstrapDataError("RESTAURANT_NOT_FOUND", "Questo indirizzo non corrisponde a nessun ristorante.");
+  }
+  const validUuid = !rest && !!restaurantId && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(restaurantId);
+  if (validUuid) {
+    rest = (await db.select().from(s.restaurants).where(eq(s.restaurants.id, restaurantId!)).limit(1))[0];
   }
   if (!rest) {
     rest = (await db.select().from(s.restaurants).orderBy(asc(s.restaurants.createdAt)).limit(1))[0];
@@ -120,9 +154,3 @@ export async function logActivity(restaurantId: string, staffName: string, actio
   await db.insert(s.activityLog).values({ restaurantId, staffName, action, message });
 }
 
-// La piantina la tocca solo il titolare: il cameriere non deve poter spostare la sala per sbaglio.
-export async function isOwner(staffId?: string | null): Promise<boolean> {
-  if (!staffId) return false;
-  const [row] = await db.select().from(s.staff).where(eq(s.staff.id, staffId));
-  return row?.role === "titolare" && row.active;
-}

@@ -5,7 +5,7 @@
 import { useRef, useState } from "react";
 import { DndContext, DragOverlay, PointerSensor, useDraggable, useDroppable, useSensor, useSensors, type DragEndEvent, type DragMoveEvent, type DragStartEvent } from "@dnd-kit/core";
 import { useQueryClient } from "@tanstack/react-query";
-import { Check, ListPlus, Printer, Zap } from "lucide-react";
+import { Check, ListPlus, Printer, Scissors, Zap } from "lucide-react";
 import { api } from "@/lib/api";
 import { useBootstrap, useNow } from "@/lib/hooks";
 import { useSession } from "@/store/session";
@@ -464,7 +464,12 @@ export function AssignSheet({ res, date, onClose }: { res: Reservation | null; d
   const roomName = (roomId: string) => b.rooms.find((r) => r.id === roomId)?.name ?? "";
   const preferred = res.preferredRoomId;
 
-  type Opt = { key: string; label: string; sub: string; tableId: string | null; comboId: string | null; joined: string[]; waste: number; pref: boolean };
+  type Opt = {
+    key: string; label: string; sub: string;
+    tableId: string | null; comboId: string | null; joined: string[];
+    waste: number; pref: boolean;
+    splitTableId?: string;   // da staccare prima di assegnare
+  };
   const opts: Opt[] = [
     ...tables.map((t) => ({
       key: t.id, label: `Tavolo ${t.label}`, sub: `${Math.max(t.capacity, t.maxCapacity)} posti · ${roomName(t.roomId)}`,
@@ -477,6 +482,22 @@ export function AssignSheet({ res, date, onClose }: { res: Reservation | null; d
       pref: !!preferred && c.roomId === preferred,
     })),
   ];
+
+  // STACCARE UN TAVOLONE: se per questa prenotazione useremmo un tavolo molto più
+  // grande del necessario, si propone di separarlo. Le altre parti restano libere
+  // per gli altri gruppi della serata.
+  const stdSeats = b.settings.standardTableSeats ?? 4;
+  const bestWaste = opts.length ? Math.min(...opts.map((o) => o.waste)) : Infinity;
+  if (bestWaste >= stdSeats && stdSeats >= res.partySize) {
+    for (const t of b.tables.filter((x) => x.splitInto >= 2 && tables.some((f) => f.id === x.id))) {
+      opts.push({
+        key: `split-${t.id}`, label: `Stacca il tavolo ${t.label}`,
+        sub: `Diventa ${t.splitInto} tavoli da ${stdSeats}: ne resta libero ${t.splitInto - 1} per altri`,
+        tableId: null, comboId: null, joined: [], splitTableId: t.id,
+        waste: stdSeats - res.partySize, pref: !!preferred && t.roomId === preferred,
+      });
+    }
+  }
 
   // Accorpamento al volo: solo se non basta un tavolo singolo. Si valutano i tavoli
   // liberi in quella fascia oraria, non lo stato "adesso".
@@ -500,12 +521,23 @@ export function AssignSheet({ res, date, onClose }: { res: Reservation | null; d
   opts.sort((x, y) => Number(y.pref) - Number(x.pref) || x.waste - y.waste);
 
   const pick = async (o: Opt) => {
+    let tableId = o.tableId;
+    if (o.splitTableId) {
+      // si stacca davvero il tavolo, poi si assegna la prenotazione a una parte
+      const r = await api<{ parts: { id: string; capacity: number }[] }>(
+        `/api/tables/${o.splitTableId}/split`,
+        { method: "POST", body: { restaurantId: rid, staffName: me } },
+      );
+      const part = r.parts.find((x) => x.capacity >= res.partySize) ?? r.parts[0];
+      tableId = part.id;
+      await qc.invalidateQueries({ queryKey: ["bootstrap"] });
+    }
     await api(`/api/reservations/${res.id}`, {
       method: "PATCH",
       body: {
         restaurantId: rid, staffName: me, action: "assign",
-        tableId: o.tableId, comboId: o.comboId, joinedTableIds: o.joined,
-        label: o.label.replace("Tavolo ", "").replace("Accorpati ", "").replace("Accosta ", ""),
+        tableId, comboId: o.comboId, joinedTableIds: o.joined,
+        label: o.label.replace("Tavolo ", "").replace("Accorpati ", "").replace("Accosta ", "").replace("Stacca il tavolo ", ""),
       },
     });
     await qc.invalidateQueries({ queryKey: ["day", rid, date] });
@@ -522,9 +554,13 @@ export function AssignSheet({ res, date, onClose }: { res: Reservation | null; d
         <div className="grid gap-2">
           {opts.map((o) => (
             <button key={o.key} onClick={() => pick(o)}
-              className={`flex min-h-[60px] items-center gap-3 rounded-2xl border-2 px-4 text-left active:scale-[0.98] ${o.joined.length ? "border-soon/50 bg-soon/10" : "border-ok/40 bg-ok/10"}`}>
-              <span className={`grid h-10 shrink-0 place-items-center rounded-xl px-2 font-display text-sm font-bold text-white ${o.joined.length ? "bg-soon text-ink" : "bg-ok"}`}>
-                {o.label.replace("Tavolo ", "").replace("Accorpati ", "").replace("Accosta ", "")}
+              className={`flex min-h-[60px] items-center gap-3 rounded-2xl border-2 px-4 text-left active:scale-[0.98] ${
+                o.splitTableId ? "border-busy/40 bg-busy/10" : o.joined.length ? "border-soon/50 bg-soon/10" : "border-ok/40 bg-ok/10"}`}>
+              <span className={`grid h-10 shrink-0 place-items-center rounded-xl px-2 font-display text-sm font-bold text-white ${
+                o.splitTableId ? "bg-busy" : o.joined.length ? "bg-soon text-ink" : "bg-ok"}`}>
+                {o.splitTableId
+                  ? <Scissors className="h-4 w-4" />
+                  : o.label.replace("Tavolo ", "").replace("Accorpati ", "").replace("Accosta ", "")}
               </span>
               <span className="min-w-0 flex-1 font-bold">
                 {o.label}

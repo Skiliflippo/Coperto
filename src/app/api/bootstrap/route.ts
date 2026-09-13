@@ -11,13 +11,14 @@ export async function GET(request: Request) {
   try {
     const url = new URL(request.url);
     const restaurantId = url.searchParams.get("rid");
+    const slug = url.searchParams.get("slug");
 
     // getRestaurantBundle restituisce l'intero stato iniziale dell'app:
     // ristorante, impostazioni, sale con planimetria JSONB (muri/arredi),
     // tavoli con geometria, accorpamenti, turni e feature flag.
     // Se rid proviene da una vecchia sessione, risolve automaticamente il tenant
     // demo o il primo tenant disponibile e ne restituisce l'UUID corretto.
-    const payload = await getRestaurantBundle(restaurantId);
+    const payload = await getRestaurantBundle(restaurantId, slug);
 
     return NextResponse.json(payload, {
       status: 200,

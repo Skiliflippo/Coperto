@@ -1,8 +1,13 @@
 @import "tailwindcss";
 @custom-variant dark (&:where(.dark, .dark *));
 
-:root {
-  --bg: #F5F1E8;        /* carta — tema chiaro per il dehors col sole */
+/* ───────────────────────────────────────────────────────────────────────────
+   TEMI · ogni locale sceglie il suo. I colori di stato (libero/occupato…)
+   restano riconoscibili in tutte le palette: in sala si leggono a distanza.
+   ─────────────────────────────────────────────────────────────────────────── */
+:root,
+.theme-terracotta {
+  --bg: #F5F1E8;        /* carta — leggibile in dehors col sole */
   --surface: #FFFDF8;
   --raised: #ECE6D8;
   --ink: #231E16;
@@ -14,7 +19,7 @@
   --ok: #2C9B57;   --busy: #3B6FD9;  --soon: #D19220; --over: #DD4B42;
   --clean: #8C8578; --oos: #57504A;
 }
-.dark {
+.dark, .dark.theme-terracotta {
   --bg: #14110C;        /* sera in sala */
   --surface: #1E1A14;
   --raised: #2B2519;
@@ -26,6 +31,63 @@
   --on-brand: #1E0F08;
   --ok: #43C878;  --busy: #6E9BFF;  --soon: #EAB23F; --over: #FF7166;
   --clean: #9A9181; --oos: #8A806F;
+}
+
+/* Ardesia — neutro freddo, molto sobrio */
+.theme-ardesia {
+  --bg: #F2F4F7; --surface: #FFFFFF; --raised: #E6EAF0;
+  --ink: #171C24; --muted: #6B7686; --line: #DCE2EA;
+  --brand: #2F6FED; --brand-soft: #DEE9FF; --on-brand: #FFFFFF;
+  --ok: #14875A; --busy: #4F6BD8; --soon: #B8791B; --over: #D4443C;
+  --clean: #8A93A1; --oos: #4A525E;
+}
+.dark.theme-ardesia {
+  --bg: #0E1218; --surface: #171D26; --raised: #222A36;
+  --ink: #EEF2F7; --muted: #98A4B4; --line: #2C3644;
+  --brand: #6C9BFF; --brand-soft: #1B2B4A; --on-brand: #0B1220;
+  --ok: #3FCB86; --busy: #7FA0FF; --soon: #E4AD44; --over: #FF7369;
+  --clean: #8F9AA8; --oos: #79838F;
+}
+
+/* Bosco — verde caldo, riposante */
+.theme-bosco {
+  --bg: #F1F5EF; --surface: #FFFFFF; --raised: #E3EBDF;
+  --ink: #1A241A; --muted: #67766A; --line: #D7E1D3;
+  --brand: #2F7D52; --brand-soft: #D9EFE0; --on-brand: #FFFFFF;
+  --ok: #2B8A5B; --busy: #3C6DB0; --soon: #C08A1E; --over: #C9483F;
+  --clean: #84907F; --oos: #47513F;
+}
+.dark.theme-bosco {
+  --bg: #0D1410; --surface: #151F18; --raised: #1F2C23;
+  --ink: #ECF3ED; --muted: #97A79B; --line: #29372D;
+  --brand: #4FC07E; --brand-soft: #17351F; --on-brand: #08170D;
+  --ok: #56CE8A; --busy: #74A2EA; --soon: #E0AE43; --over: #FF7A6E;
+  --clean: #8D9A8F; --oos: #75836F;
+}
+
+/* Bordeaux — elegante, da sera */
+.theme-bordeaux {
+  --bg: #F7F1F2; --surface: #FFFDFD; --raised: #EDE0E2;
+  --ink: #241519; --muted: #7C6669; --line: #E4D2D5;
+  --brand: #9B2242; --brand-soft: #F7DDE4; --on-brand: #FFFFFF;
+  --ok: #2C8F5C; --busy: #4064C0; --soon: #BC8420; --over: #C8393E;
+  --clean: #8E7B7E; --oos: #534144;
+}
+.dark.theme-bordeaux {
+  --bg: #150D10; --surface: #1F1418; --raised: #2C1D22;
+  --ink: #F5EAED; --muted: #AE959A; --line: #3A262C;
+  --brand: #E76A8A; --brand-soft: #40161F; --on-brand: #1B0A0F;
+  --ok: #4CC486; --busy: #7C9BF0; --soon: #E2AC45; --over: #FF7A74;
+  --clean: #9C878B; --oos: #7E696E;
+}
+
+/* Notte — scuro anche di giorno, per sale con poca luce */
+.theme-notte, .dark.theme-notte {
+  --bg: #101114; --surface: #191B20; --raised: #23262D;
+  --ink: #F0F1F4; --muted: #9BA1AC; --line: #2D313A;
+  --brand: #E9A13B; --brand-soft: #3A2A11; --on-brand: #15100A;
+  --ok: #46C97F; --busy: #6F9BFF; --soon: #E9C25A; --over: #FF7A6E;
+  --clean: #939AA5; --oos: #767D88;
 }
 
 @theme inline {
