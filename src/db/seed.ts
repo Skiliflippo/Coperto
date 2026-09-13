@@ -10,8 +10,11 @@ import { drizzle } from "drizzle-orm/node-postgres";
 import { eq } from "drizzle-orm";
 import pg from "pg";
 import * as s from "./schema";
+import { secureDatabaseUrl } from "./url";
 
-const pool = new pg.Pool({ connectionString: process.env.DATABASE_URL });
+const pool = new pg.Pool({
+  connectionString: secureDatabaseUrl(process.env.DATABASE_URL ?? ""),
+});
 const db = drizzle(pool, { schema: s });
 const sha = (p: string) => createHash("sha256").update(p).digest("hex");
 

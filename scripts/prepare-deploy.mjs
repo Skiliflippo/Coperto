@@ -29,6 +29,10 @@ const retiredPaths = [
   // Vecchia route layout stanza, sostituita da /api/rooms/[id]/floor
   "src/app/api/rooms/[id]/route.ts",
 
+  // Vecchia creazione tavoli singola: oggi l'editor salva tutto in blocco e
+  // verifica il tenant tramite /api/rooms/[id]/floor
+  "src/app/api/tables/route.ts",
+
   // Vecchia configurazione Drizzle con URL hardcoded
   "drizzle.config.json",
 ];
