@@ -32,7 +32,7 @@
   --on-brand: #1E0F08;
   --ok: #43C878;  --busy: #6E9BFF;  --soon: #EAB23F; --over: #FF7166;
   --clean: #9A9181; --oos: #8A806F;
-  --wall: #6B6155;
+  --wall: #8A8174;
 }
 
 /* Ardesia — neutro freddo, molto sobrio */
@@ -42,6 +42,7 @@
   --brand: #2F6FED; --brand-soft: #DEE9FF; --on-brand: #FFFFFF;
   --ok: #14875A; --busy: #4F6BD8; --soon: #B8791B; --over: #D4443C;
   --clean: #8A93A1; --oos: #4A525E;
+  --wall: #A9B4BF;
 }
 .dark.theme-ardesia {
   --bg: #0E1218; --surface: #171D26; --raised: #222A36;
@@ -49,6 +50,7 @@
   --brand: #6C9BFF; --brand-soft: #1B2B4A; --on-brand: #0B1220;
   --ok: #3FCB86; --busy: #7FA0FF; --soon: #E4AD44; --over: #FF7369;
   --clean: #8F9AA8; --oos: #79838F;
+  --wall: #6D788A;
 }
 
 /* Bosco — verde caldo, riposante */
@@ -58,6 +60,7 @@
   --brand: #2F7D52; --brand-soft: #D9EFE0; --on-brand: #FFFFFF;
   --ok: #2B8A5B; --busy: #3C6DB0; --soon: #C08A1E; --over: #C9483F;
   --clean: #84907F; --oos: #47513F;
+  --wall: #93A08F;   /* muri interni */
 }
 .dark.theme-bosco {
   --bg: #0D1410; --surface: #151F18; --raised: #1F2C23;
@@ -74,6 +77,7 @@
   --brand: #9B2242; --brand-soft: #F7DDE4; --on-brand: #FFFFFF;
   --ok: #2C8F5C; --busy: #4064C0; --soon: #BC8420; --over: #C8393E;
   --clean: #8E7B7E; --oos: #534144;
+  --wall: #A08E91;   /* muri interni: più chiari */
 }
 .dark.theme-bordeaux {
   --bg: #150D10; --surface: #1F1418; --raised: #2C1D22;
@@ -90,6 +94,7 @@
   --brand: #E9A13B; --brand-soft: #3A2A11; --on-brand: #15100A;
   --ok: #46C97F; --busy: #6F9BFF; --soon: #E9C25A; --over: #FF7A6E;
   --clean: #939AA5; --oos: #767D88;
+  --wall: #6E767F;   /* muri interni: più chiari */
 }
 
 @theme inline {
@@ -117,6 +122,12 @@
   @keyframes sheet-up { from { transform: translateY(100%); } to { transform: translateY(0); } }
   @keyframes pop { from { transform: scale(0.9); opacity: 0; } to { transform: scale(1); opacity: 1; } }
   @keyframes fade { from { opacity: 0; } to { opacity: 1; } }
+}
+
+/* Muri interni: colore dedicato, generato esplicitamente. La variabile @theme è
+   sempre disponibile in ambito :root; quella del tema corrente viene ereditata. */
+.bg-wall {
+  background-color: var(--wall);
 }
 
 html { -webkit-tap-highlight-color: transparent; }
