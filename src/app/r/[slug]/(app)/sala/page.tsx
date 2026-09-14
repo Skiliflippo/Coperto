@@ -97,7 +97,7 @@ export default function SalaPage() {
       )}
 
       {view === "mappa" ? (
-        <FloorView boot={boot.data} statuses={derived.statuses} onPick={setTableSel} counts={derived}
+        <FloorView boot={boot.data} statuses={derived.statuses} onPick={setTableSel}
           viewToggle={<ViewToggle view={view} setView={setView} />} />
       ) : (
         <ListView boot={boot.data} statuses={derived.statuses} onPick={setTableSel} counts={derived}

@@ -2,7 +2,10 @@
 // Primitive di disegno della piantina, condivise fra vista servizio ed editor.
 // Tutto in coordinate mondo (cm); la scala la applica il contenitore trasformato.
 import { forwardRef, useId } from "react";
-import { CM_PER_CELL, rectPolygon, tableSeats, type DecorIcon, type FloorElement, type Point, type TableShape } from "@/lib/floor";
+import {
+  CM_PER_CELL, rectPolygon, tableSeats, wallLine,
+  type DecorIcon, type FloorElement, type Point, type TableShape,
+} from "@/lib/floor";
 import type { Viewport } from "@/lib/use-viewport";
 
 // Griglia disegnata in spazio SCHERMO: resta nitida a qualsiasi zoom (trucco anti-sfocatura).
@@ -52,7 +55,7 @@ export const TableNode = forwardRef<HTMLDivElement, {
   const fs = Math.max(22, Math.min(t.width, t.height) * 0.36);
   return (
     <div ref={ref} onPointerDown={onPointerDown} onPointerUp={onPointerUp} onClick={onClick}
-      className={`absolute left-0 top-0 ${dimmed ? "opacity-40" : ""}`}
+      className={`absolute left-0 top-0 z-20 ${dimmed ? "opacity-40" : ""}`}
       style={{
         width: t.width, height: t.height,
         transform: `translate3d(${t.x - t.width / 2}px, ${t.y - t.height / 2}px, 0) rotate(${t.rotation}deg)`,
@@ -77,7 +80,9 @@ export const TableNode = forwardRef<HTMLDivElement, {
 });
 
 // Disegno dell'arredo in base al tipo: un bancone non è una scala.
-function DecorFace({ icon, w, h, label }: { icon: DecorIcon; w: number; h: number; label: string }) {
+function DecorFace({ icon, w, h, label, labelRotation = 0 }: {
+  icon: DecorIcon; w: number; h: number; label: string; labelRotation?: number;
+}) {
   const common = "absolute inset-0";
   // L'etichetta resta SEMPRE dentro l'oggetto: il corpo scala con il lato corto,
   // e si riduce ancora se il nome è lungo rispetto alla larghezza disponibile.
@@ -120,11 +125,81 @@ function DecorFace({ icon, w, h, label }: { icon: DecorIcon; w: number; h: numbe
         // Nessuna contro-rotazione: il nome segue l'orientamento dell'arredo,
         // come è scritto davvero su una piantina.
         <span className={`${common} grid place-items-center overflow-hidden px-[6%] text-center font-sans font-bold uppercase leading-none tracking-wide text-muted`}
-          style={{ fontSize: fs, wordBreak: "break-word" }}>
-          {label}
+          style={{
+            fontSize: fs,
+            whiteSpace: "nowrap",
+            textOverflow: "ellipsis",
+            transform: `rotate(${labelRotation}deg)`,
+          }}>
+          <span className="max-w-full overflow-hidden text-ellipsis whitespace-nowrap">{label}</span>
         </span>
       )}
     </>
+  );
+}
+
+// LIVELLO COMUNE DEI MURI. Ogni muro è una linea fra due punti della stessa
+// griglia. strokeLinecap="butt" significa che il lato terminale coincide
+// ESATTAMENTE col punto di ancoraggio: due segmenti con lo stesso estremo si
+// incontrano come rettangoli reali, senza cerchi o pezze nei giunti.
+export function WallLayer({ elements, roomW, roomH, invalidIds, selectedIds }: {
+  elements: FloorElement[];
+  roomW: number; roomH: number;
+  invalidIds?: Set<string>;
+  selectedIds?: Set<string>;
+}) {
+  const walls = elements.filter((e) => e.kind === "wall").map(wallLine);
+  if (!walls.length) return null;
+  const pad = 80;
+  return (
+    <svg className="pointer-events-none absolute z-0 overflow-visible"
+      style={{ left: -pad, top: -pad }}
+      width={roomW + pad * 2} height={roomH + pad * 2}
+      viewBox={`${-pad} ${-pad} ${roomW + pad * 2} ${roomH + pad * 2}`}>
+      {walls.map((wall) => {
+        const invalid = invalidIds?.has(wall.id) ?? false;
+        const selected = selectedIds?.has(wall.id) ?? false;
+        return (
+          <g key={wall.id}>
+            {selected && (
+              <line x1={wall.a.x} y1={wall.a.y} x2={wall.b.x} y2={wall.b.y}
+                stroke="var(--brand)" strokeWidth={wall.thickness + 8} strokeLinecap="butt" opacity={0.4} />
+            )}
+            <line x1={wall.a.x} y1={wall.a.y} x2={wall.b.x} y2={wall.b.y}
+              stroke={invalid ? "var(--over)" : "var(--wall)"}
+              strokeWidth={wall.thickness}
+              strokeLinecap="butt"
+              strokeDasharray={invalid ? `${wall.thickness * 1.6} ${wall.thickness}` : undefined} />
+          </g>
+        );
+      })}
+    </svg>
+  );
+}
+
+// Ridisegna SOLO il muro perimetrale sopra i muri interni: quando un divisorio
+// vi arriva contro, la parete esterna lo copre come succede nella muratura reale.
+export function PerimeterOverlay({ w, h, polygon }: { w: number; h: number; polygon?: Point[] }) {
+  const poly = polygon && polygon.length >= 3 ? polygon : rectPolygon(w, h);
+  const points = poly.map((p) => `${p.x},${p.y}`).join(" ");
+  const pad = 80;
+  const maskId = useId();
+  return (
+    <svg className="pointer-events-none absolute z-[5] overflow-visible"
+      style={{ left: -pad, top: -pad }} width={w + pad * 2} height={h + pad * 2}
+      viewBox={`${-pad} ${-pad} ${w + pad * 2} ${h + pad * 2}`}>
+      <defs>
+        <mask id={maskId}>
+          <rect x={-pad} y={-pad} width={w + pad * 2} height={h + pad * 2} fill="white" />
+          <polygon points={points} fill="black" />
+        </mask>
+      </defs>
+      {/* Solo fuori dalla sala: le misure dichiarate restano quelle del pavimento
+          interno, senza perdere qualche centimetro per lo spessore visivo. */}
+      <polygon points={points} fill="none" stroke="var(--oos)"
+        strokeWidth={PERIMETER_THICKNESS * 2} strokeLinejoin="miter" strokeLinecap="square"
+        mask={`url(#${maskId})`} />
+    </svg>
   );
 }
 
@@ -147,7 +222,7 @@ export const ElementNode = forwardRef<HTMLDivElement, {
     : undefined;
   return (
     <div ref={ref} onPointerDown={onPointerDown}
-      className={`absolute left-0 top-0 ${editable ? "cursor-move" : ""}`}
+      className={`absolute left-0 top-0 ${isWall ? (selected ? "z-30" : "z-0") : "z-10"} ${editable ? "cursor-move" : ""}`}
       style={{
         // il riquadro di hit resta quello reale: l'estensione è solo visiva
         width: el.w, height: el.h,
@@ -155,10 +230,9 @@ export const ElementNode = forwardRef<HTMLDivElement, {
         willChange: "transform",
       }}>
       {isWall ? (
-        // niente border-radius: un angolo di muro deve essere un angolo.
-        // l'ombra segue l'estensione così la selezione resta leggibile.
-        <div className={`absolute bg-wall ${selected && !invalid ? "outline outline-[6px] outline-brand" : ""} ${invalid ? "!outline !outline-dashed !outline-over" : ""}`}
-          style={wallVisualStyle} />
+        // Il muro visibile è nel WallLayer condiviso. Qui resta solo l'area di
+        // interazione trasparente per selezionare/trascinare il singolo segmento.
+        <div className="absolute bg-transparent" style={wallVisualStyle} />
       ) : isPlant ? (
         // Una pianta vista dall'alto non ha un mobile quadrato attorno: il suo
         // ingombro resta selezionabile, ma visivamente è solo la chioma organica.
@@ -167,7 +241,10 @@ export const ElementNode = forwardRef<HTMLDivElement, {
         </div>
       ) : (
         <div className={`relative h-full w-full overflow-hidden rounded-md border-[5px] border-oos/45 bg-oos/15 ${selected && !invalid ? "outline outline-[6px] outline-brand" : ""} ${invalid ? "!border-[6px] !border-dashed !border-over !bg-over/25" : ""}`}>
-          <DecorFace icon={el.icon ?? "generico"} w={el.w} h={el.h} label={el.label} />
+          <DecorFace
+            icon={el.icon ?? "generico"}
+            w={el.w} h={el.h} label={el.label}
+            labelRotation={el.labelRotation ?? 0} />
         </div>
       )}
       {children}
@@ -186,7 +263,7 @@ export function JoinedNode({ box, label, sub, tone, dotClass, onPointerDown, onP
   const fs = Math.max(26, Math.min(box.w, box.h) * 0.3);
   return (
     <div onPointerDown={onPointerDown} onPointerUp={onPointerUp}
-      className="absolute left-0 top-0 cursor-pointer"
+      className="absolute left-0 top-0 z-20 cursor-pointer"
       style={{ width: box.w, height: box.h, transform: `translate3d(${box.x}px, ${box.y}px, 0)` }}>
       <div className={`grid h-full w-full place-items-center rounded-[16px] border-[7px] bg-surface shadow-lg ${tone}`}>
         <div className="text-center leading-none">

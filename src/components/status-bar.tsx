@@ -2,12 +2,34 @@
 // Legenda di sala: una riga di testo piccola, senza contenitore né sfondo.
 // Sta sotto la mappa e dice l'essenziale: quanti tavoli in ciascuno stato.
 import type { ReactNode } from "react";
+import type { TableStatus } from "@/lib/estimates";
+import type { Seating, TableT } from "@/lib/types";
 
 export type Tally = {
   freeT: number; freeC: number;
   busyT: number; busyC: number;
   overT: number; heldT: number;
 };
+
+/** Conteggi limitati ai tavoli passati (tipicamente quelli della sala selezionata). */
+export function tallyTables(tables: TableT[], statuses: Map<string, TableStatus>): Tally {
+  let freeT = 0, freeC = 0, busyT = 0, overT = 0, heldT = 0;
+  const activeGroups = new Map<string, Seating>();
+  for (const table of tables) {
+    const status = statuses.get(table.id);
+    if (!status) continue;
+    if (status.state === "libero") { freeT++; freeC += table.capacity; }
+    if (status.state === "prenotato") heldT++;
+    if (status.state === "occupato" || status.state === "oltre_tempo") {
+      busyT++;
+      if (status.seating) activeGroups.set(status.seating.id, status.seating);
+    }
+    if (status.state === "oltre_tempo") overT++;
+  }
+  // Gruppi su tavoli accostati contano una volta sola nei coperti occupati.
+  const busyC = [...activeGroups.values()].reduce((sum, seating) => sum + seating.partySize, 0);
+  return { freeT, freeC, busyT, busyC, overT, heldT };
+}
 
 export function StatusBar({ counts, children }: { counts: Tally; children?: ReactNode }) {
   const items = [

@@ -18,7 +18,7 @@
   --on-brand: #FFFFFF;
   --ok: #2C9B57;   --busy: #3B6FD9;  --soon: #D19220; --over: #DD4B42;
   --clean: #8C8578; --oos: #57504A;
-  --wall: #9A8F80;   /* muri interni: più chiari del fuori servizio */
+  --wall: #B2A898;   /* muri interni: chiari, non sembrano elementi pieni */
 }
 .dark, .dark.theme-terracotta {
   --bg: #14110C;        /* sera in sala */

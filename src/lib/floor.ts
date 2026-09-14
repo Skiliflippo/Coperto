@@ -19,6 +19,7 @@ export type FloorElement = {
   rotation: number;       // gradi
   label: string;
   icon?: DecorIcon;       // aspetto dell'arredo sulla mappa
+  labelRotation?: number; // rotazione del nome rispetto all'arredo (0/90/180/270)
 };
 export type Point = { x: number; y: number };
 export type RoomLayout = {
@@ -137,7 +138,7 @@ export function suggestedSplitParts(
 ): number {
   if (shape !== "rect") return 0;
   const units = lengthUnits ?? tableUnits(capacity, standardSeats);
-  return units > 1 ? Math.min(6, units) : 0;
+  return units > 1 ? Math.min(20, units) : 0;
 }
 
 export type SplitPart = {
@@ -158,7 +159,7 @@ export function splitTableParts(
   parts: number,
   standardSeats = DEFAULT_STANDARD_SEATS,
 ): SplitPart[] {
-  const n = Math.max(2, Math.min(6, parts));
+  const n = Math.max(2, Math.min(20, parts));
   const std = Math.max(2, standardSeats);
   const alongWidth = table.width >= table.height;
   const partW = alongWidth ? table.width / n : table.width;
@@ -192,6 +193,109 @@ export function distanceToSegment(p: Point, a: Point, b: Point): number {
   if (len2 === 0) return Math.hypot(p.x - a.x, p.y - a.y);
   const t = clamp(((p.x - a.x) * dx + (p.y - a.y) * dy) / len2, 0, 1);
   return Math.hypot(p.x - (a.x + t * dx), p.y - (a.y + t * dy));
+}
+
+export type WallLine = { id: string; a: Point; b: Point; thickness: number };
+
+/**
+ * Converte il rettangolo ruotato del muro nella sua linea centrale. La linea è
+ * la rappresentazione usata dal livello SVG comune per fondere i giunti.
+ */
+export function wallLine(element: FloorElement): WallLine {
+  const cx = element.x + element.w / 2;
+  const cy = element.y + element.h / 2;
+  const rad = (element.rotation * Math.PI) / 180;
+  const cos = Math.cos(rad), sin = Math.sin(rad);
+  if (element.w >= element.h) {
+    const dx = (element.w / 2) * cos, dy = (element.w / 2) * sin;
+    return {
+      id: element.id,
+      a: { x: cx - dx, y: cy - dy },
+      b: { x: cx + dx, y: cy + dy },
+      thickness: element.h,
+    };
+  }
+  // asse locale verticale, poi ruotato
+  const dx = -(element.h / 2) * sin, dy = (element.h / 2) * cos;
+  return {
+    id: element.id,
+    a: { x: cx - dx, y: cy - dy },
+    b: { x: cx + dx, y: cy + dy },
+    thickness: element.w,
+  };
+}
+
+/** Punto più vicino su un segmento. */
+export function closestPointOnSegment(p: Point, a: Point, b: Point): Point {
+  const dx = b.x - a.x, dy = b.y - a.y;
+  const len2 = dx * dx + dy * dy;
+  if (!len2) return { ...a };
+  const t = clamp(((p.x - a.x) * dx + (p.y - a.y) * dy) / len2, 0, 1);
+  return { x: a.x + t * dx, y: a.y + t * dy };
+}
+
+/**
+ * Costruisce il rettangolo del muro partendo dai suoi VERI estremi. Il lato
+ * corto è centrato sulla linea: l'estremo coincide esattamente col punto della
+ * griglia, sia in orizzontale sia in verticale.
+ */
+export function wallFromEndpoints(
+  id: string, a: Point, b: Point, thickness: number, label = "",
+): FloorElement {
+  const dx = b.x - a.x, dy = b.y - a.y;
+  const length = Math.max(1, Math.hypot(dx, dy));
+  const angle = (Math.atan2(dy, dx) * 180) / Math.PI;
+  const t = Math.max(10, Math.round(thickness / 5) * 5);
+  // modello canonico: muro orizzontale locale (w=lunghezza, h=spessore), ruotato
+  const cx = (a.x + b.x) / 2;
+  const cy = (a.y + b.y) / 2;
+  return {
+    id, kind: "wall",
+    x: cx - length / 2,
+    y: cy - t / 2,
+    w: length, h: t,
+    rotation: angle,
+    label,
+  };
+}
+
+/**
+ * Aggancia un estremo alla griglia comune, agli estremi esistenti o al
+ * perimetro. In questo ordine: estremo esistente > perimetro > griglia.
+ */
+export function snapWallEndpoint(
+  point: Point,
+  walls: FloorElement[],
+  poly: Point[],
+  grid = 25,
+  threshold = 14,
+): Point {
+  const gridPoint = { x: snapTo(point.x, grid), y: snapTo(point.y, grid) };
+  let best = gridPoint;
+  let bestDistance = threshold + 1;
+
+  for (const element of walls) {
+    if (element.kind !== "wall") continue;
+    const line = wallLine(element);
+    for (const endpoint of [line.a, line.b]) {
+      const d = Math.hypot(point.x - endpoint.x, point.y - endpoint.y);
+      if (d < bestDistance) { bestDistance = d; best = endpoint; }
+    }
+  }
+  for (const edge of polygonEdges(poly)) {
+    const candidate = closestPointOnSegment(point, edge.a, edge.b);
+    const d = Math.hypot(point.x - candidate.x, point.y - candidate.y);
+    if (d < bestDistance) {
+      bestDistance = d;
+      // sul perimetro obliquo il punto è esatto; su quello ortogonale si allinea
+      // anche alla griglia lungo l'asse del muro
+      best = {
+        x: Math.abs(edge.a.x - edge.b.x) < 0.001 ? edge.a.x : snapTo(candidate.x, grid),
+        y: Math.abs(edge.a.y - edge.b.y) < 0.001 ? edge.a.y : snapTo(candidate.y, grid),
+      };
+    }
+  }
+  return { x: Math.round(best.x), y: Math.round(best.y) };
 }
 
 export type SeatContext = {
@@ -446,6 +550,25 @@ export function pointInPolygon(p: Point, poly: Point[]): boolean {
   return inside;
 }
 
+/** Dentro oppure esattamente sul muro perimetrale. */
+export function pointInOrOnPolygon(p: Point, poly: Point[], tolerance = 1.5): boolean {
+  return pointInPolygon(p, poly)
+    || polygonEdges(poly).some(({ a, b }) => distanceToSegment(p, a, b) <= tolerance);
+}
+
+/**
+ * Un muro interno è valido se la sua linea centrale è dentro la sala e i due
+ * estremi possono coincidere col perimetro. Non si testa il rettangolo esterno:
+ * all'ancoraggio metà spessore deve stare sotto il muro perimetrale.
+ */
+export function wallInsideRoom(element: FloorElement, poly: Point[]): boolean {
+  const line = wallLine(element);
+  const mid = { x: (line.a.x + line.b.x) / 2, y: (line.a.y + line.b.y) / 2 };
+  return pointInOrOnPolygon(line.a, poly)
+    && pointInOrOnPolygon(line.b, poly)
+    && pointInOrOnPolygon(mid, poly);
+}
+
 // Un rettangolo sta dentro la sala se sta dentro il perimetro. Si testa leggermente
 // rimpicciolito (eps) così un muro o un tavolo APPOGGIATO al perimetro è valido:
 // senza tolleranza il ray casting sul bordo esatto darebbe "fuori".
@@ -492,27 +615,37 @@ export function normalizeLayout(raw: unknown): RoomLayout {
   if (Array.isArray(l.elements)) {
     return {
       w, h, polygon,
-      elements: l.elements.map((e: any) => ({
-        id: String(e.id ?? uid()),
-        kind: e.kind === "decor" ? "decor" : "wall",
-        x: Math.round(e.x ?? 0), y: Math.round(e.y ?? 0),
-        // I muri possono essere sottili fino a 4 cm; gli arredi mantengono un
-        // minimo più alto per restare selezionabili. Prima tutto veniva rialzato
-        // a 10 cm al caricamento, annullando il resize salvato dall'editor.
-        w: Math.max(e.kind === "wall" ? 4 : 10, Math.round(e.w ?? 100)),
-        h: Math.max(e.kind === "wall" ? 4 : 10, Math.round(e.h ?? 20)),
-        rotation: Math.round(e.rotation ?? 0),
-        label: String(e.label ?? ""),
-        icon: (e.icon as DecorIcon) ?? (e.kind === "decor" ? iconFromLabel(String(e.label ?? "")) : undefined),
-      })),
+      elements: l.elements.map((e: any) => {
+        const kind: ElementKind = e.kind === "decor" ? "decor" : "wall";
+        let width = Math.max(kind === "wall" ? 10 : 10, Math.round(e.w ?? 100));
+        let height = Math.max(kind === "wall" ? 10 : 10, Math.round(e.h ?? 20));
+        if (kind === "wall") {
+          // Un solo sistema: spessore 10/15/20/... cm. La lunghezza resta libera.
+          if (width >= height) height = Math.max(10, Math.round(height / 5) * 5);
+          else width = Math.max(10, Math.round(width / 5) * 5);
+        }
+        return {
+          id: String(e.id ?? uid()),
+          kind,
+          x: Math.round(e.x ?? 0), y: Math.round(e.y ?? 0),
+          w: width, h: height,
+          rotation: Math.round(e.rotation ?? 0),
+          label: String(e.label ?? ""),
+          icon: (e.icon as DecorIcon) ?? (kind === "decor" ? iconFromLabel(String(e.label ?? "")) : undefined),
+          labelRotation: ((Math.round(e.labelRotation ?? 0) % 360) + 360) % 360,
+        };
+      }),
     };
   }
   // formato storico: muri come segmenti + oggetti
   const elements: FloorElement[] = [];
   for (const s of (l.walls ?? []) as any[]) {
-    const len = Math.hypot(s.x2 - s.x1, s.y2 - s.y1);
-    const ang = (Math.atan2(s.y2 - s.y1, s.x2 - s.x1) * 180) / Math.PI;
-    elements.push({ id: uid(), kind: "wall", x: Math.round(s.x1), y: Math.round(s.y1 - 9), w: Math.max(20, Math.round(len)), h: 18, rotation: Math.round(ang), label: "" });
+    elements.push(wallFromEndpoints(
+      uid(),
+      { x: Math.round(s.x1), y: Math.round(s.y1) },
+      { x: Math.round(s.x2), y: Math.round(s.y2) },
+      10,
+    ));
   }
   for (const o of (l.objects ?? []) as any[]) {
     const label = String(o.label ?? "");

@@ -9,19 +9,18 @@ import { useViewport } from "@/lib/use-viewport";
 import { computeRoomSeats, elementBox, normalizeLayout, polygonBounds, polygonOf } from "@/lib/floor";
 import { groupBBox, isCompactGroup } from "@/lib/join";
 import { TABLE_STATE } from "@/lib/meta";
-import { GridBackdrop, RoomShell, TableNode, ElementNode, JoinedNode } from "@/components/floor-shapes";
+import { GridBackdrop, RoomShell, TableNode, ElementNode, JoinedNode, WallLayer, PerimeterOverlay } from "@/components/floor-shapes";
 import { FloorEditor } from "@/components/floor-editor";
 import { RoomTabs, useActiveRoom } from "@/components/room-tabs";
-import { StatusBar, type Tally } from "@/components/status-bar";
+import { StatusBar, tallyTables } from "@/components/status-bar";
 import type { TableStatus } from "@/lib/estimates";
 import type { Bootstrap, Seating, TableT } from "@/lib/types";
 
-export function FloorView({ boot, statuses, onPick, viewToggle, counts }: {
+export function FloorView({ boot, statuses, onPick, viewToggle }: {
   boot: Bootstrap;
   statuses: Map<string, TableStatus>;
   onPick: (t: TableT) => void;
   viewToggle?: React.ReactNode;
-  counts: Tally;
 }) {
   const staff = useSession((s) => s.staff);
   const isOwner = staff?.role === "titolare";
@@ -30,6 +29,8 @@ export function FloorView({ boot, statuses, onPick, viewToggle, counts }: {
   const room = boot.rooms.find((r) => r.id === roomId) ?? boot.rooms[0];
   const layout = normalizeLayout(room?.layout);
   const tables = boot.tables.filter((t) => t.roomId === room?.id);
+  // I numeri sotto la mappa sono SOLO della sala aperta, non dell'intero locale.
+  const roomCounts = tallyTables(tables, statuses);
   const { ref, vp, fit, zoomBy, isPanning, bind, cancelPan } = useViewport(layout.w, layout.h, {
     padding: 34, bounds: polygonBounds(polygonOf(layout)),
   });
@@ -97,7 +98,12 @@ export function FloorView({ boot, statuses, onPick, viewToggle, counts }: {
         <div className="absolute left-0 top-0 origin-top-left"
           style={{ transform: `translate3d(${vp.panX}px, ${vp.panY}px, 0) scale(${vp.zoom})` }}>
           <RoomShell w={layout.w} h={layout.h} polygon={layout.polygon} />
-          {layout.elements.map((el) => <ElementNode key={el.id} el={el} />)}
+          <WallLayer elements={layout.elements} roomW={layout.w} roomH={layout.h} />
+          <PerimeterOverlay w={layout.w} h={layout.h} polygon={layout.polygon} />
+          {/* Muri prima, poi arredi: gli arredi a filo coprono il muro come nella realtà. */}
+          {[...layout.elements]
+            .sort((a, b) => Number(a.kind === "decor") - Number(b.kind === "decor"))
+            .map((el) => <ElementNode key={el.id} el={el} />)}
 
           {/* tavoli singoli */}
           {tables.filter((t) => !joinedTableIds.has(t.id)).map((t) => {
@@ -148,7 +154,7 @@ export function FloorView({ boot, statuses, onPick, viewToggle, counts }: {
       </div>
 
       <div className="mt-1.5 shrink-0">
-        <StatusBar counts={counts}>
+        <StatusBar counts={roomCounts}>
           <span className="shrink-0 font-medium opacity-60">· tocca un tavolo per sedere o liberare</span>
         </StatusBar>
       </div>

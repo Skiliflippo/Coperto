@@ -6,7 +6,7 @@ import { broadcast } from "@/server/hub";
 import { assertStaffInRestaurant, logActivity } from "@/server/data";
 import {
   aabb, boxInsideRoom, boxesOverlap, elementBox, normalizeLayout, polygonOf,
-  tableGeometry, type Box, type TableShape,
+  tableGeometry, wallInsideRoom, type Box, type FloorElement, type TableShape,
 } from "@/lib/floor";
 export const dynamic = "force-dynamic";
 
@@ -59,14 +59,26 @@ export async function PUT(req: Request, { params }: { params: Promise<{ id: stri
   // il client lascia libertà di manovra, ma una piantina incoerente non si salva:
   // qui si rifiuta invece di scartare pezzi in silenzio.
   const poly = polygonOf(clean);
-  const placed: { label: string; box: Box }[] = [
-    ...clean.elements.map((e) => ({ label: e.label || (e.kind === "wall" ? "muro" : "arredo"), box: elementBox(e) })),
+  const placed: {
+    label: string; type: "wall" | "decor" | "table"; box: Box; element?: FloorElement;
+  }[] = [
+    ...clean.elements.map((e) => ({
+      label: e.label || (e.kind === "wall" ? "muro" : "arredo"),
+      type: e.kind,
+      box: elementBox(e),
+      element: e,
+    })),
     ...tables.map((t) => ({
       label: `tavolo ${String(t.label).trim()}`,
+      type: "table" as const,
       box: aabb(Math.round(t.x), Math.round(t.y), Math.round(t.width), Math.round(t.height), Math.round(t.rotation)),
     })),
   ];
-  const outside = placed.filter((p) => !boxInsideRoom(p.box, poly));
+  const outside = placed.filter((p) =>
+    p.type === "wall" && p.element
+      ? !wallInsideRoom(p.element, poly)
+      : !boxInsideRoom(p.box, poly),
+  );
   if (outside.length) {
     return NextResponse.json(
       { error: `Fuori dalla sala: ${outside.map((p) => p.label).join(", ")}` },
@@ -76,8 +88,12 @@ export async function PUT(req: Request, { params }: { params: Promise<{ id: stri
   for (let i = 0; i < placed.length; i++) {
     for (let j = i + 1; j < placed.length; j++) {
       if (boxesOverlap(placed[i].box, placed[j].box)) {
+        const a = placed[i], b = placed[j];
+        // I muri possono unirsi/incrociarsi; un arredo può coprire il muro a cui
+        // è appoggiato. Soltanto un tavolo non può attraversare una parete.
+        if ((a.type === "wall" && b.type !== "table") || (b.type === "wall" && a.type !== "table")) continue;
         return NextResponse.json(
-          { error: `Sovrapposti: ${placed[i].label} e ${placed[j].label}` },
+          { error: `Sovrapposti: ${a.label} e ${b.label}` },
           { status: 409 },
         );
       }
@@ -85,7 +101,7 @@ export async function PUT(req: Request, { params }: { params: Promise<{ id: stri
   }
 
   const rows = tables.map((t) => {
-    const cap = Math.max(1, Math.min(20, Math.round(t.capacity)));
+    const cap = Math.max(1, Math.min(80, Math.round(t.capacity)));
     const shape: TableShape = t.shape === "round" || t.shape === "square" ? t.shape : "rect";
     const fallback = tableGeometry(cap, shape, std);
     return {
@@ -93,15 +109,15 @@ export async function PUT(req: Request, { params }: { params: Promise<{ id: stri
       isNew: !!t.isNew || !all.some((x) => x.id === t.id),
       label: String(t.label).trim().slice(0, 6) || "?",
       capacity: cap,
-      maxCapacity: Math.max(cap, Math.min(24, Math.round(t.maxCapacity ?? cap))),
+      maxCapacity: Math.max(cap, Math.min(80, Math.round(t.maxCapacity ?? cap))),
       // un tavolo si stacca al massimo nelle parti che i suoi coperti consentono
-      splitInto: Math.max(0, Math.min(6, Math.round(t.splitInto ?? 0))) >= 2
-        ? Math.min(Math.round(t.splitInto ?? 0), Math.floor(cap / 2))
+      splitInto: Math.max(0, Math.min(20, Math.round(t.splitInto ?? 0))) >= 2
+        ? Math.min(Math.round(t.splitInto ?? 0), 20)
         : 0,
       shape,
       x: Math.round(t.x), y: Math.round(t.y),
-      width: Math.max(50, Math.min(600, Math.round(t.width || fallback.width))),
-      height: Math.max(50, Math.min(600, Math.round(t.height || fallback.height))),
+      width: Math.max(50, Math.min(3000, Math.round(t.width || fallback.width))),
+      height: Math.max(50, Math.min(1000, Math.round(t.height || fallback.height))),
       rotation: ((Math.round(t.rotation) % 360) + 360) % 360,
     };
   });

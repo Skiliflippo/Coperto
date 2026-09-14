@@ -21,10 +21,11 @@ import {
   suggestedSplitParts,
   polygonBounds,
   elementBox, iconFromLabel, normalizeLayout, polygonOf, rectPolygon,
-  shapeForCapacity, snapBoxToWalls, snapTo, tableGeometry, tableLengthUnits, uid,
+  shapeForCapacity, snapBoxToWalls, snapTo, snapWallEndpoint, tableGeometry,
+  tableLengthUnits, tableUnits, uid, wallFromEndpoints, wallInsideRoom, wallLine,
   type Box, type DecorIcon, type FloorElement, type Point, type RoomLayout, type TableShape,
 } from "@/lib/floor";
-import { ElementNode, GridBackdrop, PERIMETER_THICKNESS, RoomShell, TableNode, type TableNodeData } from "@/components/floor-shapes";
+import { ElementNode, GridBackdrop, PerimeterOverlay, RoomShell, TableNode, WallLayer, type TableNodeData } from "@/components/floor-shapes";
 import type { Bootstrap, Room, TableT } from "@/lib/types";
 
 const STEP = 25;                       // aggancio: mezza cella = 25 cm
@@ -56,6 +57,10 @@ export function FloorEditor({ boot, roomId, onClose }: { boot: Bootstrap; roomId
   const [saving, setSaving] = useState(false);
   const [rubber, setRubber] = useState<FloorElement | null>(null);
   const [rubberBad, setRubberBad] = useState(false);
+  const [marquee, setMarquee] = useState<Box | null>(null);   // Ctrl+drag: selezione rettangolare
+  // Posizioni temporanee dei muri durante il drag: WallLayer è SVG condiviso,
+  // quindi non può essere mosso scrivendo sul div trasparente dell'hit area.
+  const [liveWalls, setLiveWalls] = useState<Record<string, Partial<FloorElement>>>({});
   const [badIds, setBadIds] = useState<string[]>([]);   // evidenza durante il trascinamento
   const [confirmClose, setConfirmClose] = useState(false);
 
@@ -67,6 +72,9 @@ export function FloorEditor({ boot, roomId, onClose }: { boot: Bootstrap; roomId
   const nodeRefs = useRef(new Map<string, HTMLDivElement>());
   const dirty = past.length > 0;
   const poly = polygonOf(draft.layout);
+  const visibleElements = draft.layout.elements.map((element) =>
+    liveWalls[element.id] ? { ...element, ...liveWalls[element.id] } : element,
+  );
   const std = boot.settings.standardTableSeats ?? 4;   // tavolo singolo del locale
   const seatsByTable = useMemo(
     () => computeRoomSeats(draft.tables, poly, draft.layout.elements.map(elementBox)),
@@ -113,14 +121,24 @@ export function FloorEditor({ boot, roomId, onClose }: { boot: Bootstrap; roomId
   const invalidIds = useMemo(() => {
     const room = polygonOf(draft.layout);
     const items = [
-      ...draft.tables.map((t) => ({ id: t.id, box: aabb(t.x, t.y, t.width, t.height, t.rotation) })),
-      ...draft.layout.elements.map((e) => ({ id: e.id, box: elementBox(e) })),
+      ...draft.tables.map((t) => ({ id: t.id, type: "table" as const, box: aabb(t.x, t.y, t.width, t.height, t.rotation) })),
+      ...draft.layout.elements.map((e) => ({ id: e.id, type: e.kind, box: elementBox(e) })),
     ];
     const bad = new Set<string>();
-    for (const it of items) if (!boxInsideRoom(it.box, room)) bad.add(it.id);
+    for (const it of items) {
+      if (it.type === "wall") {
+        const wall = draft.layout.elements.find((e) => e.id === it.id);
+        if (wall && !wallInsideRoom(wall, room)) bad.add(it.id);
+      } else if (!boxInsideRoom(it.box, room)) bad.add(it.id);
+    }
     for (let i = 0; i < items.length; i++) {
       for (let j = i + 1; j < items.length; j++) {
-        if (boxesOverlap(items[i].box, items[j].box)) { bad.add(items[i].id); bad.add(items[j].id); }
+        if (!boxesOverlap(items[i].box, items[j].box)) continue;
+        const a = items[i], b = items[j];
+        // muro+muro = giunto/incrocio valido; muro+arredo = arredo a filo muro.
+        // Un tavolo invece non può stare dentro una parete.
+        if ((a.type === "wall" && b.type !== "table") || (b.type === "wall" && a.type !== "table")) continue;
+        bad.add(a.id); bad.add(b.id);
       }
     }
     return bad;
@@ -137,7 +155,15 @@ export function FloorEditor({ boot, roomId, onClose }: { boot: Bootstrap; roomId
       tables: d.tables.map((t) => (ids.includes(t.id) ? { ...t, x: snapG(t.x + dx), y: snapG(t.y + dy) } : t)),
       layout: {
         ...d.layout,
-        elements: d.layout.elements.map((e) => (ids.includes(e.id) ? { ...e, x: snapG(e.x + dx), y: snapG(e.y + dy) } : e)),
+        elements: d.layout.elements.map((e) => {
+          if (!ids.includes(e.id)) return e;
+          // Un muro è già costruito fra due punti della griglia: traslandolo di
+          // un passo intero si preservano gli estremi. Non si snappera il suo
+          // angolo top-left, che è sfalsato di metà spessore.
+          return e.kind === "wall"
+            ? { ...e, x: e.x + snapG(dx), y: e.y + snapG(dy) }
+            : { ...e, x: snapG(e.x + dx), y: snapG(e.y + dy) };
+        }),
       },
     }));
   }, [commit]);
@@ -177,18 +203,26 @@ export function FloorEditor({ boot, roomId, onClose }: { boot: Bootstrap; roomId
     const items = group
       .map((gid) => {
         const table = draft.tables.find((t) => t.id === gid);
-        if (table) return { id: gid, kind: "table" as const, x: table.x, y: table.y, w: table.width, h: table.height, rotation: table.rotation };
+        if (table) return {
+          id: gid, kind: "table" as const, type: "table" as const, isWall: false,
+          x: table.x, y: table.y, w: table.width, h: table.height, rotation: table.rotation,
+        };
         const el = draft.layout.elements.find((x) => x.id === gid);
-        return el ? { id: gid, kind: "element" as const, x: el.x, y: el.y, w: el.w, h: el.h, rotation: el.rotation } : null;
+        return el ? {
+          id: gid, kind: "element" as const, type: el.kind, isWall: el.kind === "wall",
+          x: el.x, y: el.y, w: el.w, h: el.h, rotation: el.rotation,
+        } : null;
       })
       .filter((x): x is NonNullable<typeof x> => !!x);
     if (!items.length) return;
 
-    // ingombri di tutto ciò che NON si sta muovendo: bastano per magnete ed evidenza
-    const others: Box[] = [
-      ...draft.tables.filter((t) => !group.includes(t.id)).map(tableBox),
-      ...draft.layout.elements.filter((el) => !group.includes(el.id)).map(elementBox),
+    // Ingombri di tutto ciò che NON si sta muovendo: il tipo serve a distinguere
+    // giunti validi (muro+muro, muro+arredo) dalle collisioni vere.
+    const otherItems = [
+      ...draft.tables.filter((t) => !group.includes(t.id)).map((t) => ({ type: "table" as const, box: tableBox(t) })),
+      ...draft.layout.elements.filter((el) => !group.includes(el.id)).map((el) => ({ type: el.kind, box: elementBox(el) })),
     ];
+    const others = otherItems.map((x) => x.box);
     const single = items.length === 1 ? items[0] : null;
     const boxAt = (it: typeof items[number], x: number, y: number): Box => it.kind === "table"
       ? aabb(x, y, it.w, it.h, it.rotation)
@@ -203,15 +237,20 @@ export function FloorEditor({ boot, roomId, onClose }: { boot: Bootstrap; roomId
       let dy = p.y - start.y;
 
       if (single) {
-        // Aggancio alla griglia in valore assoluto, come fanno le frecce.
-        let nx = snapG(single.x + dx);
-        let ny = snapG(single.y + dy);
-        // MAGNETE: se un lato passa vicino a un muro o a un altro oggetto, ci si appoggia a filo
-        const raw = boxAt(single, nx, ny);
-        const snapped = snapBoxToWalls(raw, poly, others);
-        nx += snapped.x - raw.x;
-        ny += snapped.y - raw.y;
-        delta = { x: nx - single.x, y: ny - single.y };
+        if (single.isWall) {
+          // Il muro intero si muove per multipli della stessa griglia dei suoi
+          // estremi: così entrambi restano sempre punti di ancoraggio validi.
+          delta = { x: snapG(dx), y: snapG(dy) };
+        } else {
+          // Tavoli e arredi: aggancio assoluto + magnete a muri/oggetti.
+          let nx = snapG(single.x + dx);
+          let ny = snapG(single.y + dy);
+          const raw = boxAt(single, nx, ny);
+          const snapped = snapBoxToWalls(raw, poly, others, 26);
+          nx += snapped.x - raw.x;
+          ny += snapped.y - raw.y;
+          delta = { x: nx - single.x, y: ny - single.y };
+        }
       } else {
         // Gruppo: stesso scostamento per tutti, agganciato alla griglia.
         delta = { x: snapG(dx), y: snapG(dy) };
@@ -219,18 +258,29 @@ export function FloorEditor({ boot, roomId, onClose }: { boot: Bootstrap; roomId
 
       moved = true;
       const bad: string[] = [];
+      const wallMoves: Record<string, Partial<FloorElement>> = {};
       for (const it of items) {
         const nx = it.x + delta.x, ny = it.y + delta.y;
+        if (it.type === "wall") wallMoves[it.id] = { x: nx, y: ny };
         const node = nodeRefs.current.get(it.id);
         if (node) {
           const left = it.kind === "table" ? nx - it.w / 2 : nx;
           const top = it.kind === "table" ? ny - it.h / 2 : ny;
           node.style.transform = `translate3d(${left}px, ${top}px, 0) rotate(${it.rotation}deg)`;
         }
-        // evidenza dal vivo: rosso appena finisce fuori posto
+        // Evidenza dal vivo. Muro+muro e muro+arredo sono contatti validi;
+        // tavolo+muro o due mobili/tavoli sovrapposti restano errori.
         const box = boxAt(it, nx, ny);
-        if (!boxInsideRoom(box, poly) || others.some((o) => boxesOverlap(box, o))) bad.push(it.id);
+        const collision = otherItems.some((other) => {
+          if (!boxesOverlap(box, other.box)) return false;
+          if ((it.type === "wall" && other.type !== "table") || (other.type === "wall" && it.type !== "table")) return false;
+          return true;
+        });
+        const wall = it.type === "wall" ? draft.layout.elements.find((e) => e.id === it.id) : null;
+        const inside = wall ? wallInsideRoom({ ...wall, x: nx, y: ny }, poly) : boxInsideRoom(box, poly);
+        if (!inside || collision) bad.push(it.id);
       }
+      setLiveWalls(wallMoves);
       setBadIds(bad);
     };
 
@@ -238,6 +288,7 @@ export function FloorEditor({ boot, roomId, onClose }: { boot: Bootstrap; roomId
       window.removeEventListener("pointermove", move);
       window.removeEventListener("pointerup", up);
       setBadIds([]);
+      setLiveWalls({});
       if (!moved || (delta.x === 0 && delta.y === 0)) return;
       moveSelection(group, delta.x, delta.y);
     };
@@ -264,8 +315,13 @@ export function FloorEditor({ boot, roomId, onClose }: { boot: Bootstrap; roomId
       const p = toWorld(ev.clientX, ev.clientY);
       const dxWorld = p.x - start.x, dyWorld = p.y - start.y;
       // mondo → assi locali dell'oggetto (rotazione inversa)
-      const dxLocal = dxWorld * cos + dyWorld * sin;
-      const dyLocal = -dxWorld * sin + dyWorld * cos;
+      const rawDxLocal = dxWorld * cos + dyWorld * sin;
+      const rawDyLocal = -dxWorld * sin + dyWorld * cos;
+      // Il resize dei muri è volutamente più lento e preciso: un movimento del
+      // dito di 100 cm produce 38 cm di muro. Gli arredi restano 1:1.
+      const wallDamp = el.kind === "wall" ? 0.38 : 1;
+      const dxLocal = rawDxLocal * wallDamp;
+      const dyLocal = rawDyLocal * wallDamp;
 
       const min = el.kind === "wall" ? 4 : 15;
       // Lunghezza sulla griglia da 25 cm; spessore dei muri con passo fine da 2 cm.
@@ -300,6 +356,52 @@ export function FloorEditor({ boot, roomId, onClose }: { boot: Bootstrap; roomId
       window.removeEventListener("pointerup", up);
       setBadIds([]);
       commit((d) => ({ ...d, layout: { ...d.layout, elements: d.layout.elements.map((x) => (x.id === el.id ? { ...x, ...box } : x)) } }));
+    };
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", up);
+  };
+
+  // Ridimensionamento del muro dai suoi due estremi. Non usa gli otto handle dei
+  // mobili: un muro ha una linea iniziale e una finale, entrambe sulla stessa griglia.
+  const dragWallEndpoint = (e: React.PointerEvent, el: FloorElement, endpoint: "a" | "b") => {
+    e.stopPropagation();
+    cancelPan();
+    const node = nodeRefs.current.get(el.id);
+    if (!node) return;
+    const original = wallLine(el);
+    const fixed = endpoint === "a" ? original.b : original.a;
+    const dx0 = original.b.x - original.a.x;
+    const dy0 = original.b.y - original.a.y;
+    const horizontal = Math.abs(dx0) >= Math.abs(dy0) && Math.abs(dy0) < 2;
+    const vertical = Math.abs(dy0) > Math.abs(dx0) && Math.abs(dx0) < 2;
+    const otherWalls = draft.layout.elements.filter((x) => x.kind === "wall" && x.id !== el.id);
+    let next = el;
+
+    const move = (ev: PointerEvent) => {
+      const p = toWorld(ev.clientX, ev.clientY);
+      let target = horizontal ? { x: p.x, y: fixed.y }
+        : vertical ? { x: fixed.x, y: p.y }
+          : p;
+      target = snapWallEndpoint(target, otherWalls, poly, STEP, 10);
+      if (horizontal) target.y = fixed.y;
+      if (vertical) target.x = fixed.x;
+      // impedisce che l'estremo attraversi quello fisso e inverta il muro con un gesto minimo
+      if (Math.hypot(target.x - fixed.x, target.y - fixed.y) < STEP) return;
+      next = endpoint === "a"
+        ? wallFromEndpoints(el.id, target, fixed, original.thickness, el.label)
+        : wallFromEndpoints(el.id, fixed, target, original.thickness, el.label);
+      node.style.transform = `translate3d(${next.x}px, ${next.y}px, 0) rotate(${next.rotation}deg)`;
+      node.style.width = `${next.w}px`;
+      node.style.height = `${next.h}px`;
+      const nextBox = elementBox(next);
+      const hitsTable = draft.tables.some((t) => boxesOverlap(nextBox, tableBox(t)));
+      setBadIds(wallInsideRoom(next, poly) && !hitsTable ? [] : [el.id]);
+    };
+    const up = () => {
+      window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointerup", up);
+      setBadIds([]);
+      patchEl(el.id, next);
     };
     window.addEventListener("pointermove", move);
     window.addEventListener("pointerup", up);
@@ -385,9 +487,44 @@ export function FloorEditor({ boot, roomId, onClose }: { boot: Bootstrap; roomId
     commit((d) => ({ ...d, layout: { ...d.layout, polygon: pts.filter((_, i) => i !== index) } }));
   };
 
+  // Ctrl/Cmd + trascinamento sullo sfondo: selezione rettangolare multipla,
+  // come negli editor desktop. Prende ogni oggetto toccato dal riquadro.
+  const startMarquee = (e: React.PointerEvent) => {
+    e.stopPropagation();
+    cancelPan();
+    const start = toWorld(e.clientX, e.clientY);
+    let last: Box = { x: start.x, y: start.y, w: 0, h: 0 };
+    const move = (ev: PointerEvent) => {
+      const p = toWorld(ev.clientX, ev.clientY);
+      last = {
+        x: Math.min(start.x, p.x), y: Math.min(start.y, p.y),
+        w: Math.abs(p.x - start.x), h: Math.abs(p.y - start.y),
+      };
+      setMarquee(last);
+    };
+    const up = () => {
+      window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointerup", up);
+      setMarquee(null);
+      if (last.w < 5 && last.h < 5) { setSelIds([]); return; }
+      const selected = [
+        ...draft.tables.filter((t) => boxesOverlap(last, tableBox(t))).map((t) => t.id),
+        ...draft.layout.elements.filter((el) => boxesOverlap(last, elementBox(el))).map((el) => el.id),
+      ];
+      setSelIds(selected);
+    };
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", up);
+  };
+
   // ── Sfondo: pan · piazza tavolo · disegna muro/arredo ──────────────────────
   const onCanvasDown = (e: React.PointerEvent) => {
-    if (tool === "select" || tool === "perimetro") { setSelIds([]); bind.onPointerDown(e); return; }
+    if (tool === "select") {
+      if (e.ctrlKey || e.metaKey) startMarquee(e);
+      else { setSelIds([]); bind.onPointerDown(e); }
+      return;
+    }
+    if (tool === "perimetro") { setSelIds([]); bind.onPointerDown(e); return; }
 
     if (tool === "table") {
       const p = toWorld(e.clientX, e.clientY);
@@ -410,22 +547,60 @@ export function FloorEditor({ boot, roomId, onClose }: { boot: Bootstrap; roomId
       return;
     }
 
-    // muro / arredo: si disegna trascinando
+    // MURO: si disegna da estremo a estremo sulla stessa griglia. Il lato corto
+    // è centrato sulla linea, quindi un orizzontale e un verticale possono
+    // condividere lo STESSO identico punto di ancoraggio.
+    if (tool === "wall") {
+      const existingWalls = draft.layout.elements.filter((el) => el.kind === "wall");
+      const rawStart = toWorld(e.clientX, e.clientY);
+      const start = snapWallEndpoint(rawStart, existingWalls, poly, STEP);
+      let current: FloorElement | null = null;
+      const move = (ev: PointerEvent) => {
+        const p = toWorld(ev.clientX, ev.clientY);
+        const horizontal = Math.abs(p.x - start.x) >= Math.abs(p.y - start.y);
+        const axisPoint = horizontal ? { x: p.x, y: start.y } : { x: start.x, y: p.y };
+        const end = snapWallEndpoint(axisPoint, existingWalls, poly, STEP);
+        // mantiene l'asse perfetto anche dopo il magnete
+        if (horizontal) end.y = start.y;
+        else end.x = start.x;
+        current = wallFromEndpoints("rubber", start, end, 10);
+        setRubber(current);
+        const wallBox = elementBox(current);
+        const hitsTable = draft.tables.some((t) => boxesOverlap(wallBox, tableBox(t)));
+        setRubberBad(!wallInsideRoom(current, poly) || hitsTable);
+      };
+      const up = () => {
+        window.removeEventListener("pointermove", move);
+        window.removeEventListener("pointerup", up);
+        setRubber(null);
+        setRubberBad(false);
+        setTool("select");
+        if (!current) return;
+        const line = wallLine(current);
+        if (Math.hypot(line.b.x - line.a.x, line.b.y - line.a.y) < STEP) return;
+        const wall = { ...current, id: uid() };
+        commit((d) => ({ ...d, layout: { ...d.layout, elements: [...d.layout.elements, wall] } }));
+        setSelIds([wall.id]);
+      };
+      window.addEventListener("pointermove", move);
+      window.addEventListener("pointerup", up);
+      return;
+    }
+
+    // ARREDO: si disegna come un rettangolo libero sulla griglia.
     const s0 = toWorld(e.clientX, e.clientY);
-    const kind = tool as "wall" | "decor";
     let box: FloorElement | null = null;
     const move = (ev: PointerEvent) => {
       const p = toWorld(ev.clientX, ev.clientY);
       const x = snapG(Math.min(s0.x, p.x)), y = snapG(Math.min(s0.y, p.y));
-      let w = snapG(Math.abs(p.x - s0.x)), h = snapG(Math.abs(p.y - s0.y));
-      if (kind === "wall") { if (h < 60) h = PERIMETER_THICKNESS; if (w < 60) w = PERIMETER_THICKNESS; }  // muri sottili e dritti
-      box = { id: "rubber", kind, x, y, w: Math.max(w, 18), h: Math.max(h, 18), rotation: 0, label: "" };
+      const w = snapG(Math.abs(p.x - s0.x)), h = snapG(Math.abs(p.y - s0.y));
+      box = {
+        id: "rubber", kind: "decor", x, y,
+        w: Math.max(w, 18), h: Math.max(h, 18), rotation: 0, label: "",
+      };
       setRubber(box);
-      setRubberBad(!boxFits({ x: box.x, y: box.y, w: box.w, h: box.h }));
+      setRubberBad(!boxFits(elementBox(box)));
     };
-    // NB: la creazione avviene QUI, fuori da qualsiasi updater di stato.
-    // Prima era dentro setRubber(...) e React poteva eseguirla due volte,
-    // creando due arredi sovrapposti.
     const up = () => {
       window.removeEventListener("pointermove", move);
       window.removeEventListener("pointerup", up);
@@ -434,12 +609,9 @@ export function FloorEditor({ boot, roomId, onClose }: { boot: Bootstrap; roomId
       setTool("select");
       const b = box;
       if (!b || b.w * b.h < 900) return;
-
       const preset = DECOR_PRESETS.find((d) => d.icon === newDecor);
       const el: FloorElement = {
-        ...b, id: uid(),
-        label: kind === "decor" ? preset?.label ?? "Arredo" : "",
-        icon: kind === "decor" ? newDecor : undefined,
+        ...b, id: uid(), label: preset?.label ?? "Arredo", icon: newDecor,
       };
       commit((d) => ({ ...d, layout: { ...d.layout, elements: [...d.layout.elements, el] } }));
       setSelIds([el.id]);
@@ -452,6 +624,13 @@ export function FloorEditor({ boot, roomId, onClose }: { boot: Bootstrap; roomId
     commit((d) => ({ ...d, tables: d.tables.map((t) => (t.id === id ? { ...t, ...p } : t)) }));
   const patchEl = (id: string, p: Partial<FloorElement>) =>
     commit((d) => ({ ...d, layout: { ...d.layout, elements: d.layout.elements.map((e) => (e.id === id ? { ...e, ...p } : e)) } }));
+
+  const setWallThickness = (wall: FloorElement, value: number) => {
+    const line = wallLine(wall);
+    const thickness = Math.max(10, Math.round(value / 5) * 5);
+    patchEl(wall.id, wallFromEndpoints(wall.id, line.a, line.b, thickness, wall.label));
+  };
+
   const removeSel = useCallback(() => {
     if (!selIds.length) return;
     commit((d) => ({
@@ -465,21 +644,35 @@ export function FloorEditor({ boot, roomId, onClose }: { boot: Bootstrap; roomId
   }, [selIds, commit, boot.tables]);
 
   const setCapacity = (t: TableNodeData, cap: number) => {
-    const c = clamp(cap, 1, 20);
-    // Se servono più tavoli accostati diventa rettangolare. Se invece era già un
-    // rettangolare con pochi coperti RESTA tale: due tavoli uniti da 4 esistono.
-    const shape = shapeForCapacity(c, t.shape, std);
-    const units = tableLengthUnits(t.width, std);
+    const c = clamp(cap, 1, 80);
+    const nextMax = Math.max(c, t.maxCapacity ?? c);
+    // Mantiene la lunghezza già scelta (rettangolare da 4 = due tavoli), ma se
+    // i coperti richiedono più unità la allunga automaticamente.
+    const existingUnits = t.shape === "rect" ? tableLengthUnits(t.width, std) : 1;
+    const requiredUnits = tableUnits(Math.max(c, nextMax), std);
+    const units = Math.max(existingUnits, requiredUnits);
+    const shape = units > 1 ? "rect" : shapeForCapacity(c, t.shape, std);
     const g = tableGeometry(c, shape, std, units);
-    // un tavolo si stacca in tante parti quante sono le sue unità
-    const parts = shape === "rect" ? units : 0;
     patchTable(t.id, {
-      capacity: c, maxCapacity: Math.max(c, t.maxCapacity ?? c), shape,
-      splitInto: parts, width: g.width, height: g.height,
+      capacity: c, maxCapacity: nextMax, shape,
+      splitInto: shape === "rect" ? units : 0,
+      width: g.width, height: g.height,
     });
   };
-  const setMaxCapacity = (t: TableNodeData, max: number) =>
-    patchTable(t.id, { maxCapacity: clamp(max, t.capacity, 24) });
+
+  const setMaxCapacity = (t: TableNodeData, max: number) => {
+    const nextMax = clamp(max, t.capacity, 80);
+    const existingUnits = t.shape === "rect" ? tableLengthUnits(t.width, std) : 1;
+    const requiredUnits = tableUnits(nextMax, std);
+    const units = Math.max(existingUnits, requiredUnits);
+    const shape = units > 1 ? "rect" : t.shape;
+    const g = tableGeometry(t.capacity, shape, std, units);
+    patchTable(t.id, {
+      maxCapacity: nextMax, shape,
+      splitInto: shape === "rect" ? units : 0,
+      width: g.width, height: g.height,
+    });
+  };
 
   useEffect(() => {
     const h = (e: KeyboardEvent) => {
@@ -584,26 +777,61 @@ export function FloorEditor({ boot, roomId, onClose }: { boot: Bootstrap; roomId
         <div className="absolute left-0 top-0 origin-top-left"
           style={{ transform: `translate3d(${vp.panX}px, ${vp.panY}px, 0) scale(${vp.zoom})` }}>
           <RoomShell w={draft.layout.w} h={draft.layout.h} polygon={draft.layout.polygon} />
+          {marquee && (
+            <div className="pointer-events-none absolute z-40 border-2 border-dashed border-brand bg-brand/10"
+              style={{ left: marquee.x, top: marquee.y, width: marquee.w, height: marquee.h }} />
+          )}
+          <WallLayer
+            elements={rubber?.kind === "wall" ? [...draft.layout.elements, rubber] : draft.layout.elements}
+            roomW={draft.layout.w} roomH={draft.layout.h}
+            invalidIds={new Set([
+              ...invalidIds,
+              ...(rubberBad && rubber?.kind === "wall" ? ["rubber"] : []),
+            ])}
+            selectedIds={new Set(selIds)} />
+          <PerimeterOverlay w={draft.layout.w} h={draft.layout.h} polygon={draft.layout.polygon} />
 
-          {draft.layout.elements.map((el) => (
+          {/* Muri al livello inferiore, arredi sopra: un mobile appoggiato al muro
+              non viene coperto dalla parete. */}
+          {[...draft.layout.elements]
+            .sort((a, b) => Number(a.kind === "decor") - Number(b.kind === "decor"))
+            .map((el) => (
             <ElementNode key={el.id} el={el} editable invalid={isBad(el.id)} selected={selIds.includes(el.id)}
               ref={(n) => { if (n) nodeRefs.current.set(el.id, n); }}
               onPointerDown={(e) => dragNode(e, el.id)}>
               {sel?.kind === "element" && sel.id === el.id && tool === "select" && (
-                ([[-1, -1], [1, -1], [-1, 1], [1, 1], [0, -1], [0, 1], [-1, 0], [1, 0]] as const).map(([hx, hy]) => (
-                  <span key={`${hx}${hy}`} onPointerDown={(e) => resizeEl(e, el, hx, hy)}
-                    className="absolute rounded-full border-[3px] border-brand bg-surface"
-                    style={{
-                      width: 26 / vp.zoom, height: 26 / vp.zoom,
-                      left: `calc(${hx === -1 ? "0%" : hx === 1 ? "100%" : "50%"} - ${13 / vp.zoom}px)`,
-                      top: `calc(${hy === -1 ? "0%" : hy === 1 ? "100%" : "50%"} - ${13 / vp.zoom}px)`,
-                      cursor: rotatedCursor(hx, hy, el.rotation),
-                    }} />
-                ))
+                el.kind === "wall" ? (
+                  // Solo i due veri estremi del segmento, entrambi sulla griglia comune.
+                  (["a", "b"] as const).map((end) => {
+                    const horizontal = el.w >= el.h;
+                    const first = end === "a";
+                    return (
+                      <span key={end} onPointerDown={(e) => dragWallEndpoint(e, el, end)}
+                        className="absolute z-30 rounded-sm border-[3px] border-brand bg-surface"
+                        style={{
+                          width: 24 / vp.zoom, height: 24 / vp.zoom,
+                          left: `calc(${horizontal ? (first ? "0%" : "100%") : "50%"} - ${12 / vp.zoom}px)`,
+                          top: `calc(${horizontal ? "50%" : (first ? "0%" : "100%")} - ${12 / vp.zoom}px)`,
+                          cursor: horizontal ? "ew-resize" : "ns-resize",
+                        }} />
+                    );
+                  })
+                ) : (
+                  ([[-1, -1], [1, -1], [-1, 1], [1, 1], [0, -1], [0, 1], [-1, 0], [1, 0]] as const).map(([hx, hy]) => (
+                    <span key={`${hx}${hy}`} onPointerDown={(e) => resizeEl(e, el, hx, hy)}
+                      className="absolute rounded-full border-[3px] border-brand bg-surface"
+                      style={{
+                        width: 26 / vp.zoom, height: 26 / vp.zoom,
+                        left: `calc(${hx === -1 ? "0%" : hx === 1 ? "100%" : "50%"} - ${13 / vp.zoom}px)`,
+                        top: `calc(${hy === -1 ? "0%" : hy === 1 ? "100%" : "50%"} - ${13 / vp.zoom}px)`,
+                        cursor: rotatedCursor(hx, hy, el.rotation),
+                      }} />
+                  ))
+                )
               )}
             </ElementNode>
           ))}
-          {rubber && <ElementNode el={rubber} selected={!rubberBad} invalid={rubberBad} />}
+          {rubber?.kind === "decor" && <ElementNode el={rubber} selected={!rubberBad} invalid={rubberBad} />}
 
           {draft.tables.map((t) => (
             <TableNode key={t.id} t={t} tone="border-busy/50"
@@ -776,9 +1004,18 @@ export function FloorEditor({ boot, roomId, onClose }: { boot: Bootstrap; roomId
 
       {selEl && (
         <ContextPanel onClose={() => setSelIds([])} title={selEl.kind === "wall" ? "Muro" : "Arredo"}
-          subtitle={`${Math.round(selEl.w)}×${Math.round(selEl.h)} cm${selEl.rotation ? ` · ruotato ${selEl.rotation}°` : ""} · trascina i pallini per ridimensionare`}>
+          subtitle={selEl.kind === "wall"
+            ? `${Math.round(Math.max(selEl.w, selEl.h))} cm di lunghezza · ${Math.round(Math.min(selEl.w, selEl.h))} cm di spessore`
+            : `${Math.round(selEl.w)}×${Math.round(selEl.h)} cm${selEl.rotation ? ` · ruotato ${selEl.rotation}°` : ""}`}>
           <div className="flex flex-wrap items-center gap-1.5">
-            {selEl.kind === "decor" && (
+            {selEl.kind === "wall" ? (
+              <>
+                <Spin label="Spessore" value={Math.round(Math.min(selEl.w, selEl.h))}
+                  onMinus={() => setWallThickness(selEl, Math.min(selEl.w, selEl.h) - 5)}
+                  onPlus={() => setWallThickness(selEl, Math.min(selEl.w, selEl.h) + 5)} />
+                <span className="text-[12px] font-medium text-muted">10, 15, 20… cm</span>
+              </>
+            ) : (
               <>
                 <input value={selEl.label}
                   onChange={(e) => patchEl(selEl.id, { label: e.target.value.slice(0, 20), icon: iconFromLabel(e.target.value, selEl.icon) })}
@@ -789,15 +1026,23 @@ export function FloorEditor({ boot, roomId, onClose }: { boot: Bootstrap; roomId
                   {DECOR_PRESETS.map((d) => <option key={d.icon} value={d.icon}>{d.label}</option>)}
                   <option value="generico">Altro</option>
                 </select>
+                <button onClick={() => patchEl(selEl.id, { rotation: (selEl.rotation + 90) % 360 })}
+                  className="flex h-12 items-center gap-1 rounded-xl bg-raised px-3 text-sm font-bold active:scale-95">
+                  <RotateCw className="h-4 w-4" /> Oggetto 90°
+                </button>
+                <button onClick={() => patchEl(selEl.id, { rotation: (selEl.rotation + 15) % 360 })}
+                  className="h-12 rounded-xl bg-raised px-3 text-sm font-bold active:scale-95">Oggetto +15°</button>
+                {selEl.label && (
+                  <button onClick={() => patchEl(selEl.id, { labelRotation: ((selEl.labelRotation ?? 0) + 90) % 360 })}
+                    className="flex h-12 items-center gap-1 rounded-xl bg-raised px-3 text-sm font-bold active:scale-95">
+                    <RotateCw className="h-4 w-4" /> Nome 90°
+                  </button>
+                )}
               </>
             )}
-            <button onClick={() => patchEl(selEl.id, { rotation: (selEl.rotation + 90) % 360 })}
-              className="flex h-12 items-center gap-1 rounded-xl bg-raised px-3 text-sm font-bold active:scale-95">
-              <RotateCw className="h-4 w-4" />90°
+            <button onClick={removeSel} className="grid h-12 w-12 place-items-center rounded-xl bg-over/15 text-over active:scale-95" aria-label="Elimina">
+              <Trash2 className="h-5 w-5" />
             </button>
-            <button onClick={() => patchEl(selEl.id, { rotation: (selEl.rotation + 15) % 360 })}
-              className="h-12 rounded-xl bg-raised px-3 text-sm font-bold active:scale-95">+15°</button>
-            <button onClick={removeSel} className="grid h-12 w-12 place-items-center rounded-xl bg-over/15 text-over active:scale-95" aria-label="Elimina"><Trash2 className="h-5 w-5" /></button>
           </div>
         </ContextPanel>
       )}
