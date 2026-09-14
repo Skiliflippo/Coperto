@@ -18,6 +18,7 @@
   --on-brand: #FFFFFF;
   --ok: #2C9B57;   --busy: #3B6FD9;  --soon: #D19220; --over: #DD4B42;
   --clean: #8C8578; --oos: #57504A;
+  --wall: #9A8F80;   /* muri interni: più chiari del fuori servizio */
 }
 .dark, .dark.theme-terracotta {
   --bg: #14110C;        /* sera in sala */
@@ -31,6 +32,7 @@
   --on-brand: #1E0F08;
   --ok: #43C878;  --busy: #6E9BFF;  --soon: #EAB23F; --over: #FF7166;
   --clean: #9A9181; --oos: #8A806F;
+  --wall: #6B6155;
 }
 
 /* Ardesia — neutro freddo, molto sobrio */
@@ -105,6 +107,7 @@
   --color-soon: var(--soon);
   --color-over: var(--over);
   --color-clean: var(--clean);
+  --color-wall: var(--wall);
   --color-oos: var(--oos);
   --font-sans: var(--font-inter), ui-sans-serif, system-ui, sans-serif;
   --font-display: var(--font-fraunces), Georgia, serif;

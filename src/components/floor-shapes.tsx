@@ -104,12 +104,16 @@ function DecorFace({ icon, w, h, label }: { icon: DecorIcon; w: number; h: numbe
       )}
       {icon === "bagno" && <div className={`${common} m-[18%] rounded-full border-[5px] border-dashed border-oos/45`} />}
       {icon === "pianta" && (
-        <div className={`${common} grid place-items-center`}>
-          {/* vaso trapezoidale */}
-          <span className="absolute bottom-[12%] left-1/2 h-[34%] w-[44%] -translate-x-1/2 rounded-b-[18%] rounded-t-[6%] bg-oos/55" />
-          {/* chioma: due cerchi sfalsati, verde tenue */}
-          <span className="absolute left-[14%] top-[10%] h-[48%] w-[48%] rounded-full bg-ok/40" />
-          <span className="absolute right-[12%] top-[22%] h-[40%] w-[40%] rounded-full bg-ok/55" />
+        <div className={`${common} drop-shadow-sm`} aria-label="Pianta">
+          {/* Cespuglio visto dall'alto: masse di foglie sovrapposte, nessun vaso. */}
+          <span className="absolute left-[22%] top-[3%] h-[48%] w-[50%] rounded-[48%_55%_46%_58%] bg-ok/45" />
+          <span className="absolute right-[2%] top-[24%] h-[49%] w-[48%] rounded-[55%_43%_59%_47%] bg-ok/55" />
+          <span className="absolute bottom-[1%] left-[25%] h-[48%] w-[52%] rounded-[44%_58%_49%_55%] bg-ok/50" />
+          <span className="absolute left-[1%] top-[27%] h-[47%] w-[49%] rounded-[57%_45%_53%_48%] bg-ok/60" />
+          <span className="absolute left-[28%] top-[27%] h-[47%] w-[47%] rounded-full bg-ok/70" />
+          {/* piccoli riflessi che danno profondità alla chioma */}
+          <span className="absolute left-[25%] top-[19%] h-[15%] w-[17%] rounded-full bg-white/20" />
+          <span className="absolute right-[19%] top-[39%] h-[12%] w-[14%] rounded-full bg-white/15" />
         </div>
       )}
       {label && icon !== "pilastro" && (
@@ -131,10 +135,16 @@ export const ElementNode = forwardRef<HTMLDivElement, {
   children?: React.ReactNode;
 }>(function ElementNode({ el, selected, editable, invalid, onPointerDown, children }, ref) {
   const isWall = el.kind === "wall";
-  // Mezzo spessore di estensione per lato: due muri che si incontrano si
-  // sovrappongono esattamente all'angolo, senza i bordi stondati che tradivano
-  // la composizione da oggetti separati.
+  const isPlant = el.icon === "pianta";
+  // Mezzo spessore di estensione SOLO agli estremi della lunghezza. Estendere
+  // anche sopra/sotto raddoppiava visivamente lo spessore: un muro salvato da
+  // 6 cm sembrava ancora da 12.
   const half = isWall ? Math.min(el.w, el.h) / 2 : 0;
+  const wallVisualStyle = isWall
+    ? el.w >= el.h
+      ? { left: -half, right: -half, top: 0, bottom: 0 }
+      : { left: 0, right: 0, top: -half, bottom: -half }
+    : undefined;
   return (
     <div ref={ref} onPointerDown={onPointerDown}
       className={`absolute left-0 top-0 ${editable ? "cursor-move" : ""}`}
@@ -147,8 +157,14 @@ export const ElementNode = forwardRef<HTMLDivElement, {
       {isWall ? (
         // niente border-radius: un angolo di muro deve essere un angolo.
         // l'ombra segue l'estensione così la selezione resta leggibile.
-        <div className={`absolute bg-oos ${selected && !invalid ? "outline outline-[6px] outline-brand" : ""} ${invalid ? "!outline !outline-dashed !outline-over" : ""}`}
-          style={{ inset: `-${half}px`, outlineOffset: half > 0 ? `${half}px` : undefined }} />
+        <div className={`absolute bg-wall ${selected && !invalid ? "outline outline-[6px] outline-brand" : ""} ${invalid ? "!outline !outline-dashed !outline-over" : ""}`}
+          style={wallVisualStyle} />
+      ) : isPlant ? (
+        // Una pianta vista dall'alto non ha un mobile quadrato attorno: il suo
+        // ingombro resta selezionabile, ma visivamente è solo la chioma organica.
+        <div className={`relative h-full w-full overflow-visible ${selected && !invalid ? "rounded-full outline outline-[5px] outline-brand/70" : ""} ${invalid ? "rounded-full outline outline-[5px] outline-dashed outline-over" : ""}`}>
+          <DecorFace icon="pianta" w={el.w} h={el.h} label="" />
+        </div>
       ) : (
         <div className={`relative h-full w-full overflow-hidden rounded-md border-[5px] border-oos/45 bg-oos/15 ${selected && !invalid ? "outline outline-[6px] outline-brand" : ""} ${invalid ? "!border-[6px] !border-dashed !border-over !bg-over/25" : ""}`}>
           <DecorFace icon={el.icon ?? "generico"} w={el.w} h={el.h} label={el.label} />

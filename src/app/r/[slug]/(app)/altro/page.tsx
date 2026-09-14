@@ -116,7 +116,7 @@ export default function AltroPage() {
         <button onClick={toggleTheme}
           className="flex min-h-[60px] w-full items-center gap-3 rounded-2xl border border-line bg-surface px-4 font-semibold active:scale-[0.98]">
           {theme === "light" ? <Moon className="h-5 w-5" /> : <Sun className="h-5 w-5" />}
-          Tema {theme === "light" ? "scuro" : "chiaro"} <span className="ml-auto text-sm text-muted">{theme === "light" ? "per il servizio di sera" : "per il dehors col sole"}</span>
+          Tema {theme === "light" ? "scuro" : "chiaro"}
         </button>
         {staff?.role === "titolare" && (
           <Link href={tp("/altro/personale")}

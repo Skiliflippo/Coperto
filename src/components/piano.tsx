@@ -214,10 +214,12 @@ export function Piano({ date, day, onTap }: { date: string; day: DayData; onTap:
               {p.name} <span className="text-sm opacity-70">{p.startTime}–{p.endTime}</span>
             </button>
           ))}
-          <div className="ml-auto flex gap-2">
-            <button onClick={() => window.print()} className="flex min-h-[48px] items-center gap-2 rounded-2xl bg-raised px-4 font-semibold text-muted active:scale-95 no-print">
-              <Printer className="h-4 w-4" /> Stampa
+          <div className="ml-auto flex items-center gap-1.5">
+            <button onClick={() => window.print()} aria-label="Stampa il piano" title="Stampa"
+              className="no-print grid h-10 w-10 place-items-center rounded-xl bg-raised text-muted active:scale-95">
+              <Printer className="h-4 w-4" />
             </button>
+
             <button onClick={runAuto} disabled={!unassigned.length}
               className="flex min-h-[48px] items-center gap-2 rounded-2xl bg-ink px-4 font-bold text-bg active:scale-95 disabled:opacity-40 no-print">
               <Zap className="h-4 w-4 text-soon" /> Auto-sistema {unassigned.length > 0 && <span className="rounded-full bg-soon px-1.5 text-xs text-ink">{unassigned.length}</span>}

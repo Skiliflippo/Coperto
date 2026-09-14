@@ -21,7 +21,7 @@ import {
   suggestedSplitParts,
   polygonBounds,
   elementBox, iconFromLabel, normalizeLayout, polygonOf, rectPolygon,
-  shapeForCapacity, snapBoxToWalls, snapTo, tableGeometry, tableUnits, uid,
+  shapeForCapacity, snapBoxToWalls, snapTo, tableGeometry, tableLengthUnits, uid,
   type Box, type DecorIcon, type FloorElement, type Point, type RoomLayout, type TableShape,
 } from "@/lib/floor";
 import { ElementNode, GridBackdrop, PERIMETER_THICKNESS, RoomShell, TableNode, type TableNodeData } from "@/components/floor-shapes";
@@ -267,9 +267,15 @@ export function FloorEditor({ boot, roomId, onClose }: { boot: Bootstrap; roomId
       const dxLocal = dxWorld * cos + dyWorld * sin;
       const dyLocal = -dxWorld * sin + dyWorld * cos;
 
-      const min = el.kind === "wall" ? 6 : 15;   // i muri possono essere sottili
-      const w = hx === 0 ? el.w : Math.max(min, snapG(el.w + hx * dxLocal));
-      const h = hy === 0 ? el.h : Math.max(min, snapG(el.h + hy * dyLocal));
+      const min = el.kind === "wall" ? 4 : 15;
+      // Lunghezza sulla griglia da 25 cm; spessore dei muri con passo fine da 2 cm.
+      // Così si può ottenere davvero un muro da 4/6/8/10/12 cm senza saltare a 25.
+      const horizontalWall = el.kind === "wall" && el.w >= el.h;
+      const verticalWall = el.kind === "wall" && el.h > el.w;
+      const snapWidth = verticalWall ? (v: number) => snapTo(v, 2) : snapG;
+      const snapHeight = horizontalWall ? (v: number) => snapTo(v, 2) : snapG;
+      const w = hx === 0 ? el.w : Math.max(min, snapWidth(el.w + hx * dxLocal));
+      const h = hy === 0 ? el.h : Math.max(min, snapHeight(el.h + hy * dyLocal));
 
       // il bordo opposto resta fisso: il centro si sposta di metà della crescita,
       // riportata in coordinate mondo
@@ -385,8 +391,10 @@ export function FloorEditor({ boot, roomId, onClose }: { boot: Bootstrap; roomId
 
     if (tool === "table") {
       const p = toWorld(e.clientX, e.clientY);
-      const cap = newShape === "round" ? 2 : newShape === "square" ? 4 : 6;
-      const g = tableGeometry(cap, newShape, std);
+      // un rettangolare parte da due tavoli accostati; i coperti si regolano dopo
+      const cap = newShape === "round" ? 2 : newShape === "square" ? 4 : std * 2;
+      const units = newShape === "rect" ? 2 : 1;
+      const g = tableGeometry(cap, newShape, std, units);
       const safe = clampPointToRoom(p, poly);
       const id = uid();
       commit((d) => ({
@@ -458,13 +466,16 @@ export function FloorEditor({ boot, roomId, onClose }: { boot: Bootstrap; roomId
 
   const setCapacity = (t: TableNodeData, cap: number) => {
     const c = clamp(cap, 1, 20);
-    // Oltre i posti del tavolo singolo il tavolo diventa per forza rettangolare:
-    // sono più tavoli accostati, e la piantina lo deve mostrare.
+    // Se servono più tavoli accostati diventa rettangolare. Se invece era già un
+    // rettangolare con pochi coperti RESTA tale: due tavoli uniti da 4 esistono.
     const shape = shapeForCapacity(c, t.shape, std);
-    const parts = suggestedSplitParts(c, shape, std);
+    const units = tableLengthUnits(t.width, std);
+    const g = tableGeometry(c, shape, std, units);
+    // un tavolo si stacca in tante parti quante sono le sue unità
+    const parts = shape === "rect" ? units : 0;
     patchTable(t.id, {
-      capacity: c, maxCapacity: Math.max(c, t.maxCapacity ?? c), shape, splitInto: parts,
-      ...tableGeometry(c, shape, std),
+      capacity: c, maxCapacity: Math.max(c, t.maxCapacity ?? c), shape,
+      splitInto: parts, width: g.width, height: g.height,
     });
   };
   const setMaxCapacity = (t: TableNodeData, max: number) =>
@@ -712,11 +723,14 @@ export function FloorEditor({ boot, roomId, onClose }: { boot: Bootstrap; roomId
               <button onClick={() => patchTable(selTable.id, { rotation: (selTable.rotation + 90) % 360 })}
                 className="h-12 border-l border-line px-3 text-sm font-bold active:scale-95">90°</button>
             </div>
-            {(tableUnits(selTable.capacity, std) > 1
-              ? ([["rect", "Accostati"]] as const)
-              : ([["round", "Tondo"], ["square", "Quadr."]] as const)
-            ).map(([sh, lb]) => (
-              <button key={sh} onClick={() => patchTable(selTable.id, { shape: sh, ...tableGeometry(selTable.capacity, sh, std) })}
+            {([["round", "Tondo"], ["square", "Quadr."], ["rect", "Accostati"]] as const).map(([sh, lb]) => (
+              <button key={sh} onClick={() => {
+                const units = sh === "rect" ? tableLengthUnits(selTable.width, std) : 1;
+                patchTable(selTable.id, {
+                  shape: sh, ...tableGeometry(selTable.capacity, sh, std, Math.max(2, units)),
+                  splitInto: sh === "rect" ? Math.max(2, units) : 0,
+                });
+              }}
                 className={`h-12 rounded-xl px-3 text-sm font-bold active:scale-95 ${selTable.shape === sh ? "bg-brand text-on-brand" : "bg-raised"}`}>{lb}</button>
             ))}
             <button onClick={removeSel} className="grid h-12 w-12 place-items-center rounded-xl bg-over/15 text-over active:scale-95" aria-label="Elimina tavolo"><Trash2 className="h-5 w-5" /></button>

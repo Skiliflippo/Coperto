@@ -65,11 +65,13 @@ export function ReservationFormSheet({ open, onClose, defaultDate, edit }: {
     const dur = durationFor(party, period?.name ?? "cena", boot.data.settings);
     const res = dayQ.data.reservations;
     const stas = res.filter((r) => r.status !== "cancellata" && r.status !== "no_show");
-    const covers = stas.reduce((a, r) => a + r.partySize, 0);
     const totalCap = boot.data.tables.reduce((a, t) => a + t.capacity, 0);
-    // carico nella fascia oraria della prenotazione
-    const slotCovers = stas.filter((r) => Math.abs(toMin(r.time) - toMin(time)) <= 30).reduce((a, r) => a + r.partySize, 0);
-    const over = slotCovers + party >= Math.round(totalCap * (boot.data.settings.overbookingPct / 100)) / 2;
+    // Si ragiona per fascia oraria (±30 min): i coperti dell'intera giornata non
+    // c'entrano con l'orario che il cliente sta chiedendo.
+    const slotCovers = stas
+      .filter((r) => Math.abs(toMin(r.time) - toMin(time)) <= 30)
+      .reduce((a, r) => a + r.partySize, 0);
+    const over = slotCovers + party >= (totalCap * boot.data.settings.overbookingPct) / 100;
     const { tables, combos } = freeTargetsAt({
       timeMin: toMin(time), party, dur, buf: boot.data.settings.bufferMinutes,
       tables: boot.data.tables, combos: boot.data.combos,
@@ -77,7 +79,7 @@ export function ReservationFormSheet({ open, onClose, defaultDate, edit }: {
       durFor: (p) => durationFor(p, period?.name ?? "cena", boot.data.settings),
     });
     const best = [...tables, ...combos].sort((a, b) => (a.capacity - party) - (b.capacity - party))[0];
-    return { covers, totalCap, over, best: best ? ("label" in best ? `tavolo ${best.label} (${best.capacity} p.)` : null) : null, periodName: period?.name };
+    return { slotCovers, totalCap, over, best: best ? ("label" in best ? `tavolo ${best.label} (${best.capacity} p.)` : null) : null, periodName: period?.name };
   }, [boot.data, dayQ.data, time, party]);
 
   const submit = async (force = false) => {
@@ -206,7 +208,7 @@ export function ReservationFormSheet({ open, onClose, defaultDate, edit }: {
         {/* FEEDBACK LIVE mentre il cliente è ancora al telefono */}
         {feedback && (
           <div className={`rounded-2xl border-2 p-3.5 text-sm font-semibold ${feedback.over ? "border-soon/60 bg-soon/10 text-soon" : "border-ok/40 bg-ok/10 text-ok"}`}>
-            <p>Alle {time} di {relDay(date).toLowerCase()}: {feedback.covers} su {feedback.totalCap} coperti già prenotati.</p>
+            <p>Alle {time}: {feedback.slotCovers} coperti già prenotati in quella fascia, su {feedback.totalCap} in sala.</p>
             <p className="mt-1 flex items-center gap-1.5">
               <Zap className="h-4 w-4" />
               {feedback.best ? <>Tavolo libero suggerito: <b>{feedback.best}</b></> : "Nessun tavolo libero in quella fascia: valuta un altro orario."}

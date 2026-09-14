@@ -6,6 +6,7 @@ import { useQuery } from "@tanstack/react-query";
 import { useMemo, useState } from "react";
 import { ChevronLeft, ChevronRight } from "lucide-react";
 import { api } from "@/lib/api";
+import { useBootstrap } from "@/lib/hooks";
 import { useSession } from "@/store/session";
 import { todayISO } from "@/lib/time";
 import { monthMatrix } from "@/components/date-picker";
@@ -17,6 +18,7 @@ type DayCount = { date: string; reservations: number; covers: number };
 
 export function MonthView({ date, onPick }: { date: string; onPick: (d: string) => void }) {
   const rid = useSession((s) => s.staff?.restaurantId);
+  const boot = useBootstrap();
   const [cursor, setCursor] = useState(() => new Date(date + "T12:00:00"));
   const year = cursor.getFullYear(), month = cursor.getMonth();
   const from = `${year}-${String(month + 1).padStart(2, "0")}-01`;
@@ -31,7 +33,9 @@ export function MonthView({ date, onPick }: { date: string; onPick: (d: string) 
   const byDate = useMemo(() => new Map((q.data?.days ?? []).map((d) => [d.date, d])), [q.data]);
   const cells = monthMatrix(year, month);
   const today = todayISO();
-  const peak = Math.max(1, ...(q.data?.days ?? []).map((d) => d.covers));
+  // Coperti totali della sala: la barra è il riempimento reale di quel giorno,
+  // non un confronto col giorno più pieno del mese.
+  const roomCapacity = Math.max(1, (boot.data?.tables ?? []).reduce((a, t) => a + t.capacity, 0));
   const monthCovers = (q.data?.days ?? []).reduce((a, d) => a + d.covers, 0);
   const monthRes = (q.data?.days ?? []).reduce((a, d) => a + d.reservations, 0);
 
@@ -57,7 +61,7 @@ export function MonthView({ date, onPick }: { date: string; onPick: (d: string) 
               const c = byDate.get(iso);
               const isToday = iso === today;
               const past = iso < today;
-              const load = c ? c.covers / peak : 0;
+              const load = c ? Math.min(1, c.covers / roomCapacity) : 0;
               return (
                 <button key={iso} onClick={() => onPick(iso)}
                   className={`relative flex min-h-[62px] flex-col items-center justify-start gap-1 rounded-xl border p-1 pt-1.5 active:scale-95
@@ -77,7 +81,7 @@ export function MonthView({ date, onPick }: { date: string; onPick: (d: string) 
               );
             })}
           </div>
-          <p className="mt-2 text-center text-[12px] text-muted">La barra mostra quanto è pieno il giorno rispetto al più carico del mese.</p>
+          <p className="mt-2 text-center text-[12px] text-muted">La barra è quanto è piena la sala quel giorno: {roomCapacity} coperti in tutto.</p>
         </>
       )}
     </div>

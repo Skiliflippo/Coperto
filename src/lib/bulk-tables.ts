@@ -6,7 +6,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 import {
   DEFAULT_STANDARD_SEATS, MAX_ROOM_CM, polygonOf, rectInsideRoom,
-  shapeForCapacity, suggestedSplitParts, tableGeometry,
+  shapeForCapacity, suggestedSplitParts, tableGeometry, tableUnits,
   type Point, type RoomLayout, type TableShape,
 } from "./floor";
 
@@ -62,7 +62,8 @@ export function layoutBulkTables(
     // forma e misura derivano dal tavolo singolo del locale: un tavolo da 8
     // occupa lo spazio di due tavoli da 4, non di un tavolone inventato
     const shape = shapeForCapacity(item.capacity, item.shape, standardSeats);
-    const g = tableGeometry(item.capacity, shape, standardSeats);
+    const units = tableUnits(item.capacity, standardSeats);
+    const g = tableGeometry(item.capacity, shape, standardSeats, units);
     let done = false;
 
     // scorre a destra, poi va a capo, finché trova posto
@@ -81,7 +82,7 @@ export function layoutBulkTables(
           capacity: item.capacity,
           maxCapacity: item.capacity + (item.capacity <= 2 ? 1 : 2),
           shape,
-          splitInto: suggestedSplitParts(item.capacity, shape, standardSeats),
+          splitInto: suggestedSplitParts(item.capacity, shape, standardSeats, units),
           x: Math.round(cursorX + g.width / 2),
           y: Math.round(cursorY + g.height / 2),
           width: g.width, height: g.height, rotation: 0, isNew: true,

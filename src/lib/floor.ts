@@ -85,29 +85,43 @@ export function tableUnits(capacity: number, standardSeats = DEFAULT_STANDARD_SE
 }
 
 /**
- * Forma coerente con i coperti: oltre il tavolo singolo si passa al rettangolare,
- * perché fisicamente sono più tavoli accostati.
+ * Forma coerente con i coperti QUANDO si cambiano i coperti: servono più tavoli
+ * accostati, quindi il tavolo diventa per forza rettangolare.
+ *
+ * Attenzione: il contrario non è automatico. Un rettangolare con pochi coperti
+ * resta rettangolare: in sala esistono due tavoli uniti con soli 4 coperti, dove
+ * i posti di giunzione semplicemente non si usano. Il ritorno al quadrato è una
+ * scelta esplicita dell'operatore dal selettore forma.
  */
 export function shapeForCapacity(
   capacity: number, current: TableShape, standardSeats = DEFAULT_STANDARD_SEATS,
 ): TableShape {
   const units = tableUnits(capacity, standardSeats);
-  if (units > 1) return "rect";                       // più tavoli: per forza lungo
-  return current === "rect" ? "square" : current;     // torna singolo (tondo o quadrato)
+  if (units > 1) return "rect";
+  return current;   // non forza il quadrato: vedi il commento sopra
 }
 
 /**
- * Dimensioni sulla piantina. Larghezza sempre uguale al lato del tavolo singolo;
- * cambia solo la lunghezza, e solo a multipli interi.
+ * Dimensioni sulla piantina.
+ * Un rettangolare ha una sua lunghezza: se la conosce già (era 2 tavoli uniti)
+ * la si passa in `lengthUnits`, altrimenti si deduce dai coperti.
  */
 export function tableGeometry(
   capacity: number, shape: TableShape, standardSeats = DEFAULT_STANDARD_SEATS,
+  lengthUnits?: number,
 ): { width: number; height: number } {
   const side = unitTableSide(standardSeats);
-  if (shape === "round") return { width: side, height: side };
-  if (shape === "square") return { width: side, height: side };
-  const units = tableUnits(capacity, standardSeats);
-  return { width: side * Math.max(2, units), height: side };
+  if (shape === "round" || shape === "square") return { width: side, height: side };
+  const units = Math.max(2, lengthUnits ?? tableUnits(capacity, standardSeats));
+  return { width: side * units, height: side };
+}
+
+/** Da quanto è largo un rettangolare, quanti tavoli singoli occupa. */
+export function tableLengthUnits(
+  width: number, standardSeats = DEFAULT_STANDARD_SEATS,
+): number {
+  const side = unitTableSide(standardSeats);
+  return Math.max(1, Math.round(width / side));
 }
 
 // ── TAVOLI STACCABILI ────────────────────────────────────────────────────────
@@ -119,9 +133,10 @@ export function tableGeometry(
  */
 export function suggestedSplitParts(
   capacity: number, shape: TableShape, standardSeats = DEFAULT_STANDARD_SEATS,
+  lengthUnits?: number,
 ): number {
-  if (shape === "round") return 0;
-  const units = tableUnits(capacity, standardSeats);
+  if (shape !== "rect") return 0;
+  const units = lengthUnits ?? tableUnits(capacity, standardSeats);
   return units > 1 ? Math.min(6, units) : 0;
 }
 
@@ -273,24 +288,67 @@ function roundSeats(t: SeatTable, n: number, gap: number, ctx?: SeatContext): Po
 
 type Side = "top" | "bottom" | "left" | "right";
 
+// Quanto spazio ha una sedia attorno a sé: più alto = lato più libero.
+// Considera muri obliqui, arredi/tavoli e sedie già assegnate agli altri tavoli.
+function seatClearance(world: Point, ctx?: SeatContext): number {
+  if (!ctx) return 10_000;
+  if (!pointInPolygon(world, ctx.poly)) return -1;
+  let score = Infinity;
+  for (const { a, b } of polygonEdges(ctx.poly)) {
+    score = Math.min(score, distanceToSegment(world, a, b));
+  }
+  for (const box of ctx.obstacles) {
+    const nx = clamp(world.x, box.x, box.x + box.w);
+    const ny = clamp(world.y, box.y, box.y + box.h);
+    score = Math.min(score, Math.hypot(world.x - nx, world.y - ny));
+  }
+  for (const seat of ctx.taken ?? []) {
+    score = Math.min(score, Math.hypot(world.x - seat.x, world.y - seat.y));
+  }
+  return score;
+}
+
 // TAVOLI RETTANGOLARI/QUADRATI: si valuta quanto spazio libero ha ogni lato e i
 // posti si distribuiscono in proporzione, equidistanti dentro il tratto libero.
 function rectSeats(t: SeatTable, n: number, gap: number, ctx?: SeatContext): Point[] {
   const { width: w, height: h } = t;
+  // ordine circolare: in caso di parità distribuisce sui lati, non 2 sopra + 1 sotto
+  const sideOrder: Side[] = ["top", "right", "bottom", "left"];
   const geom: Record<Side, { from: Point; to: Point; len: number }> = {
     top: { from: { x: 0, y: -gap }, to: { x: w, y: -gap }, len: w },
+    right: { from: { x: w + gap, y: 0 }, to: { x: w + gap, y: h }, len: h },
     bottom: { from: { x: 0, y: h + gap }, to: { x: w, y: h + gap }, len: w },
     left: { from: { x: -gap, y: 0 }, to: { x: -gap, y: h }, len: h },
-    right: { from: { x: w + gap, y: 0 }, to: { x: w + gap, y: h }, len: h },
   };
   const lerp = (side: Side, u: number): Point => {
     const g = geom[side];
     return { x: g.from.x + (g.to.x - g.from.x) * u, y: g.from.y + (g.to.y - g.from.y) * u };
   };
-  // i lati corti servono solo su tavoli davvero lunghi (capotavola)
-  const sides: Side[] = w >= 170 || h >= 170
-    ? ["top", "bottom", "left", "right"]
-    : (w >= h ? ["top", "bottom"] : ["left", "right"]);
+  // Un quadrato usa sempre tutti e quattro i lati. Su un rettangolare lungo i
+  // lati corti diventano capotavola; su uno molto stretto si privilegiano i lunghi.
+  const sides: Side[] = t.shape === "square" || w >= 170 || h >= 170
+    ? sideOrder
+    : (w >= h ? ["top", "bottom"] : ["right", "left"]);
+
+  // Caso frequente: tavolo quadrato da 1-4 persone. Prima un posto per lato,
+  // esattamente al centro; si scelgono i lati più liberi dopo la rotazione.
+  if (t.shape === "square" && n <= 4) {
+    const centers = sideOrder.map((side, order) => {
+      const local = lerp(side, 0.5);
+      const world = seatToWorld(t, local);
+      return {
+        side, local, order,
+        score: seatClearance(world, ctx),
+        usable: ctx ? seatUsable(world, ctx) : true,
+      };
+    });
+    const available = centers
+      .filter((c) => c.usable)
+      .sort((a, b) => b.score - a.score || a.order - b.order);
+    if (available.length >= n) return available.slice(0, n).map((c) => c.local);
+    // Se un angolo è molto stretto e non ci sono abbastanza lati liberi, il
+    // calcolo generale distribuisce i posti nei tratti disponibili.
+  }
 
   // tratto libero più ampio per ciascun lato
   const usable = new Map<Side, { u0: number; u1: number; len: number }>();
@@ -438,7 +496,11 @@ export function normalizeLayout(raw: unknown): RoomLayout {
         id: String(e.id ?? uid()),
         kind: e.kind === "decor" ? "decor" : "wall",
         x: Math.round(e.x ?? 0), y: Math.round(e.y ?? 0),
-        w: Math.max(10, Math.round(e.w ?? 100)), h: Math.max(10, Math.round(e.h ?? 20)),
+        // I muri possono essere sottili fino a 4 cm; gli arredi mantengono un
+        // minimo più alto per restare selezionabili. Prima tutto veniva rialzato
+        // a 10 cm al caricamento, annullando il resize salvato dall'editor.
+        w: Math.max(e.kind === "wall" ? 4 : 10, Math.round(e.w ?? 100)),
+        h: Math.max(e.kind === "wall" ? 4 : 10, Math.round(e.h ?? 20)),
         rotation: Math.round(e.rotation ?? 0),
         label: String(e.label ?? ""),
         icon: (e.icon as DecorIcon) ?? (e.kind === "decor" ? iconFromLabel(String(e.label ?? "")) : undefined),

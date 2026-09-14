@@ -19,10 +19,13 @@ export function PartyGrid({ value, onChange }: { value: number; onChange: (v: nu
   if (big) {
     return (
       <div className="flex items-center justify-center gap-3">
-        <button onClick={() => onChange(Math.max(9, value - 1))} className="grid h-16 w-16 place-items-center rounded-2xl bg-raised text-3xl font-bold active:scale-95">−</button>
+        <button onClick={() => onChange(Math.max(1, value - 1))}
+          aria-label="Una persona in meno"
+          className="grid h-16 w-16 place-items-center rounded-2xl bg-raised text-3xl font-bold active:scale-95">−</button>
         <div className="w-24 text-center font-display text-5xl font-bold tabular-nums">{value}</div>
-        <button onClick={() => onChange(Math.min(80, value + 10))} className="grid h-16 w-16 place-items-center rounded-2xl bg-raised text-lg font-bold active:scale-95">+10</button>
-        <button onClick={() => onChange(Math.min(80, value + 1))} className="grid h-16 w-16 place-items-center rounded-2xl bg-raised text-3xl font-bold active:scale-95">+</button>
+        <button onClick={() => onChange(Math.min(80, value + 1))}
+          aria-label="Una persona in più"
+          className="grid h-16 w-16 place-items-center rounded-2xl bg-raised text-3xl font-bold active:scale-95">+</button>
       </div>
     );
   }
