@@ -4,7 +4,10 @@ import * as s from "@/db/schema";
 import { and, eq, inArray } from "drizzle-orm";
 import { broadcast } from "@/server/hub";
 import { assertStaffInRestaurant, logActivity } from "@/server/data";
-import { normalizeLayout, polygonOf, rectInsideRoom, tableGeometry, type TableShape } from "@/lib/floor";
+import {
+  aabb, boxInsideRoom, boxesOverlap, elementBox, normalizeLayout, polygonOf,
+  tableGeometry, type Box, type TableShape,
+} from "@/lib/floor";
 export const dynamic = "force-dynamic";
 
 type TableDraft = {
@@ -52,10 +55,34 @@ export async function PUT(req: Request, { params }: { params: Promise<{ id: stri
     .where(eq(s.restaurantSettings.restaurantId, rid));
   const std = settings?.standardTableSeats ?? 4;
   const clean = normalizeLayout(layout ?? room.layout);
-  // I muri e gli arredi devono stare dentro il perimetro: il client lo impedisce già,
-  // ma un payload manipolato non deve poter salvare una sala incoerente.
+  // Nessun oggetto fuori dai muri o sovrapposto a un altro. Durante la modifica
+  // il client lascia libertà di manovra, ma una piantina incoerente non si salva:
+  // qui si rifiuta invece di scartare pezzi in silenzio.
   const poly = polygonOf(clean);
-  clean.elements = clean.elements.filter((e) => e.rotation !== 0 || rectInsideRoom(e.x, e.y, e.w, e.h, poly));
+  const placed: { label: string; box: Box }[] = [
+    ...clean.elements.map((e) => ({ label: e.label || (e.kind === "wall" ? "muro" : "arredo"), box: elementBox(e) })),
+    ...tables.map((t) => ({
+      label: `tavolo ${String(t.label).trim()}`,
+      box: aabb(Math.round(t.x), Math.round(t.y), Math.round(t.width), Math.round(t.height), Math.round(t.rotation)),
+    })),
+  ];
+  const outside = placed.filter((p) => !boxInsideRoom(p.box, poly));
+  if (outside.length) {
+    return NextResponse.json(
+      { error: `Fuori dalla sala: ${outside.map((p) => p.label).join(", ")}` },
+      { status: 409 },
+    );
+  }
+  for (let i = 0; i < placed.length; i++) {
+    for (let j = i + 1; j < placed.length; j++) {
+      if (boxesOverlap(placed[i].box, placed[j].box)) {
+        return NextResponse.json(
+          { error: `Sovrapposti: ${placed[i].label} e ${placed[j].label}` },
+          { status: 409 },
+        );
+      }
+    }
+  }
 
   const rows = tables.map((t) => {
     const cap = Math.max(1, Math.min(20, Math.round(t.capacity)));

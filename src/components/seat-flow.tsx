@@ -111,7 +111,7 @@ export function SuggestedTables({ party, onPick, excludeIds = [], compact, forRe
         .filter((t) => !excludeIds.includes(t.id))
         .filter((t) => t.splitInto >= 2 && statuses.get(t.id)?.state === "libero")
         // il gruppo deve stare comodo in una sola parte: le altre restano libere
-        .filter((t) => stdSeats >= party)
+        .filter(() => stdSeats >= party)
         .map((t) => ({ table: t, partSeats: stdSeats, freed: t.splitInto - 1 }))
         .sort((a, b) => b.freed - a.freed || a.table.capacity - b.table.capacity)
         .slice(0, 2)

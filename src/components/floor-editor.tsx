@@ -52,11 +52,11 @@ export function FloorEditor({ boot, roomId, onClose }: { boot: Bootstrap; roomId
   const [newShape, setNewShape] = useState<TableShape>("square");
   const [decorPick, setDecorPick] = useState(false);
   const [newDecor, setNewDecor] = useState<DecorIcon>("bancone");
-  const [sel, setSel] = useState<Sel>(null);
+  const [selIds, setSelIds] = useState<string[]>([]);
   const [saving, setSaving] = useState(false);
   const [rubber, setRubber] = useState<FloorElement | null>(null);
   const [rubberBad, setRubberBad] = useState(false);
-  const [badId, setBadId] = useState<string | null>(null);      // oggetto in posizione non valida
+  const [badIds, setBadIds] = useState<string[]>([]);   // evidenza durante il trascinamento
   const [confirmClose, setConfirmClose] = useState(false);
 
   const { ref, vp, fit, zoomBy, toWorld, isPanning, bind, revealRect, cancelPan } =
@@ -98,12 +98,52 @@ export function FloorEditor({ boot, roomId, onClose }: { boot: Bootstrap; roomId
     return f.slice(1);
   });
 
+  // La selezione è una lista: con mouse e tastiera si possono prendere più oggetti
+  // insieme (shift/ctrl). Il pannello proprietà appare solo con un oggetto solo.
+  const sel: Sel = selIds.length === 1
+    ? { kind: draft.tables.some((t) => t.id === selIds[0]) ? "table" : "element", id: selIds[0] }
+    : null;
   const selTable = sel?.kind === "table" ? draft.tables.find((t) => t.id === sel.id) ?? null : null;
   const selEl = sel?.kind === "element" ? draft.layout.elements.find((e) => e.id === sel.id) ?? null : null;
 
+  // OGGETTI FUORI POSTO: fuori dai muri o sovrapposti a un altro.
+  // Durante la modifica si possono creare liberamente — spostare un tavolo fuori
+  // per fare spazio è normale — ma restano segnati in rosso e bloccano il salvataggio.
+  const invalidIds = useMemo(() => {
+    const room = polygonOf(draft.layout);
+    const items = [
+      ...draft.tables.map((t) => ({ id: t.id, box: aabb(t.x, t.y, t.width, t.height, t.rotation) })),
+      ...draft.layout.elements.map((e) => ({ id: e.id, box: elementBox(e) })),
+    ];
+    const bad = new Set<string>();
+    for (const it of items) if (!boxInsideRoom(it.box, room)) bad.add(it.id);
+    for (let i = 0; i < items.length; i++) {
+      for (let j = i + 1; j < items.length; j++) {
+        if (boxesOverlap(items[i].box, items[j].box)) { bad.add(items[i].id); bad.add(items[j].id); }
+      }
+    }
+    return bad;
+  }, [draft]);
+
+  const isBad = (id: string) => badIds.includes(id) || invalidIds.has(id);
+
+  // Sposta un gruppo di oggetti dello stesso scostamento, agganciando alla griglia
+  // in valore ASSOLUTO: frecce e trascinamento finiscono sempre negli stessi punti.
+  const moveSelection = useCallback((ids: string[], dx: number, dy: number) => {
+    if (!ids.length) return;
+    commit((d) => ({
+      ...d,
+      tables: d.tables.map((t) => (ids.includes(t.id) ? { ...t, x: snapG(t.x + dx), y: snapG(t.y + dy) } : t)),
+      layout: {
+        ...d.layout,
+        elements: d.layout.elements.map((e) => (ids.includes(e.id) ? { ...e, x: snapG(e.x + dx), y: snapG(e.y + dy) } : e)),
+      },
+    }));
+  }, [commit]);
+
   // Cambiando strumento si chiude sempre la selezione precedente: niente pannelli
   // che restano appesi mentre stai facendo altro.
-  const pickTool = (t: Tool) => { setTool(t); setSel(null); setDecorPick(false); };
+  const pickTool = (t: Tool) => { setTool(t); setSelIds([]); setDecorPick(false); };
 
   // Quando selezioni qualcosa, la vista si sposta per non lasciarlo sotto il pannello.
   useEffect(() => {
@@ -114,76 +154,96 @@ export function FloorEditor({ boot, roomId, onClose }: { boot: Bootstrap; roomId
     if (box) revealRect(box, PANEL_H);
   }, [sel, selTable?.id, selEl?.id]);   // eslint-disable-line react-hooks/exhaustive-deps
 
-  // ── Trascinamento: DOM diretto, commit al rilascio, vincolo dentro la sala ──
-  const dragNode = (e: React.PointerEvent, id: string, kind: "table" | "element") => {
+  // ── Trascinamento ────────────────────────────────────────────────────────
+  // Scrive direttamente sul DOM (nessun re-render per frame) e committa al
+  // rilascio. Il movimento è LIBERO: si può portare un oggetto fuori dalla sala
+  // o sopra un altro per fare spazio. Resta segnato in rosso e blocca il salvataggio.
+  const dragNode = (e: React.PointerEvent, id: string) => {
     if (tool !== "select") return;
     e.stopPropagation();
     cancelPan();
-    setSel({ kind, id });
-    const node = nodeRefs.current.get(id);
-    if (!node) return;
-    const start = toWorld(e.clientX, e.clientY);
-    const item = kind === "table"
-      ? draft.tables.find((t) => t.id === id)!
-      : draft.layout.elements.find((x) => x.id === id)!;
-    const base = { x: item.x, y: item.y };
-    const size = kind === "table"
-      ? { w: (item as TableNodeData).width, h: (item as TableNodeData).height }
-      : { w: (item as FloorElement).w, h: (item as FloorElement).h };
-    const others = allBoxes(id);
-    let last = base;
-    let ok = true;
-    let moved = false;
 
-    // topLeft del riquadro a partire dalla posizione "logica" dell'oggetto
-    const boxAt = (x: number, y: number): Box => kind === "table"
-      ? aabb(x, y, size.w, size.h, item.rotation)
-      : (item.rotation ? aabb(x + size.w / 2, y + size.h / 2, size.w, size.h, item.rotation) : { x, y, w: size.w, h: size.h });
+    // shift/ctrl: aggiunge o toglie dalla selezione, senza trascinare
+    if (e.shiftKey || e.ctrlKey || e.metaKey) {
+      setSelIds((cur) => (cur.includes(id) ? cur.filter((x) => x !== id) : [...cur, id]));
+      return;
+    }
+    // trascinando un oggetto già selezionato si muove tutto il gruppo
+    const group = selIds.includes(id) && selIds.length > 1 ? selIds : [id];
+    setSelIds(group);
+
+    const start = toWorld(e.clientX, e.clientY);
+    const items = group
+      .map((gid) => {
+        const table = draft.tables.find((t) => t.id === gid);
+        if (table) return { id: gid, kind: "table" as const, x: table.x, y: table.y, w: table.width, h: table.height, rotation: table.rotation };
+        const el = draft.layout.elements.find((x) => x.id === gid);
+        return el ? { id: gid, kind: "element" as const, x: el.x, y: el.y, w: el.w, h: el.h, rotation: el.rotation } : null;
+      })
+      .filter((x): x is NonNullable<typeof x> => !!x);
+    if (!items.length) return;
+
+    // ingombri di tutto ciò che NON si sta muovendo: bastano per magnete ed evidenza
+    const others: Box[] = [
+      ...draft.tables.filter((t) => !group.includes(t.id)).map(tableBox),
+      ...draft.layout.elements.filter((el) => !group.includes(el.id)).map(elementBox),
+    ];
+    const single = items.length === 1 ? items[0] : null;
+    const boxAt = (it: typeof items[number], x: number, y: number): Box => it.kind === "table"
+      ? aabb(x, y, it.w, it.h, it.rotation)
+      : (it.rotation ? aabb(x + it.w / 2, y + it.h / 2, it.w, it.h, it.rotation) : { x, y, w: it.w, h: it.h });
+
+    let delta = { x: 0, y: 0 };
+    let moved = false;
 
     const move = (ev: PointerEvent) => {
       const p = toWorld(ev.clientX, ev.clientY);
-      let nx = snapG(base.x + (p.x - start.x));
-      let ny = snapG(base.y + (p.y - start.y));
-      // MAGNETE: se un lato passa vicino a un muro o a un altro oggetto, ci si appoggia a filo
-      const raw = boxAt(nx, ny);
-      const snapped = snapBoxToWalls(raw, poly, others);
-      nx += snapped.x - raw.x;
-      ny += snapped.y - raw.y;
-      const box = boxAt(nx, ny);
-      ok = boxFits(box, id);
-      setBadId(ok ? null : id);
+      let dx = p.x - start.x;
+      let dy = p.y - start.y;
+
+      if (single) {
+        // Aggancio alla griglia in valore assoluto, come fanno le frecce.
+        let nx = snapG(single.x + dx);
+        let ny = snapG(single.y + dy);
+        // MAGNETE: se un lato passa vicino a un muro o a un altro oggetto, ci si appoggia a filo
+        const raw = boxAt(single, nx, ny);
+        const snapped = snapBoxToWalls(raw, poly, others);
+        nx += snapped.x - raw.x;
+        ny += snapped.y - raw.y;
+        delta = { x: nx - single.x, y: ny - single.y };
+      } else {
+        // Gruppo: stesso scostamento per tutti, agganciato alla griglia.
+        delta = { x: snapG(dx), y: snapG(dy) };
+      }
+
       moved = true;
-      last = { x: nx, y: ny };
-      const dx = kind === "table" ? nx - size.w / 2 : nx;
-      const dy = kind === "table" ? ny - size.h / 2 : ny;
-      node.style.transform = `translate3d(${dx}px, ${dy}px, 0) rotate(${item.rotation}deg)`;
+      const bad: string[] = [];
+      for (const it of items) {
+        const nx = it.x + delta.x, ny = it.y + delta.y;
+        const node = nodeRefs.current.get(it.id);
+        if (node) {
+          const left = it.kind === "table" ? nx - it.w / 2 : nx;
+          const top = it.kind === "table" ? ny - it.h / 2 : ny;
+          node.style.transform = `translate3d(${left}px, ${top}px, 0) rotate(${it.rotation}deg)`;
+        }
+        // evidenza dal vivo: rosso appena finisce fuori posto
+        const box = boxAt(it, nx, ny);
+        if (!boxInsideRoom(box, poly) || others.some((o) => boxesOverlap(box, o))) bad.push(it.id);
+      }
+      setBadIds(bad);
     };
+
     const up = () => {
       window.removeEventListener("pointermove", move);
       window.removeEventListener("pointerup", up);
-      setBadId(null);
-      if (!moved) return;
-      if (!ok) {
-        // rimette l'oggetto dov'era e spiega perché
-        const dx = kind === "table" ? base.x - size.w / 2 : base.x;
-        const dy = kind === "table" ? base.y - size.h / 2 : base.y;
-        node.style.transform = `translate3d(${dx}px, ${dy}px, 0) rotate(${item.rotation}deg)`;
-        toast({
-          title: "Qui non ci sta",
-          msg: boxInsideRoom(boxAt(last.x, last.y), poly) ? "C'è già un altro oggetto in quel punto." : "Deve restare dentro i muri della sala.",
-          tone: "warn",
-        });
-        return;
-      }
-      commit((d) => kind === "table"
-        ? { ...d, tables: d.tables.map((t) => (t.id === id ? { ...t, x: last.x, y: last.y } : t)) }
-        : { ...d, layout: { ...d.layout, elements: d.layout.elements.map((x) => (x.id === id ? { ...x, x: last.x, y: last.y } : x)) } });
+      setBadIds([]);
+      if (!moved || (delta.x === 0 && delta.y === 0)) return;
+      moveSelection(group, delta.x, delta.y);
     };
     window.addEventListener("pointermove", move);
     window.addEventListener("pointerup", up);
   };
 
-  // ── Ridimensionamento muri/arredi dai bordi ────────────────────────────────
   // Ridimensionamento di muri e arredi, corretto anche quando l'oggetto è ruotato:
   // lo spostamento del dito viene proiettato negli assi DELL'OGGETTO, e il lato
   // opposto resta fermo (il centro si sposta di conseguenza). Senza la proiezione,
@@ -220,9 +280,8 @@ export function FloorEditor({ boot, roomId, onClose }: { boot: Bootstrap; roomId
       const x = center.x - w / 2, y = center.y - h / 2;
 
       const cand: Box = el.rotation ? aabb(center.x, center.y, w, h, el.rotation) : { x, y, w, h };
-      const fits = boxFits(cand, el.id);
-      setBadId(fits ? null : el.id);
-      if (!fits) return;                       // non si ridimensiona dentro un muro o sopra un altro oggetto
+      // Ridimensionamento libero: se sborda resta segnato in rosso e blocca il salvataggio.
+      setBadIds(boxFits(cand, el.id) ? [] : [el.id]);
       box = { x, y, w, h };
       node.style.transform = `translate3d(${x}px, ${y}px, 0) rotate(${el.rotation}deg)`;
       node.style.width = `${w}px`;
@@ -231,7 +290,7 @@ export function FloorEditor({ boot, roomId, onClose }: { boot: Bootstrap; roomId
     const up = () => {
       window.removeEventListener("pointermove", move);
       window.removeEventListener("pointerup", up);
-      setBadId(null);
+      setBadIds([]);
       commit((d) => ({ ...d, layout: { ...d.layout, elements: d.layout.elements.map((x) => (x.id === el.id ? { ...x, ...box } : x)) } }));
     };
     window.addEventListener("pointermove", move);
@@ -272,13 +331,8 @@ export function FloorEditor({ boot, roomId, onClose }: { boot: Bootstrap; roomId
           ? d.tables.map((t) => ({ ...t, x: t.x + shiftX, y: t.y + shiftY }))
           : d.tables;
 
-        // il muro si ferma al contatto: se lascerebbe fuori un tavolo o un arredo, non si muove
-        const boxes = [
-          ...tables.map((t) => aabb(t.x, t.y, t.width, t.height, t.rotation)),
-          ...elements.map(elementBox),
-        ];
-        if (boxes.some((b) => !boxInsideRoom(b, moved))) return d;
-
+        // Il muro può passare sopra i tavoli: quelli che restano fuori si
+        // segnano in rosso e vanno sistemati prima di salvare.
         return { ...d, tables, layout: { ...d.layout, w, h, polygon: moved, elements } };
       });
     };
@@ -321,22 +375,13 @@ export function FloorEditor({ boot, roomId, onClose }: { boot: Bootstrap; roomId
 
   // ── Sfondo: pan · piazza tavolo · disegna muro/arredo ──────────────────────
   const onCanvasDown = (e: React.PointerEvent) => {
-    if (tool === "select" || tool === "perimetro") { setSel(null); bind.onPointerDown(e); return; }
+    if (tool === "select" || tool === "perimetro") { setSelIds([]); bind.onPointerDown(e); return; }
 
     if (tool === "table") {
       const p = toWorld(e.clientX, e.clientY);
       const cap = newShape === "round" ? 2 : newShape === "square" ? 4 : 6;
       const g = tableGeometry(cap, newShape, std);
       const safe = clampPointToRoom(p, poly);
-      const box: Box = { x: safe.x - g.width / 2, y: safe.y - g.height / 2, w: g.width, h: g.height };
-      if (!boxInsideRoom(box, poly)) {
-        toast({ title: "Qui non ci sta", msg: "Il tavolo deve stare dentro i muri della sala.", tone: "warn" });
-        return;
-      }
-      if (allBoxes().some((o) => boxesOverlap(box, o))) {
-        toast({ title: "C'è già un oggetto qui", msg: "Scegli un punto libero della sala.", tone: "warn" });
-        return;
-      }
       const id = uid();
       commit((d) => ({
         ...d,
@@ -346,7 +391,7 @@ export function FloorEditor({ boot, roomId, onClose }: { boot: Bootstrap; roomId
           splitInto: suggestedSplitParts(cap, newShape, std),
         }],
       }));
-      setSel({ kind: "table", id });
+      setSelIds([id]);
       setTool("select");
       return;
     }
@@ -375,15 +420,7 @@ export function FloorEditor({ boot, roomId, onClose }: { boot: Bootstrap; roomId
       setTool("select");
       const b = box;
       if (!b || b.w * b.h < 900) return;
-      const bx: Box = { x: b.x, y: b.y, w: b.w, h: b.h };
-      if (!boxInsideRoom(bx, poly)) {
-        toast({ title: kind === "wall" ? "Il muro esce dalla sala" : "L'arredo esce dalla sala", msg: "Va disegnato dentro il perimetro: riprova.", tone: "warn" });
-        return;
-      }
-      if (allBoxes().some((o) => boxesOverlap(bx, o))) {
-        toast({ title: "C'è già qualcosa qui", msg: "Non si possono sovrapporre due oggetti.", tone: "warn" });
-        return;
-      }
+
       const preset = DECOR_PRESETS.find((d) => d.icon === newDecor);
       const el: FloorElement = {
         ...b, id: uid(),
@@ -391,7 +428,7 @@ export function FloorEditor({ boot, roomId, onClose }: { boot: Bootstrap; roomId
         icon: kind === "decor" ? newDecor : undefined,
       };
       commit((d) => ({ ...d, layout: { ...d.layout, elements: [...d.layout.elements, el] } }));
-      setSel({ kind: "element", id: el.id });
+      setSelIds([el.id]);
     };
     window.addEventListener("pointermove", move);
     window.addEventListener("pointerup", up);
@@ -402,18 +439,16 @@ export function FloorEditor({ boot, roomId, onClose }: { boot: Bootstrap; roomId
   const patchEl = (id: string, p: Partial<FloorElement>) =>
     commit((d) => ({ ...d, layout: { ...d.layout, elements: d.layout.elements.map((e) => (e.id === id ? { ...e, ...p } : e)) } }));
   const removeSel = useCallback(() => {
-    if (!sel) return;
-    if (sel.kind === "table") {
-      commit((d) => ({
-        ...d,
-        tables: d.tables.filter((t) => t.id !== sel.id),
-        deleted: boot.tables.some((t) => t.id === sel.id) ? [...d.deleted, sel.id] : d.deleted,
-      }));
-    } else {
-      commit((d) => ({ ...d, layout: { ...d.layout, elements: d.layout.elements.filter((e) => e.id !== sel.id) } }));
-    }
-    setSel(null);
-  }, [sel, commit, boot.tables]);
+    if (!selIds.length) return;
+    commit((d) => ({
+      ...d,
+      tables: d.tables.filter((t) => !selIds.includes(t.id)),
+      // i tavoli già salvati vanno segnalati al server come rimossi
+      deleted: [...d.deleted, ...selIds.filter((id) => boot.tables.some((t) => t.id === id))],
+      layout: { ...d.layout, elements: d.layout.elements.filter((e) => !selIds.includes(e.id)) },
+    }));
+    setSelIds([]);
+  }, [selIds, commit, boot.tables]);
 
   const setCapacity = (t: TableNodeData, cap: number) => {
     const c = clamp(cap, 1, 20);
@@ -432,26 +467,58 @@ export function FloorEditor({ boot, roomId, onClose }: { boot: Bootstrap; roomId
   useEffect(() => {
     const h = (e: KeyboardEvent) => {
       if ((e.target as HTMLElement)?.tagName === "INPUT") return;
-      if (e.key === "Escape") { sel ? setSel(null) : tool !== "select" ? setTool("select") : onClose(); }
-      if ((e.key === "Delete" || e.key === "Backspace") && sel) { e.preventDefault(); removeSel(); }
+      if (e.key === "Escape") { selIds.length ? setSelIds([]) : tool !== "select" ? setTool("select") : onClose(); }
+      if ((e.key === "Delete" || e.key === "Backspace") && selIds.length) { e.preventDefault(); removeSel(); }
+      // ctrl/cmd+A: prende tutto, comodo per spostare in blocco
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "a") {
+        e.preventDefault();
+        setSelIds([...draft.tables.map((t) => t.id), ...draft.layout.elements.map((x) => x.id)]);
+      }
       if (e.key.toLowerCase() === "v") pickTool("select");
       if (e.key.toLowerCase() === "t") pickTool("table");
       if (e.key.toLowerCase() === "m") pickTool("wall");
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "z") { e.preventDefault(); e.shiftKey ? redo() : undo(); }
+      // Frecce: stesso passo e stesso aggancio del trascinamento, sull'intera selezione.
       const nudge = e.shiftKey ? STEP * 4 : STEP;
-      const dir: Record<string, [number, number]> = { ArrowLeft: [-nudge, 0], ArrowRight: [nudge, 0], ArrowUp: [0, -nudge], ArrowDown: [0, nudge] };
-      if (sel && dir[e.key]) {
+      const dir: Record<string, [number, number]> = {
+        ArrowLeft: [-nudge, 0], ArrowRight: [nudge, 0], ArrowUp: [0, -nudge], ArrowDown: [0, nudge],
+      };
+      if (selIds.length && dir[e.key]) {
         e.preventDefault();
         const [dx, dy] = dir[e.key];
-        if (sel.kind === "table") { const t = draft.tables.find((x) => x.id === sel.id)!; patchTable(t.id, { x: t.x + dx, y: t.y + dy }); }
-        else { const el = draft.layout.elements.find((x) => x.id === sel.id)!; patchEl(el.id, { x: el.x + dx, y: el.y + dy }); }
+        moveSelection(selIds, dx, dy);
       }
     };
     window.addEventListener("keydown", h);
     return () => window.removeEventListener("keydown", h);
   });
 
+  // Porta in vista il primo oggetto fuori posto e lo seleziona.
+  const focusInvalid = () => {
+    const id = [...invalidIds][0];
+    if (!id) return;
+    setSelIds([id]);
+    const t = draft.tables.find((x) => x.id === id);
+    const el = draft.layout.elements.find((x) => x.id === id);
+    const box = t
+      ? { x: t.x - t.width / 2, y: t.y - t.height / 2, w: t.width, h: t.height }
+      : el ? { x: el.x, y: el.y, w: el.w, h: el.h } : null;
+    if (box) revealRect(box, PANEL_H);
+  };
+
   const save = async () => {
+    // Si può disporre la sala come si vuole mentre si lavora, ma non si salva
+    // una piantina con tavoli fuori dai muri o sovrapposti.
+    if (invalidIds.size) {
+      toast({
+        title: `${invalidIds.size} ${invalidIds.size === 1 ? "oggetto è fuori posto" : "oggetti sono fuori posto"}`,
+        msg: "Sono segnati in rosso: rimettili dentro la sala, senza sovrapposizioni.",
+        tone: "err",
+        actionLabel: "Mostra",
+        onAction: focusInvalid,
+      });
+      return;
+    }
     setSaving(true);
     try {
       await api(`/api/rooms/${room.id}/floor`, {
@@ -478,12 +545,18 @@ export function FloorEditor({ boot, roomId, onClose }: { boot: Bootstrap; roomId
           <p className="truncate text-[15px] font-extrabold leading-tight">Piantina · {room.name}</p>
           <p className="text-[12px] font-semibold text-muted">
             {draft.tables.length} tavoli · {draft.tables.reduce((a, t) => a + t.capacity, 0)} coperti
-            {dirty && <span className="ml-1.5 text-brand">· non salvata</span>}
+            {invalidIds.size > 0
+              ? <button onClick={focusInvalid} className="ml-1.5 font-bold text-over underline decoration-dotted">
+                  · {invalidIds.size} fuori posto
+                </button>
+              : dirty && <span className="ml-1.5 text-brand">· non salvata</span>}
           </p>
         </div>
         <button onClick={undo} disabled={!past.length} className="grid h-12 w-12 place-items-center rounded-2xl bg-raised disabled:opacity-30 active:scale-95" aria-label="Annulla"><Undo2 className="h-5 w-5" /></button>
         <button onClick={redo} disabled={!future.length} className="hidden h-12 w-12 place-items-center rounded-2xl bg-raised disabled:opacity-30 active:scale-95 sm:grid" aria-label="Ripeti"><Redo2 className="h-5 w-5" /></button>
-        <button onClick={save} disabled={saving} className="flex h-12 items-center gap-2 rounded-2xl bg-brand px-5 font-bold text-on-brand shadow active:scale-95 disabled:opacity-50">
+        <button onClick={save} disabled={saving}
+          title={invalidIds.size ? "Ci sono oggetti fuori posto" : undefined}
+          className={`flex h-12 items-center gap-2 rounded-2xl px-5 font-bold shadow active:scale-95 disabled:opacity-50 ${invalidIds.size ? "bg-raised text-muted" : "bg-brand text-on-brand"}`}>
           <Check className="h-5 w-5" /> Salva
         </button>
       </div>
@@ -496,9 +569,9 @@ export function FloorEditor({ boot, roomId, onClose }: { boot: Bootstrap; roomId
           <RoomShell w={draft.layout.w} h={draft.layout.h} polygon={draft.layout.polygon} />
 
           {draft.layout.elements.map((el) => (
-            <ElementNode key={el.id} el={el} editable invalid={badId === el.id} selected={sel?.kind === "element" && sel.id === el.id}
+            <ElementNode key={el.id} el={el} editable invalid={isBad(el.id)} selected={selIds.includes(el.id)}
               ref={(n) => { if (n) nodeRefs.current.set(el.id, n); }}
-              onPointerDown={(e) => dragNode(e, el.id, "element")}>
+              onPointerDown={(e) => dragNode(e, el.id)}>
               {sel?.kind === "element" && sel.id === el.id && tool === "select" && (
                 ([[-1, -1], [1, -1], [-1, 1], [1, 1], [0, -1], [0, 1], [-1, 0], [1, 0]] as const).map(([hx, hy]) => (
                   <span key={`${hx}${hy}`} onPointerDown={(e) => resizeEl(e, el, hx, hy)}
@@ -518,11 +591,11 @@ export function FloorEditor({ boot, roomId, onClose }: { boot: Bootstrap; roomId
           {draft.tables.map((t) => (
             <TableNode key={t.id} t={t} tone="border-busy/50"
               sub={`${t.capacity}${(t.maxCapacity ?? t.capacity) > t.capacity ? `-${t.maxCapacity}` : ""}p`}
-              invalid={badId === t.id}
+              invalid={isBad(t.id)}
               seats={seatsByTable.get(t.id)}
-              selected={sel?.kind === "table" && sel.id === t.id}
+              selected={selIds.includes(t.id)}
               ref={(n) => { if (n) nodeRefs.current.set(t.id, n); }}
-              onPointerDown={(e) => dragNode(e, t.id, "table")} />
+              onPointerDown={(e) => dragNode(e, t.id)} />
           ))}
 
           {/* maniglie del perimetro: qui nascono i muri obliqui */}
@@ -566,7 +639,7 @@ export function FloorEditor({ boot, roomId, onClose }: { boot: Bootstrap; roomId
         <div className="absolute inset-x-0 z-20 flex justify-center px-3" style={{ bottom: `calc(env(safe-area-inset-bottom) + ${sel ? PANEL_H + 84 : 84}px)` }}>
           <div className="grid max-w-md grid-cols-4 gap-1.5 rounded-3xl border border-line bg-surface p-2 shadow-2xl">
             {DECOR_PRESETS.map((d) => (
-              <button key={d.icon} onClick={() => { setNewDecor(d.icon); setTool("decor"); setDecorPick(false); setSel(null); }}
+              <button key={d.icon} onClick={() => { setNewDecor(d.icon); setTool("decor"); setDecorPick(false); setSelIds([]); }}
                 className={`min-h-[52px] rounded-2xl px-2 text-[12px] font-bold active:scale-95 ${newDecor === d.icon && tool === "decor" ? "bg-brand text-on-brand" : "bg-raised"}`}>
                 {d.label}
               </button>
@@ -590,14 +663,30 @@ export function FloorEditor({ boot, roomId, onClose }: { boot: Bootstrap; roomId
             ))}
           </div>
           <ToolBtn active={tool === "wall"} onClick={() => pickTool("wall")} icon={<Wallpaper className="h-5 w-5" />} label="Muro" />
-          <ToolBtn active={tool === "decor"} onClick={() => { setSel(null); setDecorPick((v) => !v); }} icon={<Blocks className="h-5 w-5" />} label="Arredo" />
+          <ToolBtn active={tool === "decor"} onClick={() => { setSelIds([]); setDecorPick((v) => !v); }} icon={<Blocks className="h-5 w-5" />} label="Arredo" />
           <ToolBtn active={tool === "perimetro"} onClick={() => pickTool("perimetro")} icon={<Spline className="h-5 w-5" />} label="Sala" />
         </div>
       </div>
 
       {/* PANNELLO PROPRIETÀ · compatto, largo quanto serve, non un rettangolone */}
+      {selIds.length > 1 && (
+        <ContextPanel onClose={() => setSelIds([])}
+          title={`${selIds.length} oggetti selezionati`}
+          subtitle="Trascinali insieme o spostali con le frecce">
+          <div className="flex flex-wrap items-center gap-1.5">
+            <button onClick={() => moveSelection(selIds, -STEP, 0)} className="h-12 rounded-xl bg-raised px-4 text-sm font-bold active:scale-95">←</button>
+            <button onClick={() => moveSelection(selIds, STEP, 0)} className="h-12 rounded-xl bg-raised px-4 text-sm font-bold active:scale-95">→</button>
+            <button onClick={() => moveSelection(selIds, 0, -STEP)} className="h-12 rounded-xl bg-raised px-4 text-sm font-bold active:scale-95">↑</button>
+            <button onClick={() => moveSelection(selIds, 0, STEP)} className="h-12 rounded-xl bg-raised px-4 text-sm font-bold active:scale-95">↓</button>
+            <button onClick={removeSel} className="ml-auto grid h-12 w-12 place-items-center rounded-xl bg-over/15 text-over active:scale-95" aria-label="Elimina selezione">
+              <Trash2 className="h-5 w-5" />
+            </button>
+          </div>
+        </ContextPanel>
+      )}
+
       {selTable && (
-        <ContextPanel onClose={() => setSel(null)} title={`Tavolo ${selTable.label}`}
+        <ContextPanel onClose={() => setSelIds([])} title={`Tavolo ${selTable.label}`}
           subtitle={`${selTable.capacity}${(selTable.maxCapacity ?? selTable.capacity) > selTable.capacity ? `-${selTable.maxCapacity}` : ""} coperti · ${Math.round(selTable.width)}×${Math.round(selTable.height)} cm`}>
           <div className="flex flex-wrap items-center gap-1.5">
             <input value={selTable.label} onChange={(e) => patchTable(selTable.id, { label: e.target.value.slice(0, 6) })}
@@ -657,7 +746,7 @@ export function FloorEditor({ boot, roomId, onClose }: { boot: Bootstrap; roomId
       )}
 
       {selEl && (
-        <ContextPanel onClose={() => setSel(null)} title={selEl.kind === "wall" ? "Muro" : "Arredo"}
+        <ContextPanel onClose={() => setSelIds([])} title={selEl.kind === "wall" ? "Muro" : "Arredo"}
           subtitle={`${Math.round(selEl.w)}×${Math.round(selEl.h)} cm${selEl.rotation ? ` · ruotato ${selEl.rotation}°` : ""} · trascina i pallini per ridimensionare`}>
           <div className="flex flex-wrap items-center gap-1.5">
             {selEl.kind === "decor" && (
