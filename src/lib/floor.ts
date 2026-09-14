@@ -59,30 +59,56 @@ export function iconFromLabel(label: string, fallback: DecorIcon = "generico"): 
 }
 
 // Dimensioni realistiche: ~60-65 cm di fronte per coperto.
-// Misure da arredamento vero: 70 cm di fronte a coperto, profondità 90 cm.
-// Un rettangolare da 8 (280×90) è esattamente due quattro-posti accostati:
-// è così che nascono le tavolate in sala, ed è la base dei tavoli staccabili.
+// ── MISURE DEI TAVOLI ────────────────────────────────────────────────────────
+// In sala i tavoli sono tutti uguali: quello che cambia è quanti se ne accostano.
+// Un "otto" non è un tavolo più grande, sono due "quattro" attaccati. Quindi la
+// misura di base dipende SOLO dai posti di un tavolo singolo del locale, e i
+// tavoli grandi sono multipli esatti di quella misura.
+export const DEFAULT_STANDARD_SEATS = 4;
 export const STANDARD_SEAT_WIDTH = 70;   // spazio per coperto sul lato lungo
-export const STANDARD_DEPTH = 90;        // profondità di un tavolo rettangolare
 
-export function tableGeometry(capacity: number, shape: TableShape): { width: number; height: number } {
-  const c = Math.max(1, Math.min(24, capacity));
-  if (shape === "round") {
-    const d = c <= 2 ? 75 : c <= 4 ? 100 : c <= 6 ? 120 : c <= 8 ? 140 : 160;
-    return { width: d, height: d };
-  }
-  if (shape === "square") {
-    const s = c <= 2 ? 70 : c <= 4 ? 85 : 105;
-    return { width: s, height: s };
-  }
-  const perSide = Math.max(2, Math.ceil(c / 2));
-  return { width: clamp(perSide * STANDARD_SEAT_WIDTH, 120, 700), height: STANDARD_DEPTH };
+/**
+ * Lato di un tavolo singolo, in centimetri reali. Su un quadrato le persone
+ * stanno sui quattro lati, quindi il lato cresce poco con i coperti:
+ * 2 posti ≈ 76 cm, 4 ≈ 92, 6 ≈ 108 — le misure che si trovano davvero in sala.
+ */
+export function unitTableSide(standardSeats = DEFAULT_STANDARD_SEATS): number {
+  return clamp(60 + Math.max(1, standardSeats) * 8, 70, 170);
+}
+
+/** Quanti tavoli singoli servono per ospitare questi coperti. */
+export function tableUnits(capacity: number, standardSeats = DEFAULT_STANDARD_SEATS): number {
+  const std = Math.max(1, standardSeats);
+  return Math.max(1, Math.ceil(Math.max(1, capacity) / std));
+}
+
+/**
+ * Forma coerente con i coperti: oltre il tavolo singolo si passa al rettangolare,
+ * perché fisicamente sono più tavoli accostati.
+ */
+export function shapeForCapacity(
+  capacity: number, current: TableShape, standardSeats = DEFAULT_STANDARD_SEATS,
+): TableShape {
+  const units = tableUnits(capacity, standardSeats);
+  if (units > 1) return "rect";                       // più tavoli: per forza lungo
+  return current === "rect" ? "square" : current;     // torna singolo (tondo o quadrato)
+}
+
+/**
+ * Dimensioni sulla piantina. Larghezza sempre uguale al lato del tavolo singolo;
+ * cambia solo la lunghezza, e solo a multipli interi.
+ */
+export function tableGeometry(
+  capacity: number, shape: TableShape, standardSeats = DEFAULT_STANDARD_SEATS,
+): { width: number; height: number } {
+  const side = unitTableSide(standardSeats);
+  if (shape === "round") return { width: side, height: side };
+  if (shape === "square") return { width: side, height: side };
+  const units = tableUnits(capacity, standardSeats);
+  return { width: side * Math.max(2, units), height: side };
 }
 
 // ── TAVOLI STACCABILI ────────────────────────────────────────────────────────
-// Quante parti standard compongono un tavolo grande. Si propone solo quando il
-// conto torna: un 8 rettangolare sono due 4, un 12 sono tre 4.
-export const DEFAULT_STANDARD_SEATS = 4;
 
 /**
  * In quante parti si stacca un tavolo. Il conto parte dalla capienza del tavolo
@@ -92,9 +118,9 @@ export const DEFAULT_STANDARD_SEATS = 4;
 export function suggestedSplitParts(
   capacity: number, shape: TableShape, standardSeats = DEFAULT_STANDARD_SEATS,
 ): number {
-  const std = Math.max(2, standardSeats);
-  if (shape === "round" || capacity <= std) return 0;
-  return Math.min(6, Math.ceil(capacity / std));
+  if (shape === "round") return 0;
+  const units = tableUnits(capacity, standardSeats);
+  return units > 1 ? Math.min(6, units) : 0;
 }
 
 export type SplitPart = {
@@ -140,10 +166,6 @@ export function splitTableParts(
   });
 }
 
-export function suggestShape(capacity: number, current: TableShape): TableShape {
-  if (capacity >= 7 && current !== "rect") return "rect";
-  return current;
-}
 
 // Distanza di un punto da un segmento: base per capire se una sedia finisce
 // dentro un muro, anche obliquo.

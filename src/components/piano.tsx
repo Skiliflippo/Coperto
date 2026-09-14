@@ -277,8 +277,10 @@ export function Piano({ date, day, onTap }: { date: string; day: DayData; onTap:
           return (
             <section key={room.id} className="mt-5">
               <p className="mb-1.5 text-[13px] font-bold uppercase tracking-wide text-muted">{room.name}</p>
-              <div className="flex overflow-hidden rounded-2xl border border-line bg-surface">
-                <div className="w-[46px] shrink-0 border-r border-line">
+              {/* Scorre in orizzontale quando i tavoli sono tanti; la colonna
+                  degli orari resta agganciata a sinistra per non perdere il riferimento. */}
+              <div className="no-scrollbar flex overflow-x-auto rounded-2xl border border-line bg-surface">
+                <div className="sticky left-0 z-30 w-[46px] shrink-0 border-r border-line bg-surface">
                   <div className="h-[44px] border-b border-line" />
                   {Array.from({ length: slotCount }).map((_, i) => {
                     const m = startMin + i * settings.slotMinutes;
@@ -290,7 +292,15 @@ export function Piano({ date, day, onTap }: { date: string; day: DayData; onTap:
                     );
                   })}
                 </div>
-                <div className="grid flex-1" style={{ gridTemplateColumns: `repeat(${cols.length}, minmax(44px,1fr))` }}>
+                {/* Larghezza proporzionale ai posti: un tavolo da 8 occupa più spazio
+                    di un due-posti, come sulla mappa. Compressa, non lineare: con la
+                    proporzione pura un tavolone mangerebbe mezzo schermo. */}
+                <div className="grid flex-1"
+                  style={{
+                    gridTemplateColumns: cols
+                      .map((c) => `minmax(${Math.round(Math.min(96, 46 + Math.max(0, c.cap - 2) * 7))}px, 1fr)`)
+                      .join(" "),
+                  }}>
                   {cols.map((c) => {
                     const key = colKey(c.kind, c.id)!;
                     return (

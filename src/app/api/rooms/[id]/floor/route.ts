@@ -48,6 +48,9 @@ export async function PUT(req: Request, { params }: { params: Promise<{ id: stri
   const dup = [...labels.entries()].find(([, n]) => n > 1);
   if (dup) return NextResponse.json({ error: `Il numero "${dup[0]}" è usato da due tavoli` }, { status: 409 });
 
+  const [settings] = await db.select().from(s.restaurantSettings)
+    .where(eq(s.restaurantSettings.restaurantId, rid));
+  const std = settings?.standardTableSeats ?? 4;
   const clean = normalizeLayout(layout ?? room.layout);
   // I muri e gli arredi devono stare dentro il perimetro: il client lo impedisce già,
   // ma un payload manipolato non deve poter salvare una sala incoerente.
@@ -57,7 +60,7 @@ export async function PUT(req: Request, { params }: { params: Promise<{ id: stri
   const rows = tables.map((t) => {
     const cap = Math.max(1, Math.min(20, Math.round(t.capacity)));
     const shape: TableShape = t.shape === "round" || t.shape === "square" ? t.shape : "rect";
-    const fallback = tableGeometry(cap, shape);
+    const fallback = tableGeometry(cap, shape, std);
     return {
       draftId: t.id,
       isNew: !!t.isNew || !all.some((x) => x.id === t.id),

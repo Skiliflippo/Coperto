@@ -63,21 +63,32 @@ export function autoAssign(params: {
   for (const r of todo) {
     const dur = durationFor(r.partySize, pName, settings);
     const s = toMin(r.time), e = s + dur + buf;
-    type Cand = { kind: "table" | "combo"; t?: TableT; c?: Combo; waste: number };
+    type Cand = { kind: "table" | "combo"; t?: TableT; c?: Combo; waste: number; pref: boolean };
+    // Il cliente ha chiesto una sala al telefono: viene prima di ogni altra cosa.
+    const wanted = r.preferredRoomId ?? null;
     const cands: Cand[] = [];
     for (const t of tables) {
       const seats = Math.max(t.capacity, t.maxCapacity || 0);
       if (seats < r.partySize || t.state === "fuori_servizio") continue;
-      if (freeAt(t.id, s, e)) cands.push({ kind: "table", t, waste: seats - r.partySize });
+      if (freeAt(t.id, s, e)) {
+        cands.push({ kind: "table", t, waste: seats - r.partySize, pref: !!wanted && t.roomId === wanted });
+      }
     }
     for (const c of combos) {
       if (c.capacity < r.partySize) continue;
-      if (c.tableIds.every((id) => freeAt(id, s, e))) cands.push({ kind: "combo", c, waste: c.capacity - r.partySize });
+      if (c.tableIds.every((id) => freeAt(id, s, e))) {
+        cands.push({ kind: "combo", c, waste: c.capacity - r.partySize, pref: !!wanted && c.roomId === wanted });
+      }
     }
     // Nessun tavolo singolo basta: si prova ad accostarne due o più, come in sala.
     if (!cands.length && settings.allowTableJoin) {
       const libere = tables.filter((t) => t.state !== "fuori_servizio" && freeAt(t.id, s, e));
-      const [best] = findJoinProposals({ party: r.partySize, tables: libere, maxGapCm: gap, limit: 1 });
+      const inSala = wanted ? libere.filter((t) => t.roomId === wanted) : [];
+      const [best] =
+        (inSala.length
+          ? findJoinProposals({ party: r.partySize, tables: inSala, maxGapCm: gap, limit: 1 })
+          : []
+        ).concat(findJoinProposals({ party: r.partySize, tables: libere, maxGapCm: gap, limit: 1 }));
       if (best) {
         proposals.push({
           reservationId: r.id, name: r.guestName, partySize: r.partySize, time: r.time,
@@ -95,14 +106,14 @@ export function autoAssign(params: {
       });
       continue;
     }
-    cands.sort((a, b) => a.waste - b.waste);
+    cands.sort((a, b) => Number(b.pref) - Number(a.pref) || a.waste - b.waste);
     const pick = cands[0];
     const label = pick.kind === "table" ? `Tavolo ${pick.t!.label}` : `Accorpati ${pick.c!.label}`;
     const note = /tranquill/i.test(r.notes) ? " · nota: chiesto tavolo tranquillo" : "";
     proposals.push({
       reservationId: r.id, name: r.guestName, partySize: r.partySize, time: r.time,
       target: pick.kind === "table" ? { kind: "table", table: pick.t! } : { kind: "combo", combo: pick.c! },
-      reason: `${label}${pick.waste > 0 ? ` · avanzano ${pick.waste} posti` : " · nessun posto sprecato"}${note}`,
+      reason: `${label}${pick.pref ? " · nella sala richiesta" : wanted ? " · sala richiesta non libera" : ""}${pick.waste > 0 ? ` · avanzano ${pick.waste} posti` : ""}${note}`,
     });
     // simula l'occupazione per i successivi
     if (pick.kind === "table") pushBusy(pick.t!.id, s, e, r.guestName);

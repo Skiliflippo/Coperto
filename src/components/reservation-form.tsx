@@ -25,8 +25,8 @@ export function ReservationFormSheet({ open, onClose, defaultDate, edit }: {
   const me = useSession((s) => s.staff?.name) ?? "";
   const qc = useQueryClient();
   const startDate = edit?.date ?? defaultDate;
-  const [day, setDay] = useState<"stasera" | "domani" | "altro">(
-    startDate && startDate !== todayISO() ? (startDate === todayISO(1) ? "domani" : "altro") : "stasera");
+  const [day, setDay] = useState<"oggi" | "domani" | "altro">(
+    startDate && startDate !== todayISO() ? (startDate === todayISO(1) ? "domani" : "altro") : "oggi");
   const [altDate, setAltDate] = useState(startDate ?? todayISO(1));
   const [time, setTime] = useState(edit?.time ?? "");
   const [party, setParty] = useState(edit?.partySize ?? 2);
@@ -37,7 +37,7 @@ export function ReservationFormSheet({ open, onClose, defaultDate, edit }: {
   const [dups, setDups] = useState<{ id: string; guestName: string; time: string; partySize: number }[] | null>(null);
   const [busy, setBusy] = useState(false);
 
-  const date = day === "stasera" ? todayISO() : day === "domani" ? todayISO(1) : altDate;
+  const date = day === "oggi" ? todayISO() : day === "domani" ? todayISO(1) : altDate;
   const dayQ = useQuery({
     queryKey: ["day", rid, date],
     queryFn: () => api<DayData>(`/api/day?rid=${rid}&date=${date}`),
@@ -126,11 +126,11 @@ export function ReservationFormSheet({ open, onClose, defaultDate, edit }: {
         {/* 1 · GIORNO */}
         <Field label="Giorno">
           <div className="grid grid-cols-3 gap-2">
-            {(["stasera", "domani", "altro"] as const).map((d) => (
+            {(["oggi", "domani", "altro"] as const).map((d) => (
               <button key={d} onClick={() => setDay(d)}
                 className={`flex min-h-[56px] items-center justify-center gap-1.5 rounded-2xl text-[15px] font-bold active:scale-[0.97] ${day === d ? "bg-brand text-on-brand" : "bg-raised"}`}>
                 {d === "altro" && <Calendar className="h-4 w-4" />}
-                {d === "stasera" ? "Stasera" : d === "domani" ? "Domani" : "Altro"}
+                {d === "oggi" ? "Oggi" : d === "domani" ? "Domani" : "Altro"}
               </button>
             ))}
           </div>
@@ -170,8 +170,7 @@ export function ReservationFormSheet({ open, onClose, defaultDate, edit }: {
           <Input value={name} onChange={(e) => setName(e.target.value)} placeholder="es. Rossi" autoComplete="off" />
         </Field>
 
-        {/* 5 · TELEFONO + NOTE opzionali */}
-        {/* SALA (opzionale): alcuni clienti la chiedono al telefono */}
+        {/* 5 · SALA (opzionale): alcuni clienti la chiedono già al telefono */}
         {(boot.data?.rooms.length ?? 0) > 1 && (
           <Field label="Sala richiesta (opzionale)">
             <div className="no-scrollbar -mx-4 flex min-w-0 gap-2 overflow-x-auto px-4">

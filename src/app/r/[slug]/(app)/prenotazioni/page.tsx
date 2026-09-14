@@ -103,7 +103,7 @@ function Inner() {
       ) : view === "elenco" ? (
         <div className="mt-4 space-y-2 no-print">
           {!grouped.active.length && !grouped.closed.length && (
-            <Empty icon={<ListTodo className="h-6 w-6" />} title={`Nessuna prenotazione per ${relDay(date).toLowerCase()}`} hint="Tocca + per rispondere alla prossima telefonata." />
+            <Empty icon={<ListTodo className="h-6 w-6" />} title={`Nessuna prenotazione per ${relDay(date).toLowerCase()}`} hint="Aggiungile con il +" />
           )}
           {[...grouped.active, ...grouped.closed].map((r) => {
             const st = statusOf(r, isToday, lateThr);

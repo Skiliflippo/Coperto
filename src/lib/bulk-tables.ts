@@ -5,7 +5,8 @@
 // veloce che disegnarne trenta a mano.
 // ─────────────────────────────────────────────────────────────────────────────
 import {
-  MAX_ROOM_CM, polygonOf, rectInsideRoom, tableGeometry,
+  DEFAULT_STANDARD_SEATS, MAX_ROOM_CM, polygonOf, rectInsideRoom,
+  shapeForCapacity, suggestedSplitParts, tableGeometry,
   type Point, type RoomLayout, type TableShape,
 } from "./floor";
 
@@ -13,7 +14,8 @@ export type BulkRow = { capacity: number; count: number; shape: TableShape };
 
 export type BulkTable = {
   id: string; label: string; capacity: number; maxCapacity: number; shape: TableShape;
-  x: number; y: number; width: number; height: number; rotation: number; isNew: true;
+  x: number; y: number; width: number; height: number; rotation: number;
+  splitInto: number; isNew: true;
 };
 
 /** Righe iniziali: le taglie che esistono in quasi ogni sala. */
@@ -28,7 +30,10 @@ export const defaultBulkRows = (): BulkRow[] => [
  * piccoli. Restituisce anche quelli che non ci stanno, così l'interfaccia può
  * dirlo invece di piazzarli fuori dai muri.
  */
-export function layoutBulkTables(rows: BulkRow[], layout: RoomLayout, startNumber = 1) {
+export function layoutBulkTables(
+  rows: BulkRow[], layout: RoomLayout, startNumber = 1,
+  standardSeats = DEFAULT_STANDARD_SEATS,
+) {
   const poly = polygonOf(layout);
   const margin = 60;                 // respiro dai muri, per far passare le persone
   const gapX = 70, gapY = 90;        // corridoi fra i tavoli
@@ -54,7 +59,10 @@ export function layoutBulkTables(rows: BulkRow[], layout: RoomLayout, startNumbe
     });
 
   for (const item of wanted) {
-    const g = tableGeometry(item.capacity, item.shape);
+    // forma e misura derivano dal tavolo singolo del locale: un tavolo da 8
+    // occupa lo spazio di due tavoli da 4, non di un tavolone inventato
+    const shape = shapeForCapacity(item.capacity, item.shape, standardSeats);
+    const g = tableGeometry(item.capacity, shape, standardSeats);
     let done = false;
 
     // scorre a destra, poi va a capo, finché trova posto
@@ -72,7 +80,8 @@ export function layoutBulkTables(rows: BulkRow[], layout: RoomLayout, startNumbe
           label: String(label++),
           capacity: item.capacity,
           maxCapacity: item.capacity + (item.capacity <= 2 ? 1 : 2),
-          shape: item.shape,
+          shape,
+          splitInto: suggestedSplitParts(item.capacity, shape, standardSeats),
           x: Math.round(cursorX + g.width / 2),
           y: Math.round(cursorY + g.height / 2),
           width: g.width, height: g.height, rotation: 0, isNew: true,
@@ -104,6 +113,7 @@ export function fitRoomToTables(
   makePolygon: (w: number, h: number) => Point[],
   startW: number,
   startH: number,
+  standardSeats = DEFAULT_STANDARD_SEATS,
   maxCm = MAX_ROOM_CM,
 ): { w: number; h: number; tables: BulkTable[]; skipped: number; fits: boolean; grew: boolean } {
   const build = (w: number, h: number): RoomLayout => ({
@@ -113,7 +123,7 @@ export function fitRoomToTables(
   });
   const round50 = (v: number) => Math.min(maxCm, Math.max(400, Math.round(v / 50) * 50));
 
-  let best = layoutBulkTables(rows, build(startW, startH));
+  let best = layoutBulkTables(rows, build(startW, startH), 1, standardSeats);
   if (best.skipped === 0) {
     return { w: startW, h: startH, tables: best.tables, skipped: 0, fits: true, grew: false };
   }
@@ -126,7 +136,7 @@ export function fitRoomToTables(
     const nextH = round50(startH * factor);
     if (nextW === w && nextH === h) break;          // entrambi al limite: inutile insistere
     w = nextW; h = nextH;
-    const attempt = layoutBulkTables(rows, build(w, h));
+    const attempt = layoutBulkTables(rows, build(w, h), 1, standardSeats);
     if (attempt.tables.length > best.tables.length) best = attempt;
     if (attempt.skipped === 0) {
       return { w, h, tables: attempt.tables, skipped: 0, fits: true, grew: true };

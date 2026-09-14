@@ -86,6 +86,9 @@ export function RoomWizard({ boot, mode, onDone, onCancel }: {
   const qc = useQueryClient();
   const [step, setStep] = useState<0 | 1 | 2 | 3>(0);
   const [rows, setRows] = useState<BulkRow[]>(() => defaultBulkRows());
+  // Posti di un tavolo singolo: decide misure e forme di TUTTA la piantina,
+  // quindi va chiesto prima di creare i tavoli, non scoperto dopo fra le impostazioni.
+  const [stdSeats, setStdSeats] = useState<number>(boot.settings.standardTableSeats ?? 4);
   // Proposta di allargamento: compare quando i tavoli dichiarati non ci stanno.
   const [overflow, setOverflow] = useState<{
     placed: number; requested: number;
@@ -135,6 +138,18 @@ export function RoomWizard({ boot, mode, onDone, onCancel }: {
     if (!roomId) return;
     setBusy(true);
     try {
+      // La misura del tavolo singolo vale per tutto il locale: si salva subito,
+      // così editor e mappa disegnano coerentemente da qui in avanti.
+      if (stdSeats !== (boot.settings.standardTableSeats ?? 4)) {
+        await api("/api/settings", {
+          method: "PUT",
+          body: {
+            restaurantId: boot.restaurant.id, staffName: staff?.name,
+            settings: { ...boot.settings, standardTableSeats: stdSeats },
+            periods: boot.periods.map(({ id, startTime, endTime }) => ({ id, startTime, endTime })),
+          },
+        });
+      }
       await api(`/api/rooms/${roomId}/floor`, {
         method: "PUT",
         body: { staffId: staff?.id, staffName: staff?.name, layout: roomLayout, tables, deleted: [] },
@@ -157,13 +172,13 @@ export function RoomWizard({ boot, mode, onDone, onCancel }: {
     const requested = totalTables(rows);
     if (requested === 0) { setStep(3); return; }
 
-    const attempt = layoutBulkTables(rows, layout());
+    const attempt = layoutBulkTables(rows, layout(), 1, stdSeats);
     if (attempt.skipped === 0) {
       await persistBulk(layout(), attempt.tables);
       return;
     }
     // misure spesso approssimative: si propone l'allargamento invece di scartare
-    const grown = fitRoomToTables(rows, makePolygon, w, h);
+    const grown = fitRoomToTables(rows, makePolygon, w, h, stdSeats);
     setOverflow({ placed: attempt.tables.length, requested, grown, asIs: attempt.tables });
   };
 
@@ -282,10 +297,32 @@ export function RoomWizard({ boot, mode, onDone, onCancel }: {
             <h1 className="font-display text-[28px] font-bold leading-tight">Quanti tavoli hai?</h1>
             <p className="mt-1.5 text-muted">
               Dichiara le taglie: li dispongo io nella sala, poi li sposti come vuoi.
-              Puoi anche saltare e disegnarli a mano.
             </p>
 
-            <div className="mt-6 space-y-2">
+            {/* Misura del tavolo singolo: da qui dipendono tutte le altre.
+                Un tavolo con più posti sarà disegnato come più tavoli accostati. */}
+            <div className="mt-5 rounded-2xl border-2 border-brand/40 bg-brand/5 p-3">
+              <div className="flex items-center gap-2">
+                <span className="min-w-0 flex-1 text-[15px] font-semibold">
+                  Un tavolo normale da voi ha
+                  <span className="block text-[12px] font-medium text-muted">
+                    Quasi ovunque i tavoli sono tutti uguali: i più grandi sono più tavoli accostati.
+                  </span>
+                </span>
+                <div className="flex shrink-0 items-center gap-1 rounded-xl bg-surface px-1.5 py-1">
+                  <button onClick={() => setStdSeats(Math.max(2, stdSeats - 1))}
+                    className="grid h-10 w-10 place-items-center rounded-lg bg-raised text-lg font-bold active:scale-95">−</button>
+                  <span className="w-12 text-center leading-none">
+                    <span className="block font-display text-lg font-extrabold tabular-nums">{stdSeats}</span>
+                    <span className="block text-[10px] font-bold text-muted">posti</span>
+                  </span>
+                  <button onClick={() => setStdSeats(Math.min(8, stdSeats + 1))}
+                    className="grid h-10 w-10 place-items-center rounded-lg bg-raised text-lg font-bold active:scale-95">+</button>
+                </div>
+              </div>
+            </div>
+
+            <div className="mt-3 space-y-2">
               {rows.map((row, i) => (
                 <div key={i} className="flex items-center gap-2 rounded-2xl border border-line bg-surface p-2.5">
                   <div className="flex shrink-0 items-center gap-1 rounded-xl bg-raised px-1.5 py-1">
@@ -335,6 +372,11 @@ export function RoomWizard({ boot, mode, onDone, onCancel }: {
 
             <p className="mt-4 rounded-2xl bg-raised px-4 py-3 text-center font-bold">
               {totalTables(rows)} tavoli · {totalCovers(rows)} coperti
+              {rows.some((r) => r.capacity > stdSeats) && (
+                <span className="mt-0.5 block text-[12px] font-semibold text-muted">
+                  Quelli oltre {stdSeats} posti sono disegnati come più tavoli accostati
+                </span>
+              )}
             </p>
 
             <div className="mt-5 grid gap-2">

@@ -94,7 +94,7 @@ export async function getRestaurantBundle(restaurantId?: string | null, slug?: s
       // vecchie coordinate in percentuale (0-100) → centimetri
       for (const t of tables.filter((x) => x.roomId === room.id && x.x <= 100 && x.y <= 100)) {
         const shape = (t.capacity <= 2 ? "round" : t.capacity <= 4 ? "square" : "rect") as TableShape;
-        const g = tableGeometry(t.capacity, shape);
+        const g = tableGeometry(t.capacity, shape, st?.standardTableSeats ?? 4);
         const patch = {
           x: Math.round((t.x / 100) * layout.w) || 150,
           y: Math.round((t.y / 100) * layout.h) || 150,

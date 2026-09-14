@@ -81,17 +81,17 @@ async function main() {
   }).returning();
 
   // TAVOLI: 6×2 · 8×4 · 3×6 · 1×10 = 72 coperti · geometria reale sulla piantina
-  // Misure da arredamento vero (70 cm a coperto, profondità 90).
-  // Un rettangolare da 6 sono tre tavoli da 2 accostati: staccabile.
+  // Tavoli tutti uguali: il singolo è un quadrato da STD posti, i più grandi
+  // sono multipli esatti accostati (come in sala).
+  const STD = 4;
+  const SIDE = 60 + STD * 8;   // lato del tavolo singolo (stessa formula di lib/floor)
   const geo = (cap: number) => {
-    const shape = cap <= 2 ? "round" : cap <= 4 ? "square" : "rect";
-    if (shape === "round") return { w: cap <= 2 ? 75 : 100, h: cap <= 2 ? 75 : 100, shape };
-    if (shape === "square") return { w: 85, h: 85, shape };
-    const perSide = Math.max(2, Math.ceil(cap / 2));
-    return { w: Math.min(700, perSide * 70), h: 90, shape };
+    const units = Math.max(1, Math.ceil(cap / STD));
+    if (units > 1) return { w: SIDE * units, h: SIDE, shape: "rect" };
+    return { w: SIDE, h: SIDE, shape: cap <= 2 ? "round" : "square" };
   };
   // in quante parti si stacca un tavolone (0 = pezzo unico)
-  const splitOf = (cap: number) => (cap >= 6 && cap % 2 === 0 ? 2 : 0);
+  const splitOf = (cap: number) => (cap > STD ? Math.ceil(cap / STD) : 0);
 
   type T = { label: string; cap: number; room: string; x: number; y: number; rot?: number };
   const layout: T[] = [

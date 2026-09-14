@@ -21,7 +21,7 @@ import {
   suggestedSplitParts,
   polygonBounds,
   elementBox, iconFromLabel, normalizeLayout, polygonOf, rectPolygon,
-  snapBoxToWalls, snapTo, suggestShape, tableGeometry, uid,
+  shapeForCapacity, snapBoxToWalls, snapTo, tableGeometry, tableUnits, uid,
   type Box, type DecorIcon, type FloorElement, type Point, type RoomLayout, type TableShape,
 } from "@/lib/floor";
 import { ElementNode, GridBackdrop, RoomShell, TableNode, type TableNodeData } from "@/components/floor-shapes";
@@ -326,7 +326,7 @@ export function FloorEditor({ boot, roomId, onClose }: { boot: Bootstrap; roomId
     if (tool === "table") {
       const p = toWorld(e.clientX, e.clientY);
       const cap = newShape === "round" ? 2 : newShape === "square" ? 4 : 6;
-      const g = tableGeometry(cap, newShape);
+      const g = tableGeometry(cap, newShape, std);
       const safe = clampPointToRoom(p, poly);
       const box: Box = { x: safe.x - g.width / 2, y: safe.y - g.height / 2, w: g.width, h: g.height };
       if (!boxInsideRoom(box, poly)) {
@@ -417,9 +417,14 @@ export function FloorEditor({ boot, roomId, onClose }: { boot: Bootstrap; roomId
 
   const setCapacity = (t: TableNodeData, cap: number) => {
     const c = clamp(cap, 1, 20);
-    const shape = suggestShape(c, t.shape);
+    // Oltre i posti del tavolo singolo il tavolo diventa per forza rettangolare:
+    // sono più tavoli accostati, e la piantina lo deve mostrare.
+    const shape = shapeForCapacity(c, t.shape, std);
     const parts = suggestedSplitParts(c, shape, std);
-    patchTable(t.id, { capacity: c, maxCapacity: Math.max(c, t.maxCapacity ?? c), shape, splitInto: parts, ...tableGeometry(c, shape) });
+    patchTable(t.id, {
+      capacity: c, maxCapacity: Math.max(c, t.maxCapacity ?? c), shape, splitInto: parts,
+      ...tableGeometry(c, shape, std),
+    });
   };
   const setMaxCapacity = (t: TableNodeData, max: number) =>
     patchTable(t.id, { maxCapacity: clamp(max, t.capacity, 24) });
@@ -603,8 +608,11 @@ export function FloorEditor({ boot, roomId, onClose }: { boot: Bootstrap; roomId
               onPlus={() => setMaxCapacity(selTable, (selTable.maxCapacity ?? selTable.capacity) + 1)} />
             <button onClick={() => patchTable(selTable.id, { rotation: selTable.rotation + 90 })}
               className="flex h-12 items-center gap-1 rounded-xl bg-raised px-3 text-sm font-bold active:scale-95"><RotateCw className="h-4 w-4" />90°</button>
-            {([["round", "Tondo"], ["square", "Quadr."], ["rect", "Rett."]] as const).map(([sh, lb]) => (
-              <button key={sh} onClick={() => patchTable(selTable.id, { shape: sh, ...tableGeometry(selTable.capacity, sh) })}
+            {(tableUnits(selTable.capacity, std) > 1
+              ? ([["rect", "Accostati"]] as const)
+              : ([["round", "Tondo"], ["square", "Quadr."]] as const)
+            ).map(([sh, lb]) => (
+              <button key={sh} onClick={() => patchTable(selTable.id, { shape: sh, ...tableGeometry(selTable.capacity, sh, std) })}
                 className={`h-12 rounded-xl px-3 text-sm font-bold active:scale-95 ${selTable.shape === sh ? "bg-brand text-on-brand" : "bg-raised"}`}>{lb}</button>
             ))}
             <button onClick={removeSel} className="grid h-12 w-12 place-items-center rounded-xl bg-over/15 text-over active:scale-95" aria-label="Elimina tavolo"><Trash2 className="h-5 w-5" /></button>
