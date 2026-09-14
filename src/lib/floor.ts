@@ -34,7 +34,7 @@ export const clamp = (v: number, a: number, b: number) => Math.max(a, Math.min(b
 export const uid = () => `el_${Math.random().toString(36).slice(2, 10)}`;
 
 // ── ARREDI: pochi, quelli che esistono in ogni locale ────────────────────────
-export type DecorIcon = "bancone" | "cucina" | "cassa" | "scala" | "bagno" | "porta" | "pilastro" | "generico";
+export type DecorIcon = "bancone" | "cucina" | "cassa" | "scala" | "bagno" | "porta" | "pilastro" | "pianta" | "generico";
 export const DECOR_PRESETS: { icon: DecorIcon; label: string; w: number; h: number }[] = [
   { icon: "bancone",  label: "Bancone",  w: 240, h: 70 },
   { icon: "cucina",   label: "Cucina",   w: 200, h: 180 },
@@ -43,6 +43,7 @@ export const DECOR_PRESETS: { icon: DecorIcon; label: string; w: number; h: numb
   { icon: "bagno",    label: "Bagno",    w: 160, h: 160 },
   { icon: "porta",    label: "Ingresso", w: 110, h: 30 },
   { icon: "pilastro", label: "Pilastro", w: 45,  h: 45 },
+  { icon: "pianta",   label: "Pianta",   w: 55,  h: 55 },
 ];
 
 // Il nome guida la forma: scrivi "Bancone bar" e l'oggetto prende l'aspetto giusto.
@@ -55,6 +56,7 @@ export function iconFromLabel(label: string, fallback: DecorIcon = "generico"): 
   if (/bagn|wc|toilet|servizi/.test(s)) return "bagno";
   if (/ingress|porta|entrat|uscita/.test(s)) return "porta";
   if (/pilastr|colonn/.test(s)) return "pilastro";
+  if (/piant|vaso|verde|ficus|oliv/.test(s)) return "pianta";
   return fallback;
 }
 

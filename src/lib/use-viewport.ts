@@ -61,7 +61,11 @@ export function useViewport(
 
   // RICENTRA: porta al centro il baricentro della sala e riduce lo zoom quanto
   // basta a vedere tutto il perimetro, con un margine di respiro.
+  // hold: mentre si trascina un vertice del perimetro la vista NON si reinquadra,
+  // altrimenti il ricalcolo dei limiti fa scattare l'immagine sotto il dito.
+  const fitHold = useRef(false);
   const fit = useCallback(() => {
+    if (fitHold.current) return;
     const el = ref.current;
     if (!el) return;
     const vw = el.clientWidth, vh = el.clientHeight;
@@ -73,14 +77,18 @@ export function useViewport(
     setVp(clampVp({ zoom, panX: vw / 2 - cx * zoom, panY: vh / 2 - cy * zoom }));
   }, [bx1, by1, bx2, by2, boundsW, boundsH, pad, clampVp]);
 
+  // Re-inquadra solo quando cambia il contenitore (rotazione dello schermo),
+  // non quando cambiano i limiti della sala.
   useEffect(() => {
-    fit();
     const el = ref.current;
     if (!el) return;
-    const ro = new ResizeObserver(fit);
+    const doFit = () => { if (!fitHold.current) fit(); };
+    doFit();
+    const ro = new ResizeObserver(doFit);
     ro.observe(el);
     return () => ro.disconnect();
-  }, [fit]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const zoomAt = useCallback((factor: number, sx: number, sy: number) => {
     apply((v) => {
@@ -208,6 +216,8 @@ export function useViewport(
 
   return {
     ref, vp, setVp: apply, fit, zoomBy, toWorld, isPanning, centerOn, revealRect, cancelPan, stopPan,
+    // sospende/riprende il re-inquadratura (trascinamento vertici del perimetro)
+    holdFit: (hold: boolean) => { fitHold.current = hold; },
     bind: { onPointerDown, onPointerMove, onPointerUp: endPointer, onPointerCancel: endPointer },
   };
 }

@@ -24,7 +24,7 @@ import {
   shapeForCapacity, snapBoxToWalls, snapTo, tableGeometry, tableUnits, uid,
   type Box, type DecorIcon, type FloorElement, type Point, type RoomLayout, type TableShape,
 } from "@/lib/floor";
-import { ElementNode, GridBackdrop, RoomShell, TableNode, type TableNodeData } from "@/components/floor-shapes";
+import { ElementNode, GridBackdrop, PERIMETER_THICKNESS, RoomShell, TableNode, type TableNodeData } from "@/components/floor-shapes";
 import type { Bootstrap, Room, TableT } from "@/lib/types";
 
 const STEP = 25;                       // aggancio: mezza cella = 25 cm
@@ -59,9 +59,10 @@ export function FloorEditor({ boot, roomId, onClose }: { boot: Bootstrap; roomId
   const [badIds, setBadIds] = useState<string[]>([]);   // evidenza durante il trascinamento
   const [confirmClose, setConfirmClose] = useState(false);
 
-  const { ref, vp, fit, zoomBy, toWorld, isPanning, bind, revealRect, cancelPan } =
+  const bounds = useMemo(() => polygonBounds(polygonOf(draft.layout)), [draft.layout]);
+  const { ref, vp, fit, zoomBy, toWorld, isPanning, bind, revealRect, cancelPan, holdFit } =
     useViewport(draft.layout.w, draft.layout.h, {
-      padding: 90, bounds: polygonBounds(polygonOf(draft.layout)),
+      padding: 90, bounds,
     });
   const nodeRefs = useRef(new Map<string, HTMLDivElement>());
   const dirty = past.length > 0;
@@ -266,8 +267,9 @@ export function FloorEditor({ boot, roomId, onClose }: { boot: Bootstrap; roomId
       const dxLocal = dxWorld * cos + dyWorld * sin;
       const dyLocal = -dxWorld * sin + dyWorld * cos;
 
-      const w = hx === 0 ? el.w : Math.max(15, snapG(el.w + hx * dxLocal));
-      const h = hy === 0 ? el.h : Math.max(15, snapG(el.h + hy * dyLocal));
+      const min = el.kind === "wall" ? 6 : 15;   // i muri possono essere sottili
+      const w = hx === 0 ? el.w : Math.max(min, snapG(el.w + hx * dxLocal));
+      const h = hy === 0 ? el.h : Math.max(min, snapG(el.h + hy * dyLocal));
 
       // il bordo opposto resta fisso: il centro si sposta di metà della crescita,
       // riportata in coordinate mondo
@@ -305,10 +307,12 @@ export function FloorEditor({ boot, roomId, onClose }: { boot: Bootstrap; roomId
     e.stopPropagation();
     cancelPan();
     const before = draft;                 // snapshot: un solo passo di undo per trascinamento
+    holdFit(true);                        // niente re-inquadratura finché tengo il vertice
     const origin = toWorld(e.clientX, e.clientY);
     const startPoint = polygonOf(draft.layout)[index];
-    const DAMP = 0.55;                    // il muro segue il dito a metà velocità:
-                                          // si evita di sbracare oltre il punto voluto
+    const DAMP = 0.28;                    // il vertice segue il dito a meno di un terzo
+                                          // di velocità: spostare il perimetro è un'operazione
+                                          // che va fatta con cura, non di getto
     let pending: Point | null = null;
     let frame = 0;
 
@@ -355,6 +359,8 @@ export function FloorEditor({ boot, roomId, onClose }: { boot: Bootstrap; roomId
       window.removeEventListener("pointerup", up);
       if (frame) { cancelAnimationFrame(frame); frame = 0; }
       if (pending) applyPoint(pending);
+      holdFit(false);
+      fit();                               // a fine trascinamento si reinquadra, una volta sola
       setPast((prev) => [...prev.slice(-40), before]);
       setFuture([]);
     };
@@ -404,7 +410,7 @@ export function FloorEditor({ boot, roomId, onClose }: { boot: Bootstrap; roomId
       const p = toWorld(ev.clientX, ev.clientY);
       const x = snapG(Math.min(s0.x, p.x)), y = snapG(Math.min(s0.y, p.y));
       let w = snapG(Math.abs(p.x - s0.x)), h = snapG(Math.abs(p.y - s0.y));
-      if (kind === "wall") { if (h < 60) h = 18; if (w < 60) w = 18; }  // muri sottili e dritti
+      if (kind === "wall") { if (h < 60) h = PERIMETER_THICKNESS; if (w < 60) w = PERIMETER_THICKNESS; }  // muri sottili e dritti
       box = { id: "rubber", kind, x, y, w: Math.max(w, 18), h: Math.max(h, 18), rotation: 0, label: "" };
       setRubber(box);
       setRubberBad(!boxFits({ x: box.x, y: box.y, w: box.w, h: box.h }));
@@ -637,7 +643,7 @@ export function FloorEditor({ boot, roomId, onClose }: { boot: Bootstrap; roomId
       {/* Scelta arredo: compare sopra la toolbar, si chiude da sola dopo la scelta */}
       {decorPick && (
         <div className="absolute inset-x-0 z-20 flex justify-center px-3" style={{ bottom: `calc(env(safe-area-inset-bottom) + ${sel ? PANEL_H + 84 : 84}px)` }}>
-          <div className="grid max-w-md grid-cols-4 gap-1.5 rounded-3xl border border-line bg-surface p-2 shadow-2xl">
+          <div className="grid max-w-md grid-cols-5 gap-1.5 rounded-3xl border border-line bg-surface p-2 shadow-2xl">
             {DECOR_PRESETS.map((d) => (
               <button key={d.icon} onClick={() => { setNewDecor(d.icon); setTool("decor"); setDecorPick(false); setSelIds([]); }}
                 className={`min-h-[52px] rounded-2xl px-2 text-[12px] font-bold active:scale-95 ${newDecor === d.icon && tool === "decor" ? "bg-brand text-on-brand" : "bg-raised"}`}>
@@ -695,8 +701,17 @@ export function FloorEditor({ boot, roomId, onClose }: { boot: Bootstrap; roomId
             <Spin label="Max sedie" value={selTable.maxCapacity ?? selTable.capacity}
               onMinus={() => setMaxCapacity(selTable, (selTable.maxCapacity ?? selTable.capacity) - 1)}
               onPlus={() => setMaxCapacity(selTable, (selTable.maxCapacity ?? selTable.capacity) + 1)} />
-            <button onClick={() => patchTable(selTable.id, { rotation: selTable.rotation + 90 })}
-              className="flex h-12 items-center gap-1 rounded-xl bg-raised px-3 text-sm font-bold active:scale-95"><RotateCw className="h-4 w-4" />90°</button>
+            <div className="flex h-12 items-center overflow-hidden rounded-xl bg-raised">
+              <button onClick={() => patchTable(selTable.id, { rotation: (selTable.rotation + 345) % 360 })}
+                aria-label="Ruota di 15 gradi in senso antiorario"
+                className="grid h-12 w-11 place-items-center active:scale-95"><RotateCw className="h-4 w-4 -scale-x-100" /></button>
+              <span className="px-1 text-[13px] font-bold tabular-nums">{selTable.rotation}°</span>
+              <button onClick={() => patchTable(selTable.id, { rotation: (selTable.rotation + 15) % 360 })}
+                aria-label="Ruota di 15 gradi in senso orario"
+                className="grid h-12 w-11 place-items-center active:scale-95"><RotateCw className="h-4 w-4" /></button>
+              <button onClick={() => patchTable(selTable.id, { rotation: (selTable.rotation + 90) % 360 })}
+                className="h-12 border-l border-line px-3 text-sm font-bold active:scale-95">90°</button>
+            </div>
             {(tableUnits(selTable.capacity, std) > 1
               ? ([["rect", "Accostati"]] as const)
               : ([["round", "Tondo"], ["square", "Quadr."]] as const)

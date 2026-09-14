@@ -103,6 +103,15 @@ function DecorFace({ icon, w, h, label }: { icon: DecorIcon; w: number; h: numbe
         </div>
       )}
       {icon === "bagno" && <div className={`${common} m-[18%] rounded-full border-[5px] border-dashed border-oos/45`} />}
+      {icon === "pianta" && (
+        <div className={`${common} grid place-items-center`}>
+          {/* vaso trapezoidale */}
+          <span className="absolute bottom-[12%] left-1/2 h-[34%] w-[44%] -translate-x-1/2 rounded-b-[18%] rounded-t-[6%] bg-oos/55" />
+          {/* chioma: due cerchi sfalsati, verde tenue */}
+          <span className="absolute left-[14%] top-[10%] h-[48%] w-[48%] rounded-full bg-ok/40" />
+          <span className="absolute right-[12%] top-[22%] h-[40%] w-[40%] rounded-full bg-ok/55" />
+        </div>
+      )}
       {label && icon !== "pilastro" && (
         // Nessuna contro-rotazione: il nome segue l'orientamento dell'arredo,
         // come è scritto davvero su una piantina.
@@ -122,17 +131,29 @@ export const ElementNode = forwardRef<HTMLDivElement, {
   children?: React.ReactNode;
 }>(function ElementNode({ el, selected, editable, invalid, onPointerDown, children }, ref) {
   const isWall = el.kind === "wall";
+  // Mezzo spessore di estensione per lato: due muri che si incontrano si
+  // sovrappongono esattamente all'angolo, senza i bordi stondati che tradivano
+  // la composizione da oggetti separati.
+  const half = isWall ? Math.min(el.w, el.h) / 2 : 0;
   return (
     <div ref={ref} onPointerDown={onPointerDown}
       className={`absolute left-0 top-0 ${editable ? "cursor-move" : ""}`}
       style={{
+        // il riquadro di hit resta quello reale: l'estensione è solo visiva
         width: el.w, height: el.h,
         transform: `translate3d(${el.x}px, ${el.y}px, 0) rotate(${el.rotation}deg)`,
         willChange: "transform",
       }}>
-      <div className={`relative h-full w-full overflow-hidden ${isWall ? "rounded-[4px] bg-oos" : "rounded-md border-[5px] border-oos/45 bg-oos/15"} ${selected && !invalid ? "outline outline-[6px] outline-brand" : ""} ${invalid ? "!border-[6px] !border-dashed !border-over !bg-over/25" : ""}`}>
-        {!isWall && <DecorFace icon={el.icon ?? "generico"} w={el.w} h={el.h} label={el.label} />}
-      </div>
+      {isWall ? (
+        // niente border-radius: un angolo di muro deve essere un angolo.
+        // l'ombra segue l'estensione così la selezione resta leggibile.
+        <div className={`absolute bg-oos ${selected && !invalid ? "outline outline-[6px] outline-brand" : ""} ${invalid ? "!outline !outline-dashed !outline-over" : ""}`}
+          style={{ inset: `-${half}px`, outlineOffset: half > 0 ? `${half}px` : undefined }} />
+      ) : (
+        <div className={`relative h-full w-full overflow-hidden rounded-md border-[5px] border-oos/45 bg-oos/15 ${selected && !invalid ? "outline outline-[6px] outline-brand" : ""} ${invalid ? "!border-[6px] !border-dashed !border-over !bg-over/25" : ""}`}>
+          <DecorFace icon={el.icon ?? "generico"} w={el.w} h={el.h} label={el.label} />
+        </div>
+      )}
       {children}
     </div>
   );
@@ -167,6 +188,10 @@ export function JoinedNode({ box, label, sub, tone, dotClass, onPointerDown, onP
 // Perimetro del locale. Il poligono rappresenta la FACCIA INTERNA dei muri: lo
 // spessore viene disegnato verso l'esterno con una maschera, così un tavolo
 // appoggiato al bordo tocca il muro senza finirci sopra.
+// Spessore del muro perimetrale: condiviso dall'editor per far combaciare
+// i muri interni con il bordo della sala.
+export const PERIMETER_THICKNESS = 12;
+
 export function RoomShell({ w, h, polygon }: { w: number; h: number; polygon?: Point[] }) {
   const poly = polygon && polygon.length >= 3 ? polygon : rectPolygon(w, h);
   const xs = poly.map((p) => p.x), ys = poly.map((p) => p.y);
@@ -179,7 +204,7 @@ export function RoomShell({ w, h, polygon }: { w: number; h: number; polygon?: P
   // browser perderebbe il riferimento url(#id) mentre trascini un angolo e il
   // pavimento sparirebbe a intermittenza.
   const id = useId();
-  const T = 15;   // spessore muro in cm, tutto verso l'esterno
+  const T = PERIMETER_THICKNESS;   // spessore muro in cm, tutto verso l'esterno
   return (
     <svg className="pointer-events-none absolute" width={vw} height={vh}
       style={{ left: minX, top: minY }} viewBox={`${minX} ${minY} ${vw} ${vh}`}>
@@ -191,7 +216,7 @@ export function RoomShell({ w, h, polygon }: { w: number; h: number; polygon?: P
       </defs>
       <polygon points={pts} fill="var(--surface)" />
       <polygon points={pts} fill="none" stroke="var(--oos)" strokeWidth={T * 2}
-        strokeLinejoin="round" mask={`url(#${id})`} opacity={0.85} />
+        strokeLinejoin="miter" strokeLinecap="square" mask={`url(#${id})`} opacity={0.85} />
       <polygon points={pts} fill="none" stroke="var(--line)" strokeWidth={2} strokeLinejoin="round" />
     </svg>
   );
