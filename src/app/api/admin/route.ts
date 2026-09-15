@@ -4,6 +4,7 @@ import * as s from "@/db/schema";
 import { asc, eq } from "drizzle-orm";
 import { createHash, timingSafeEqual } from "node:crypto";
 import { logActivity } from "@/server/data";
+import { generateTenantCode } from "@/lib/tenant-code";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -33,6 +34,16 @@ function checkPassword(password: unknown): { ok: true } | { ok: false; status: n
 const slugify = (name: string) =>
   name.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "")
     .replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 40) || "ristorante";
+
+// Lo slug È il codice locale: non deriva dal nome, è casuale.
+async function uniqueTenantCode(taken: Set<string>): Promise<string> {
+  for (let attempt = 0; attempt < 12; attempt++) {
+    const code = generateTenantCode();
+    if (!taken.has(code)) return code;
+  }
+  // spazio esausto: si allunga il codice invece di fallire
+  return `${generateTenantCode(12)}${Date.now().toString(36).toUpperCase().slice(-2)}`;
+}
 
 async function uniqueSlug(base: string) {
   const taken = new Set((await db.select({ slug: s.restaurants.slug }).from(s.restaurants)).map((r) => r.slug));
@@ -72,7 +83,12 @@ export async function POST(req: Request) {
     if (!owner) return NextResponse.json({ error: "Serve il nome del titolare" }, { status: 400 });
     if (!/^\d{4}$/.test(pin)) return NextResponse.json({ error: "Il PIN deve avere 4 cifre" }, { status: 400 });
 
-    const slug = await uniqueSlug(slugify(body.slug ? String(body.slug) : name));
+    // Lo slug è il codice locale mostrato al ristoratore: casuale, non il nome.
+    const taken = new Set(
+      (await db.select({ slug: s.restaurants.slug }).from(s.restaurants)).map((r) => r.slug),
+    );
+    const slug = await uniqueTenantCode(taken);
+    void uniqueSlug; void slugify;
 
     const created = await db.transaction(async (tx) => {
       const [restaurant] = await tx.insert(s.restaurants).values({
@@ -97,6 +113,8 @@ export async function POST(req: Request) {
     await logActivity(created.id, owner, "restaurant_created", `Locale ${name} registrato`);
     return NextResponse.json({
       restaurant: { id: created.id, name: created.name, slug: created.slug },
+      // Codice locale da consegnare al ristoratore: serve per entrare da /.
+      tenantCode: created.slug,
       // il titolare entrerà da qui e disegnerà la sala col percorso guidato
       loginPath: `/r/${created.slug}/login`,
     });

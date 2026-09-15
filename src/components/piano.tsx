@@ -27,7 +27,10 @@ export function Piano({ date, day, onTap }: { date: string; day: DayData; onTap:
   const qc = useQueryClient();
   const isToday = date === todayISO();
   const nMin = useNow(30_000);
+  // Il turno selezionato si deriva: null significa "il primo in elenco", così
+  // Pranzo e Cena vengono disegnati esattamente allo stesso modo.
   const [periodId, setPeriodId] = useState<string | null>(null);
+  const activePeriodId = periodId ?? boot.data?.periods[0]?.id ?? null;
   const [dragRes, setDragRes] = useState<Reservation | null>(null);
   // anteprima stile calendario: mostra in quale colonna e su quali slot finirebbe
   const [preview, setPreview] = useState<{
@@ -52,7 +55,7 @@ export function Piano({ date, day, onTap }: { date: string; day: DayData; onTap:
       </div>
     );
   }
-  const period = bootData.periods.find((p) => p.id === periodId) ?? bootData.periods[0];
+  const period = bootData.periods.find((p) => p.id === activePeriodId) ?? bootData.periods[0];
   const { settings } = bootData;
   const startMin = toMin(period.startTime);
   const endMin = toMin(period.endTime);

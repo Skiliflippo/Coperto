@@ -3,23 +3,31 @@
 // PORTALE DI ACCESSO · la root non sceglie più il primo record del database.
 // Ogni ristorante entra soltanto dal proprio codice/slug.
 // ─────────────────────────────────────────────────────────────────────────────
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { ArrowRight, Store } from "lucide-react";
 import { api, ApiError } from "@/lib/api";
+import { useSession } from "@/store/session";
 
+// Il campo accetta il codice locale alfanumerico (es. K7MQ2XRQ4T).
 function normalizeSlug(value: string) {
-  return value.trim().toLowerCase()
-    .normalize("NFD").replace(/[\u0300-\u036f]/g, "")
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-|-$/g, "");
+  return value.trim().toUpperCase().replace(/[^A-Z0-9]/g, "");
 }
 
 export default function Home() {
   const router = useRouter();
+  const rememberedSlug = useSession((s) => s.rememberedSlug);
+  const hydrated = useSession((s) => s.hydrated);
   const [value, setValue] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
+
+  // Locale già memorizzato su questo dispositivo: si riapre direttamente,
+  // senza chiedere di nuovo il codice.
+  useEffect(() => {
+    if (!hydrated || !rememberedSlug) return;
+    router.replace(`/r/${rememberedSlug}`);
+  }, [hydrated, rememberedSlug, router]);
 
   const go = async () => {
     const slug = normalizeSlug(value);
@@ -60,7 +68,7 @@ export default function Home() {
         <form className="mt-8" onSubmit={(event) => { event.preventDefault(); void go(); }}>
           <label className="block">
             <span className="mb-2 block text-sm font-semibold text-muted">
-              Inserisci il codice o slug del tuo locale
+              Codice locale
             </span>
             <div className={`flex min-h-[60px] items-center gap-3 rounded-2xl border bg-bg px-4 transition-colors ${
               error ? "border-over" : "border-line focus-within:border-brand focus-within:ring-2 focus-within:ring-brand/20"
@@ -69,7 +77,7 @@ export default function Home() {
               <input
                 value={value}
                 onChange={(event) => { setValue(event.target.value); setError(""); }}
-                placeholder="es. il-gabbiano-2"
+                placeholder="Codice a 10 caratteri"
                 autoCapitalize="none"
                 autoCorrect="off"
                 spellCheck={false}
@@ -80,7 +88,7 @@ export default function Home() {
           </label>
 
           <p className={`mt-2 min-h-5 text-sm font-semibold ${error ? "text-over" : "text-muted"}`} role="alert">
-            {error || "Lo trovi nel link ricevuto dal ristorante."}
+            {error || "Lo trovi nel messaggio ricevuto dal ristoratore."}
           </p>
 
           <button type="submit" disabled={loading || !value.trim()}

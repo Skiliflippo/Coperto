@@ -92,7 +92,17 @@ export default function AdminPage() {
       {created && (
         <div className="mt-5 rounded-3xl border-2 border-ok/50 bg-ok/10 p-4">
           <p className="font-bold text-ok">{created.name} è pronto</p>
-          <p className="mt-1 text-sm text-muted">Manda questo link al ristoratore, con il PIN {created.pin}.</p>
+          <p className="mt-1 text-sm text-muted">
+            Dai al ristoratore questo <b className="text-ink">codice locale</b> e il PIN <b className="text-ink">{created.pin}</b>.
+            Il codice serve per entrare dalla pagina iniziale.
+          </p>
+          <div className="mt-3 flex items-center gap-2 rounded-2xl bg-surface px-3 py-3">
+            <code className="flex-1 font-display text-2xl font-extrabold tracking-[0.18em]">{created.slug}</code>
+            <button onClick={() => copy(created.slug, "code")}
+              className="flex h-11 shrink-0 items-center gap-1.5 rounded-xl bg-ok px-3 text-sm font-bold text-white active:scale-95">
+              {copied === "code" ? "Copiato" : "Copia"}
+            </button>
+          </div>
           <div className="mt-3 flex items-center gap-2">
             <code className="min-w-0 flex-1 truncate rounded-xl bg-surface px-3 py-2.5 text-[13px] font-semibold">
               {linkFor(created.slug)}
@@ -121,11 +131,7 @@ export default function AdminPage() {
                 onChange={(e) => setPin(e.target.value.replace(/\D/g, "").slice(0, 4))} />
             </Field>
           </div>
-          {name.trim() && (
-            <p className="text-[13px] text-muted">
-              Indirizzo: <code className="font-semibold">{origin}/r/{name.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "")}/login</code>
-            </p>
-          )}
+          <p className="text-[13px] text-muted">Il codice locale viene generato automaticamente alla creazione.</p>
           {err && <p className="font-semibold text-over">{err}</p>}
           <Btn size="xl" disabled={busy || !name.trim() || !owner.trim() || pin.length !== 4} onClick={create}>
             <Store className="h-5 w-5" /> Registra e genera il link
@@ -145,10 +151,10 @@ export default function AdminPage() {
             </div>
             <p className="mt-0.5 text-[13px] text-muted">{r.staff} in organico · {r.tables} tavoli</p>
             <div className="mt-2 flex items-center gap-2">
-              <code className="min-w-0 flex-1 truncate rounded-lg bg-raised px-2.5 py-1.5 text-[12px]">{linkFor(r.slug)}</code>
+              <code className="min-w-0 flex-1 truncate rounded-lg bg-raised px-2.5 py-1.5 text-[12px] font-semibold tracking-wide">{r.slug}</code>
               <button onClick={() => copy(linkFor(r.slug), r.id)}
                 className="grid h-9 w-9 shrink-0 place-items-center rounded-lg bg-raised text-muted active:scale-95"
-                aria-label={`Copia link di ${r.name}`}>
+                aria-label={`Copia link di ${r.name}`} title={linkFor(r.slug)}>
                 {copied === r.id ? <Check className="h-4 w-4 text-ok" /> : <Copy className="h-4 w-4" />}
               </button>
             </div>

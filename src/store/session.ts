@@ -7,12 +7,16 @@ import type { StaffSession } from "@/lib/types";
 type SessionState = {
   staff: StaffSession | null;
   slug: string | null;          // ristorante attualmente aperto (/r/<slug>)
+  /** Locale memorizzato sul dispositivo: sopravvive al logout e riapre la sala. */
+  rememberedSlug: string | null;
   theme: "light" | "dark";
   roomId: string | null;        // ultima sala aperta: diventa la vista predefinita
   roomOrder: string[];          // ordine scelto trascinando i nomi delle sale
   hydrated: boolean;            // true quando localStorage è stato letto sul client
   setStaff: (s: StaffSession | null) => void;
   setSlug: (slug: string | null) => void;
+  rememberLocale: (slug: string) => void;
+  forgetLocale: () => void;
   toggleTheme: () => void;
   setRoom: (id: string) => void;
   setRoomOrder: (ids: string[]) => void;
@@ -24,6 +28,7 @@ export const useSession = create<SessionState>()(
     (set, get) => ({
       staff: null,
       slug: null,
+      rememberedSlug: null,
       theme: "light",
       roomId: null,
       roomOrder: [],
@@ -42,16 +47,21 @@ export const useSession = create<SessionState>()(
         }
         set({ slug });
       },
+      // Login riuscito: il dispositivo ricorda questo locale per la prossima
+      // apertura da / o dall'icona sulla home.
+      rememberLocale: (slug) => set({ rememberedSlug: slug }),
+      // "Cambia locale": si dimentica il locale e si torna alla landing.
+      forgetLocale: () => set({ rememberedSlug: null, slug: null, staff: null, roomId: null, roomOrder: [] }),
       toggleTheme: () => set({ theme: get().theme === "light" ? "dark" : "light" }),
       setRoom: (roomId) => set({ roomId }),
       setRoomOrder: (roomOrder) => set({ roomOrder }),
       setHydrated: (hydrated) => set({ hydrated }),
     }),
     {
-      name: "coperto.session.v3",
+      name: "coperto.session.v4",
       // Il flag è runtime-only: non deve rientrare da localStorage già impostato a true.
-      partialize: ({ staff, slug, theme, roomId, roomOrder }) =>
-        ({ staff, slug, theme, roomId, roomOrder }) as SessionState,
+      partialize: ({ staff, slug, rememberedSlug, theme, roomId, roomOrder }) =>
+        ({ staff, slug, rememberedSlug, theme, roomId, roomOrder }) as SessionState,
       onRehydrateStorage: () => (state) => {
         // Al ripristino si riallinea l'identità usata dalle chiamate al server.
         setApiIdentity(state?.staff?.id ?? null);

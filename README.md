@@ -5,9 +5,16 @@ telefoniche e walk-in. Veloce come la carta, pensata per mani occupate.
 
 ## Più ristoranti sullo stesso server
 
-La pagina principale `/` è il portale di accesso: si inserisce il codice del locale
-e l'app verifica che esista prima di aprire `/r/<slug>/login`. Non sceglie mai il
-primo ristorante del database e uno slug errato resta sul portale con un messaggio chiaro.
+La pagina principale `/` è il portale di accesso: si inserisce il **codice locale**
+(10 caratteri alfanumerici, generato dall'area sviluppatore, non il nome del ristorante)
+e l'app verifica che esista prima di aprire `/r/<codice>/login`.
+
+Il dispositivo ricorda l'ultimo locale con cui hai fatto login: riaprendo `/` o
+l'icona dalla home si torna direttamente lì. In `Altro → Cambia locale` si dimentica
+e si torna al portale.
+
+**PWA**: `start_url` è `/app`, che reindirizza al locale memorizzato (o alla landing)
+senza mai dare 404. Il service worker tiene in cache le pagine visitate per l'uso offline.
 
 Ogni locale ha il suo indirizzo: `/r/osteria-del-vicolo/login`. Chi entra da lì vede
 solo la propria sala, il proprio personale e le proprie prenotazioni: il controllo

@@ -45,6 +45,8 @@ export default function LoginPage() {
         body: { staffId: sel.id, pin: completePin, slug },
       });
       setStaff(session);
+      // Login riuscito: questo dispositivo riaprirà direttamente questo locale.
+      useSession.getState().rememberLocale(slug);
       router.replace(tp("/sala"));
     } catch (error: unknown) {
       setErr(error instanceof ApiError ? error.message : "Accesso non riuscito");
