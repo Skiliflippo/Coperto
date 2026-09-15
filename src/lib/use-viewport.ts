@@ -8,6 +8,45 @@ import { MAX_ZOOM, MIN_ZOOM, clamp } from "./floor";
 
 export type Viewport = { zoom: number; panX: number; panY: number };
 
+/** Calcola Zoom-to-selection/Zoom Object: mai zoom-in, solo extents visibili. */
+export function selectionViewport(args: {
+  current: Viewport;
+  box: { x: number; y: number; w: number; h: number };
+  viewportW: number;
+  viewportH: number;
+  bottomInset: number;
+  margin?: number;
+}): { view: Viewport; changed: boolean } {
+  const { current, box, viewportW, viewportH, bottomInset } = args;
+  const margin = args.margin ?? 36;
+  const availableW = Math.max(100, viewportW - margin * 2);
+  const availableH = Math.max(100, viewportH - bottomInset - margin * 2);
+  const top = box.y * current.zoom + current.panY;
+  const bottom = (box.y + box.h) * current.zoom + current.panY;
+  const left = box.x * current.zoom + current.panX;
+  const right = (box.x + box.w) * current.zoom + current.panX;
+  const visibleBottom = viewportH - bottomInset - margin;
+  const hidden = bottom > visibleBottom || top < margin || left < margin || right > viewportW - margin;
+  if (!hidden) return { view: current, changed: false };
+
+  const fitZoom = Math.min(
+    availableW / Math.max(1, box.w),
+    availableH / Math.max(1, box.h),
+  ) * 0.92;
+  const zoom = Math.min(current.zoom, fitZoom);
+  const cx = box.x + box.w / 2;
+  const cy = box.y + box.h / 2;
+  const centerY = margin + availableH / 2;
+  return {
+    view: {
+      zoom,
+      panX: viewportW / 2 - cx * zoom,
+      panY: centerY - cy * zoom,
+    },
+    changed: true,
+  };
+}
+
 type Bounds = { x1: number; y1: number; x2: number; y2: number };
 
 export function useViewport(
@@ -200,19 +239,21 @@ export function useViewport(
     apply((v) => ({ ...v, panX: vw / 2 - wx * v.zoom, panY: vh / 2 - wy * v.zoom }));
   }, [apply]);
 
-  // Assicura che un rettangolo del mondo sia visibile sopra il pannello.
+  // Zoom-to-selection in stile CAD/Figma: se l'oggetto è già tutto visibile non
+  // tocca la vista; se un estremo è fuori, fa SOLO zoom-out e centra gli extents
+  // nell'area libera sopra toolbar e pannello. Non zooma mai dentro aggressivamente.
   const revealRect = useCallback((box: { x: number; y: number; w: number; h: number }, bottomInset: number) => {
     const el = ref.current;
     if (!el) return;
-    const v = vpRef.current;
-    const top = box.y * v.zoom + v.panY;
-    const bottom = (box.y + box.h) * v.zoom + v.panY;
-    const left = box.x * v.zoom + v.panX;
-    const right = (box.x + box.w) * v.zoom + v.panX;
-    const visibleBottom = el.clientHeight - bottomInset - 12;
-    const hidden = bottom > visibleBottom || top < 12 || left < 12 || right > el.clientWidth - 12;
-    if (hidden) centerOn(box.x + box.w / 2, box.y + box.h / 2, bottomInset);
-  }, [centerOn]);
+    const next = selectionViewport({
+      current: vpRef.current,
+      box,
+      viewportW: el.clientWidth,
+      viewportH: el.clientHeight,
+      bottomInset,
+    });
+    if (next.changed) apply(() => next.view);
+  }, [apply]);
 
   return {
     ref, vp, setVp: apply, fit, zoomBy, toWorld, isPanning, centerOn, revealRect, cancelPan, stopPan,

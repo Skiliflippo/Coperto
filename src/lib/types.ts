@@ -25,6 +25,7 @@ export type TableT = {
   splitInto: number;             // in quante parti si stacca (0 = unico)
   splitActive: boolean;          // padre attualmente separato
   splitParentId: string | null;  // parte generata da una separazione
+  isJoinable: boolean;           // può essere fisicamente accostato ad altri
   x: number; y: number; width: number; height: number; rotation: number; shape: TableShape;
   state: "libero" | "fuori_servizio"; note: string;
 };

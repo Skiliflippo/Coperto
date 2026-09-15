@@ -230,18 +230,24 @@ export function WalkInSheet({ open, onClose, defaultName = "" }: { open: boolean
   const [busy, setBusy] = useState(false);
   return (
     <Sheet open={open} onClose={onClose} title={<span className="flex items-center gap-2"><Users className="h-5 w-5 text-brand" /> Quanti siete?</span>}>
-      <PartyGrid value={party} onChange={setParty} />
-      <div className="mt-4">
-        <p className="mb-2 text-sm font-semibold text-muted">Tavoli liberi adatti · i migliori incastri prima</p>
-        <SuggestedTables party={party} onPick={async (t) => {
-          if (busy) return;
-          setBusy(true);
-          const ok = await seat({ ...t, partySize: party, name: defaultName || "Walk-in" });
-          setBusy(false);
-          if (ok) { setParty(2); onClose(); }
-        }} />
+      {/* Altezza stabile: cambiando coperti cambiano i suggerimenti, ma il tastierino
+          resta sempre nello stesso punto e si possono fare tap rapidi senza errori. */}
+      <div className="flex h-[min(66dvh,590px)] min-h-[430px] flex-col">
+        <div className="shrink-0">
+          <PartyGrid value={party} onChange={setParty} />
+        </div>
+        <p className="mb-2 mt-3 shrink-0 text-sm font-semibold text-muted">Tavoli liberi adatti · i migliori incastri prima</p>
+        <div className="no-scrollbar min-h-0 flex-1 overflow-y-auto pb-2">
+          <SuggestedTables party={party} onPick={async (t) => {
+            if (busy) return;
+            setBusy(true);
+            const ok = await seat({ ...t, partySize: party, name: defaultName || "Walk-in" });
+            setBusy(false);
+            if (ok) { setParty(2); onClose(); }
+          }} />
+        </div>
+        <p className="shrink-0 pt-1 text-center text-[12px] text-muted">Capienza diversa? La correggi dopo con un tap.</p>
       </div>
-      <p className="mt-3 text-center text-[13px] text-muted">Capienza diversa al tavolo? La correggi dopo con un tap.</p>
     </Sheet>
   );
 }

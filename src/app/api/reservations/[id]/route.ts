@@ -19,7 +19,7 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
   const patch: Partial<typeof s.reservations.$inferInsert> = { updatedAt: new Date() };
   let msg = "";
   if (action === "assign") {
-    const joinedIds: string[] = Array.isArray(f.joinedTableIds)
+    let joinedIds: string[] = Array.isArray(f.joinedTableIds)
       ? [...new Set((f.joinedTableIds as unknown[])
           .filter((value): value is string => typeof value === "string"))]
       : [];
@@ -28,7 +28,9 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
     // decisione discrezionale: è un dato fisico. Per le tavolate si sommano
     // tavolo principale + joinedTableIds.
     if (f.tableId) {
-      const ids = [...new Set([String(f.tableId), ...joinedIds])];
+      const mainTableId = String(f.tableId);
+      joinedIds = joinedIds.filter((id) => id !== mainTableId);
+      const ids = [...new Set([mainTableId, ...joinedIds])];
       const rows = await db.select().from(s.tables).where(inArray(s.tables.id, ids));
       if (rows.length !== ids.length || rows.some((table) => table.restaurantId !== cur.restaurantId || table.archived)) {
         return NextResponse.json({ error: "Uno dei tavoli non appartiene a questo ristorante" }, { status: 403 });

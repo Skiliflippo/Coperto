@@ -108,8 +108,10 @@ export function availableTargets(args: {
       free.push({ kind: "table", table: t, waste: seats - party, extraChairs: Math.max(0, party - t.capacity) });
     }
   }
+  const byId = new Map(tables.map((table) => [table.id, table]));
   for (const c of combos) {
-    if (c.capacity >= party && c.tableIds.every(usable)) {
+    const canJoin = c.tableIds.every((id) => byId.get(id)?.isJoinable !== false);
+    if (canJoin && c.capacity >= party && c.tableIds.every(usable)) {
       free.push({ kind: "combo", combo: c, waste: c.capacity - party, extraChairs: 0 });
     }
   }
@@ -158,7 +160,10 @@ export function freeTargetsAt(params: {
   const free = (id: string) => !(busyByTable.get(id) ?? []).some(([a, b]) => s < b && a < e);
   return {
     tables: tables.filter((t) => Math.max(t.capacity, t.maxCapacity || 0) >= party && t.state !== "fuori_servizio" && free(t.id)),
-    combos: combos.filter((c) => c.capacity >= party && c.tableIds.every(free)),
+    combos: combos.filter((c) =>
+      c.capacity >= party
+      && c.tableIds.every((id) => tables.find((table) => table.id === id)?.isJoinable !== false)
+      && c.tableIds.every(free)), 
   };
 }
 

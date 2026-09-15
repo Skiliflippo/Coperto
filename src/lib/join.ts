@@ -25,6 +25,7 @@ export function tableBBox(t: TableT) {
 // (si "vedono" su un lato) e distano meno di maxGap centimetri.
 export function areAdjacent(a: TableT, b: TableT, maxGap: number): boolean {
   if (a.roomId !== b.roomId) return false;
+  if (a.isJoinable === false || b.isJoinable === false) return false;
   const A = tableBBox(a), B = tableBBox(b);
   const gapX = Math.max(0, Math.max(A.x1 - B.x2, B.x1 - A.x2));
   const gapY = Math.max(0, Math.max(A.y1 - B.y2, B.y1 - A.y2));

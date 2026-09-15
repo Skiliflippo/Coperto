@@ -89,6 +89,10 @@ export type FloorElement = {
   kind: "wall" | "decor";
   x: number; y: number; w: number; h: number; rotation: number;
   label: string;
+  icon?: string;
+  labelRotation?: number;
+  labelScale?: number;
+  tone?: "neutro" | "verde" | "azzurro" | "sabbia" | "rosa";
 };
 export type RoomLayout = { w: number; h: number; elements: FloorElement[] };
 export const rooms = pgTable("rooms", {
@@ -118,6 +122,9 @@ export const tables = pgTable("tables", {
   splitActive: boolean("split_active").notNull().default(false),
   // valorizzato sulle parti generate dalla separazione
   splitParentId: uuid("split_parent_id"),
+  // Alcuni tavoli (nicchie, veranda stretta, tavoli fissati) non si possono
+  // accostare ad altri. Il planner li usa singolarmente o in zone separate.
+  isJoinable: boolean("is_joinable").notNull().default(true),
   // Geometria sulla piantina: x/y = centro del tavolo in unità stanza
   x: integer("x").notNull().default(0),
   y: integer("y").notNull().default(0),

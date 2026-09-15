@@ -31,6 +31,7 @@ export type TableNodeData = {
   id: string; label: string; capacity: number; maxCapacity?: number; shape: TableShape;
   x: number; y: number; width: number; height: number; rotation: number;
   splitInto?: number;   // in quante parti si stacca (0 = tavolo unico)
+  isJoinable?: boolean; // può essere accostato manualmente/automaticamente
 };
 
 // Un tavolo: piano + sedie + etichetta sempre dritta (contro-ruotata).
@@ -234,7 +235,7 @@ export const ElementNode = forwardRef<HTMLDivElement, {
     : undefined;
   return (
     <div ref={ref} onPointerDown={onPointerDown}
-      className={`absolute left-0 top-0 ${isWall ? (selected ? "z-30" : "z-0") : "z-10"} ${editable ? "cursor-move" : ""}`}
+      className={`absolute left-0 top-0 ${isWall ? "z-0" : "z-10"} ${editable ? "cursor-move" : ""}`}
       style={{
         // il riquadro di hit resta quello reale: l'estensione è solo visiva
         width: el.w, height: el.h,

@@ -117,7 +117,7 @@ async function main() {
       const maxCap = t.cap <= 2 ? t.cap + 1 : t.cap <= 4 ? t.cap + 2 : t.cap + 2;
       return { restaurantId: rid, roomId: t.room, label: t.label, capacity: t.cap, maxCapacity: maxCap,
         x: t.x, y: t.y, width: g.w, height: g.h, shape: g.shape, rotation: t.rot ?? 0,
-        splitInto: splitOf(t.cap) };
+        splitInto: splitOf(t.cap), isJoinable: true };
     })
   ).returning();
   const byLabel: Record<string, typeof tableRows[number]> = {};

@@ -15,7 +15,7 @@ export type BulkRow = { capacity: number; count: number; shape: TableShape };
 export type BulkTable = {
   id: string; label: string; capacity: number; maxCapacity: number; shape: TableShape;
   x: number; y: number; width: number; height: number; rotation: number;
-  splitInto: number; isNew: true;
+  splitInto: number; isJoinable: boolean; isNew: true;
 };
 
 /** Righe iniziali: le taglie che esistono in quasi ogni sala. */
@@ -83,6 +83,7 @@ export function layoutBulkTables(
           maxCapacity: item.capacity + (item.capacity <= 2 ? 1 : 2),
           shape,
           splitInto: suggestedSplitParts(item.capacity, shape, standardSeats, units),
+          isJoinable: true,
           x: Math.round(cursorX + g.width / 2),
           y: Math.round(cursorY + g.height / 2),
           width: g.width, height: g.height, rotation: 0, isNew: true,

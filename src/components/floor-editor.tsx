@@ -10,7 +10,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import {
   Check, CircleDot, MousePointer2, RectangleHorizontal, Redo2, RotateCw,
-  Square, Trash2, Undo2, Wallpaper, X, ZoomIn, ZoomOut, Blocks, Spline, Maximize2, Scissors,
+  Square, Trash2, Undo2, Wallpaper, X, ZoomIn, ZoomOut, Blocks, Spline, Maximize2,
+  Scissors, Link2, Unlink,
 } from "lucide-react";
 import { api } from "@/lib/api";
 import { useSession } from "@/store/session";
@@ -29,7 +30,7 @@ import { ElementNode, GridBackdrop, PerimeterOverlay, RoomShell, TableNode, Wall
 import type { Bootstrap, Room, TableT } from "@/lib/types";
 
 const STEP = 25;                       // aggancio: mezza cella = 25 cm
-const PANEL_H = 240;                   // pannello + toolbar: l'oggetto deve restare sopra
+const PANEL_H = 108;                   // altezza reale della card proprietà compatta
 const snapG = (v: number) => snapTo(v, STEP);
 type Tool = "select" | "table" | "wall" | "decor" | "perimetro";
 type Sel = { kind: "table" | "element"; id: string } | null;
@@ -176,9 +177,11 @@ export function FloorEditor({ boot, roomId, onClose }: { boot: Bootstrap; roomId
   useEffect(() => {
     if (!sel) return;
     const box = selTable
-      ? { x: selTable.x - selTable.width / 2, y: selTable.y - selTable.height / 2, w: selTable.width, h: selTable.height }
-      : selEl ? { x: selEl.x, y: selEl.y, w: selEl.w, h: selEl.h } : null;
-    if (box) revealRect(box, PANEL_H);
+      ? aabb(selTable.x, selTable.y, selTable.width, selTable.height, selTable.rotation)
+      : selEl ? elementBox(selEl) : null;
+    // Il pannello è in basso e la toolbar gli sta sopra: si riserva l'intera
+    // fascia, così il muro/tavolo selezionato non viene coperto.
+    if (box) revealRect(box, PANEL_H + 80);
   }, [sel, selTable?.id, selEl?.id]);   // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── Trascinamento ────────────────────────────────────────────────────────
@@ -393,6 +396,7 @@ export function FloorEditor({ boot, roomId, onClose }: { boot: Bootstrap; roomId
       node.style.transform = `translate3d(${next.x}px, ${next.y}px, 0) rotate(${next.rotation}deg)`;
       node.style.width = `${next.w}px`;
       node.style.height = `${next.h}px`;
+      setLiveWalls({ [el.id]: next });
       const nextBox = elementBox(next);
       const hitsTable = draft.tables.some((t) => boxesOverlap(nextBox, tableBox(t)));
       setBadIds(wallInsideRoom(next, poly) && !hitsTable ? [] : [el.id]);
@@ -401,6 +405,7 @@ export function FloorEditor({ boot, roomId, onClose }: { boot: Bootstrap; roomId
       window.removeEventListener("pointermove", move);
       window.removeEventListener("pointerup", up);
       setBadIds([]);
+      setLiveWalls({});
       patchEl(el.id, next);
     };
     window.addEventListener("pointermove", move);
@@ -540,6 +545,7 @@ export function FloorEditor({ boot, roomId, onClose }: { boot: Bootstrap; roomId
           id, label: String(nextLabel(boot, d)), capacity: cap, maxCapacity: cap, shape: newShape,
           x: snapG(safe.x), y: snapG(safe.y), width: g.width, height: g.height, rotation: 0,
           splitInto: suggestedSplitParts(cap, newShape, std),
+          isJoinable: true,
         }],
       }));
       setSelIds([id]);
@@ -713,7 +719,7 @@ export function FloorEditor({ boot, roomId, onClose }: { boot: Bootstrap; roomId
     const box = t
       ? { x: t.x - t.width / 2, y: t.y - t.height / 2, w: t.width, h: t.height }
       : el ? { x: el.x, y: el.y, w: el.w, h: el.h } : null;
-    if (box) revealRect(box, PANEL_H);
+    if (box) revealRect(box, PANEL_H + 80);
   };
 
   const save = async () => {
@@ -961,6 +967,17 @@ export function FloorEditor({ boot, roomId, onClose }: { boot: Bootstrap; roomId
               }}
                 className={`h-12 rounded-xl px-3 text-sm font-bold active:scale-95 ${selTable.shape === sh ? "bg-brand text-on-brand" : "bg-raised"}`}>{lb}</button>
             ))}
+            <button
+              onClick={() => patchTable(selTable.id, { isJoinable: selTable.isJoinable === false })}
+              title={selTable.isJoinable === false
+                ? "Non si può accostare ad altri tavoli"
+                : "Si può accostare ad altri tavoli"}
+              aria-label="Attiva o disattiva accorpamento con altri tavoli"
+              className={`grid h-12 w-12 shrink-0 place-items-center rounded-xl active:scale-95 ${
+                selTable.isJoinable === false ? "bg-over/10 text-over" : "bg-busy/10 text-busy"
+              }`}>
+              {selTable.isJoinable === false ? <Unlink className="h-5 w-5" /> : <Link2 className="h-5 w-5" />}
+            </button>
             {selTable.shape !== "round" && selTable.width > unitTableSide(std) && (
               <button
                 onClick={() => patchTable(selTable.id, {
@@ -1108,7 +1125,7 @@ function ContextPanel({ title, subtitle, children, onClose }: {
 }) {
   return (
     <div className="pointer-events-none absolute inset-x-0 bottom-0 z-30 flex justify-center px-2 pb-[calc(env(safe-area-inset-bottom)+8px)]">
-      <div className="pointer-events-auto w-full max-w-[min(96vw,980px)] animate-sheet-up rounded-2xl border border-line bg-surface/97 p-2.5 shadow-2xl backdrop-blur">
+      <div className="pointer-events-auto w-[calc(100vw-1rem)] animate-sheet-up rounded-2xl border border-line bg-surface/97 p-2.5 shadow-2xl backdrop-blur sm:w-fit sm:min-w-[300px] sm:max-w-[calc(100vw-2rem)]">
         <div className="mb-2 flex items-center gap-2">
           <div className="min-w-0 flex-1">
             <p className="truncate text-[15px] font-bold leading-tight">{title}</p>
@@ -1126,6 +1143,7 @@ const toNode = (t: TableT): TableNodeData => ({
   id: t.id, label: t.label, capacity: t.capacity, maxCapacity: Math.max(t.capacity, t.maxCapacity || 0),
   shape: t.shape, x: t.x, y: t.y, width: t.width, height: t.height, rotation: t.rotation,
   splitInto: t.splitInto,
+  isJoinable: t.isJoinable,
 });
 
 function nextLabel(boot: Bootstrap, draft: Draft): number {

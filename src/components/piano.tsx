@@ -13,7 +13,6 @@ import { durationFor, freeTargetsAt, periodFor } from "@/lib/estimates";
 import { overlaps, toHHMM, toMin, todayISO } from "@/lib/time";
 import { Btn, Sheet } from "@/components/ui";
 import { toast } from "@/components/toast";
-import { findJoinProposals } from "@/lib/join";
 import { planLargeParty } from "@/lib/large-party";
 import type { AssignPlan } from "@/lib/autoassign";
 import type { Bootstrap, DayData, Reservation } from "@/lib/types";
@@ -397,9 +396,18 @@ export function Piano({ date, day, onTap }: { date: string; day: DayData; onTap:
                         ? `Accorpati ${p.target.combo.label}`
                         : p.target.zones && p.target.zones > 1
                           ? `Distribuisci su ${p.target.zones} zone (${p.target.tables.length} tavoli)`
-                          : `Accosta ${p.target.label}`}
+                          : p.target.groups?.[0]?.contiguous
+                            ? `Accosta ${p.target.groups[0].clusters[0].map((t) => t.label).join("+")}`
+                            : `Prepara una zona con ${p.target.tables.length} tavoli`}
                   </p>
                   <p className="text-[13px] font-medium text-muted">{p.reason}</p>
+                  {p.target.kind === "join" && p.target.groups?.map((group, index) => (
+                    <p key={`${group.roomId}-${index}`}
+                      className="mt-1 rounded-lg bg-surface/75 px-2 py-1.5 text-[12px] font-semibold text-ink">
+                      {group.people} persone · {bootData.rooms.find((r) => r.id === group.roomId)?.name ?? "Sala"} · {group.contiguous ? "accosta" : "tavoli"}{" "}
+                      {group.clusters.map((cluster) => cluster.map((t) => t.label).join("+")).join(", ")}
+                    </p>
+                  ))}
                 </div>
               </div>
             ))}
@@ -543,7 +551,10 @@ export function AssignSheet({ res, date, onClose }: { res: Reservation | null; d
     tableId: string | null; comboId: string | null; joined: string[];
     waste: number; pref: boolean;
     splitTableId?: string;   // da staccare prima di assegnare
-    zones?: { roomId: string; people: number; seats: number; labels: string }[];
+    zones?: {
+      roomId: string; people: number; seats: number;
+      clusters: string[]; contiguous: boolean;
+    }[];
   };
   const opts: Opt[] = [
     ...tables.map((t) => ({
@@ -582,24 +593,9 @@ export function AssignSheet({ res, date, onClose }: { res: Reservation | null; d
     durFor: (p) => durationFor(p, period?.name ?? null, b.settings),
   }).tables;
 
-  // Accorpamento al volo: catena realmente consecutiva.
-  if (!opts.length && b.settings.allowTableJoin) {
-    for (const j of findJoinProposals({
-      party: res.partySize,
-      tables: freeAtTime,
-      maxGapCm: b.settings.joinMaxGapCm ?? 150,
-      maxTables: 20,
-    })) {
-      opts.push({
-        key: j.label, label: `Accosta ${j.label}`, sub: j.reason,
-        tableId: j.tableIds[0], comboId: null, joined: j.tableIds.slice(1),
-        waste: j.waste, pref: !!preferred && j.tables.every((t) => t.roomId === preferred),
-      });
-    }
-  }
-
-  // Se una sola catena non basta, divide in poche zone vicine e spiega come.
-  const largePlan = !opts.length
+  // Un unico planner gestisce sia l'accorpamento piccolo sia l'evento da 80:
+  // prima catena consecutiva, poi zone vicine, infine più sale.
+  const largePlan = !opts.length && b.settings.allowTableJoin
     ? planLargeParty({
         party: res.partySize,
         tables: freeAtTime,
@@ -612,7 +608,8 @@ export function AssignSheet({ res, date, onClose }: { res: Reservation | null; d
       roomId: group.roomId,
       people: group.people,
       seats: group.seats,
-      labels: group.tables.map((t) => t.label).join("+"),
+      clusters: group.clusters.map((cluster) => cluster.map((t) => t.label).join("+")),
+      contiguous: group.contiguous,
     }));
     opts.push({
       key: `large-${res.id}`,
@@ -678,7 +675,7 @@ export function AssignSheet({ res, date, onClose }: { res: Reservation | null; d
                 <span className={`block text-[13px] font-medium text-muted ${o.zones ? "leading-snug" : "truncate"}`}>{o.sub}</span>
                 {o.zones?.map((zone, index) => (
                   <span key={`${zone.roomId}-${index}`} className="mt-1 block rounded-lg bg-surface/70 px-2 py-1 text-[12px] font-semibold text-ink">
-                    {zone.people} persone · {roomName(zone.roomId)} · tavoli {zone.labels}
+                    {zone.people} persone · {roomName(zone.roomId)} · {zone.contiguous ? "accosta" : "tavoli"} {zone.clusters.join(", ")}
                   </span>
                 ))}
               </span>

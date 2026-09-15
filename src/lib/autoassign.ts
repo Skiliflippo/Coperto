@@ -5,8 +5,7 @@
 // NON applica mai da solo: produce una proposta con motivazioni da confermare.
 // ─────────────────────────────────────────────────────────────────────────────
 import type { Combo, Period, Reservation, Settings, TableT } from "./types";
-import { findJoinProposals } from "./join";
-import { planLargeParty } from "./large-party";
+import { planLargeParty, type LargePartyGroup } from "./large-party";
 import { toMin } from "./time";
 import { durationFor } from "./estimates";
 
@@ -15,7 +14,10 @@ export type Proposal = {
   target:
     | { kind: "table"; table: TableT }
     | { kind: "combo"; combo: Combo }
-    | { kind: "join"; tables: TableT[]; label: string; zones?: number }; // accostati o distribuiti
+    | {
+        kind: "join"; tables: TableT[]; label: string;
+        zones?: number; groups?: LargePartyGroup[];
+      }; // accostati o distribuiti
   reason: string;
 };
 export type Skipped = { reservationId: string; name: string; partySize: number; time: string; reason: string };
@@ -78,26 +80,34 @@ export function autoAssign(params: {
     }
     for (const c of combos) {
       if (c.capacity < r.partySize) continue;
+      if (c.tableIds.some((id) => tables.find((table) => table.id === id)?.isJoinable === false)) continue;
       if (c.tableIds.every((id) => freeAt(id, s, e))) {
         cands.push({ kind: "combo", c, waste: c.capacity - r.partySize, pref: !!wanted && c.roomId === wanted });
       }
     }
-    // Nessun tavolo singolo basta: si prova ad accostarne due o più, come in sala.
+    // Nessun tavolo singolo basta: il planner prova una catena accostabile e,
+    // per gruppi enormi, poche zone vicine. Restituisce già file ordinate e sala.
     if (!cands.length && settings.allowTableJoin) {
       const libere = tables.filter((t) => t.state !== "fuori_servizio" && freeAt(t.id, s, e));
-      const inSala = wanted ? libere.filter((t) => t.roomId === wanted) : [];
-      const [best] =
-        (inSala.length
-          ? findJoinProposals({ party: r.partySize, tables: inSala, maxGapCm: gap, limit: 1 })
-          : []
-        ).concat(findJoinProposals({ party: r.partySize, tables: libere, maxGapCm: gap, limit: 1 }));
-      if (best) {
+      const combined = planLargeParty({
+        party: r.partySize,
+        tables: libere,
+        maxGapCm: gap,
+        preferredRoomId: wanted,
+      });
+      if (combined.complete && combined.tables.length) {
         proposals.push({
           reservationId: r.id, name: r.guestName, partySize: r.partySize, time: r.time,
-          target: { kind: "join", tables: best.tables, label: best.label },
-          reason: `Accosta i tavoli ${best.label}${best.waste > 0 ? ` · avanzano ${best.waste} posti` : ""}`,
+          target: {
+            kind: "join",
+            tables: combined.tables,
+            label: combined.tables.map((t) => t.label).join("+"),
+            zones: combined.groups.length,
+            groups: combined.groups,
+          },
+          reason: combined.reason,
         });
-        for (const t of best.tables) pushBusy(t.id, s, e, r.guestName);
+        for (const table of combined.tables) pushBusy(table.id, s, e, r.guestName);
         continue;
       }
     }
@@ -115,7 +125,13 @@ export function autoAssign(params: {
         const label = large.tables.map((t) => t.label).join("+");
         proposals.push({
           reservationId: r.id, name: r.guestName, partySize: r.partySize, time: r.time,
-          target: { kind: "join", tables: large.tables, label, zones: large.groups.length },
+          target: {
+            kind: "join",
+            tables: large.tables,
+            label,
+            zones: large.groups.length,
+            groups: large.groups,
+          },
           reason: large.reason,
         });
         for (const table of large.tables) pushBusy(table.id, s, e, r.guestName);

@@ -11,7 +11,8 @@ import {
 export const dynamic = "force-dynamic";
 
 type TableDraft = {
-  id: string; label: string; capacity: number; maxCapacity?: number; shape: TableShape; splitInto?: number;
+  id: string; label: string; capacity: number; maxCapacity?: number;
+  shape: TableShape; splitInto?: number; isJoinable?: boolean;
   x: number; y: number; width: number; height: number; rotation: number; isNew?: boolean;
 };
 
@@ -114,6 +115,7 @@ export async function PUT(req: Request, { params }: { params: Promise<{ id: stri
       splitInto: Math.max(0, Math.min(20, Math.round(t.splitInto ?? 0))) >= 2
         ? Math.min(Math.round(t.splitInto ?? 0), 20)
         : 0,
+      isJoinable: t.isJoinable !== false,
       shape,
       x: Math.round(t.x), y: Math.round(t.y),
       width: Math.max(50, Math.min(3000, Math.round(t.width || fallback.width))),

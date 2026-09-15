@@ -123,6 +123,7 @@ export async function getRestaurantBundle(restaurantId?: string | null, slug?: s
       id: t.id, roomId: t.roomId, label: t.label, capacity: t.capacity, minCapacity: t.minCapacity,
       maxCapacity: Math.max(t.capacity, t.maxCapacity || 0),   // 0 nel DB = nessuna sedia extra
       splitInto: t.splitInto, splitActive: t.splitActive, splitParentId: t.splitParentId,
+      isJoinable: t.isJoinable,
       x: t.x, y: t.y, width: t.width, height: t.height, rotation: t.rotation, shape: t.shape as any,
       state: t.state as any, note: t.note,
     })),

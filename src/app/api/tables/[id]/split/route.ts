@@ -53,6 +53,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       x: p.x, y: p.y, width: p.width, height: p.height,
       rotation: p.rotation, shape: table.shape,
       splitParentId: table.id,
+      isJoinable: table.isJoinable,
     }))).returning();
     await tx.update(s.tables).set({ splitActive: true, updatedAt: new Date() }).where(eq(s.tables.id, id));
     return rows;
