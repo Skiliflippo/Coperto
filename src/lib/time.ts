@@ -29,3 +29,33 @@ export const addDays = (iso: string, d: number) => {
 };
 export const mmssAgo = (fromIso: string, now = Date.now()) =>
   Math.max(0, Math.round((now - new Date(fromIso).getTime()) / 60000));
+
+export type TimelineSlot = { minute: number; label: string | null };
+
+/**
+ * Slot del Piano con etichette leggibili. Apertura e chiusura sono sempre
+ * mostrate; nel mezzo compare un riferimento ogni 30 minuti dall'inizio turno.
+ * L'ultima riga viene aggiunta anche quando la granularità non divide esattamente
+ * la durata del turno (es. slot da 20 minuti).
+ */
+export function serviceTimelineSlots(
+  startTime: string,
+  endTime: string,
+  requestedStep: number,
+): TimelineSlot[] {
+  const start = toMin(startTime);
+  const end = toMin(endTime);
+  const step = Math.max(5, Math.round(requestedStep || 15));
+  if (!Number.isFinite(start) || !Number.isFinite(end) || end <= start) return [];
+
+  const minutes: number[] = [];
+  for (let minute = start; minute < end; minute += step) minutes.push(minute);
+  if (minutes[minutes.length - 1] !== end) minutes.push(end);
+
+  return minutes.map((minute, index) => ({
+    minute,
+    label: index === 0 || minute === end || (minute - start) % 30 === 0
+      ? toHHMM(minute)
+      : null,
+  }));
+}

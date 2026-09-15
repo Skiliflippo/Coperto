@@ -5,6 +5,10 @@ telefoniche e walk-in. Veloce come la carta, pensata per mani occupate.
 
 ## Più ristoranti sullo stesso server
 
+La pagina principale `/` è il portale di accesso: si inserisce il codice del locale
+e l'app verifica che esista prima di aprire `/r/<slug>/login`. Non sceglie mai il
+primo ristorante del database e uno slug errato resta sul portale con un messaggio chiaro.
+
 Ogni locale ha il suo indirizzo: `/r/osteria-del-vicolo/login`. Chi entra da lì vede
 solo la propria sala, il proprio personale e le proprie prenotazioni: il controllo
 è sul server, non nell'interfaccia. Tentare di scrivere nei dati di un altro locale

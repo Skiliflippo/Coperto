@@ -10,7 +10,7 @@ import { api } from "@/lib/api";
 import { useBootstrap, useNow } from "@/lib/hooks";
 import { useSession } from "@/store/session";
 import { durationFor, freeTargetsAt, periodFor } from "@/lib/estimates";
-import { overlaps, toHHMM, toMin, todayISO } from "@/lib/time";
+import { overlaps, serviceTimelineSlots, toHHMM, toMin, todayISO } from "@/lib/time";
 import { Btn, Sheet } from "@/components/ui";
 import { toast } from "@/components/toast";
 import { planLargeParty } from "@/lib/large-party";
@@ -55,7 +55,10 @@ export function Piano({ date, day, onTap }: { date: string; day: DayData; onTap:
   const period = bootData.periods.find((p) => p.id === periodId) ?? bootData.periods[0];
   const { settings } = bootData;
   const startMin = toMin(period.startTime);
-  const slotCount = Math.ceil((toMin(period.endTime) - startMin) / settings.slotMinutes);
+  const endMin = toMin(period.endTime);
+  const slotMinutes = Math.max(5, settings.slotMinutes || 15);
+  const timelineSlots = serviceTimelineSlots(period.startTime, period.endTime, slotMinutes);
+  const slotCount = timelineSlots.length;
 
   const confermate = day.reservations.filter((r) => r.status === "confermata" || r.status === "seduta");
   const inPeriod = confermate.filter((r) => {
@@ -95,12 +98,12 @@ export function Piano({ date, day, onTap }: { date: string; day: DayData; onTap:
   const totalCap = bootData.tables.filter((t) => t.state !== "fuori_servizio").reduce((a, t) => a + t.capacity, 0);
   const slotLoad = new Map<number, number>();
   for (const r of day.reservations.filter((x) => x.status === "confermata" || x.status === "seduta")) {
-    const s = Math.floor(toMin(r.time) / settings.slotMinutes) * settings.slotMinutes;
+    const s = Math.floor(toMin(r.time) / slotMinutes) * slotMinutes;
     slotLoad.set(s, (slotLoad.get(s) ?? 0) + r.partySize);
   }
   const pct = (totalCap * settings.overbookingPct) / 100;
-  const overSlots = [...slotLoad.entries()].filter(([s, c]) => c >= pct && s >= startMin && s <= toMin(period.endTime));
-  const isOver = (m: number) => (slotLoad.get(Math.floor(m / settings.slotMinutes) * settings.slotMinutes) ?? 0) >= pct;
+  const overSlots = [...slotLoad.entries()].filter(([s, c]) => c >= pct && s >= startMin && s <= endMin);
+  const isOver = (m: number) => (slotLoad.get(Math.floor(m / slotMinutes) * slotMinutes) ?? 0) >= pct;
 
   // Conflitti: due prenotazioni sullo stesso tavolo con intervalli (durata+buffer) sovrapposti
   const conflicts = (() => {
@@ -120,7 +123,10 @@ export function Piano({ date, day, onTap }: { date: string; day: DayData; onTap:
     return bad;
   })();
 
-  const patchAssign = async (res: Reservation, patch: { tableId: string | null; comboId: string | null; time?: string; label?: string }) => {
+  const patchAssign = async (res: Reservation, patch: {
+    tableId: string | null; comboId: string | null;
+    joinedTableIds?: string[]; time?: string; label?: string;
+  }) => {
     const key = ["day", rid, date];
     const prev = qc.getQueryData<DayData>(key);
     // Ottimistico: il blocco si sposta e l'ora cambia all'istante, senza aspettare
@@ -132,7 +138,7 @@ export function Piano({ date, day, onTap }: { date: string; day: DayData; onTap:
             ...r,
             assignedTableId: patch.tableId,
             assignedComboId: patch.comboId,
-            joinedTableIds: [],
+            joinedTableIds: patch.joinedTableIds ?? [],
             time: patch.time ?? r.time,
           }
         : r)),
@@ -140,7 +146,12 @@ export function Piano({ date, day, onTap }: { date: string; day: DayData; onTap:
     try {
       await api(`/api/reservations/${res.id}`, {
         method: "PATCH",
-        body: { restaurantId: rid, staffName: me, action: "assign", tableId: patch.tableId, comboId: patch.comboId, time: patch.time, label: patch.label },
+        body: {
+          restaurantId: rid, staffName: me, action: "assign",
+          tableId: patch.tableId, comboId: patch.comboId,
+          joinedTableIds: patch.joinedTableIds ?? [],
+          time: patch.time, label: patch.label,
+        },
       });
       qc.invalidateQueries({ queryKey: key });
     } catch (e: any) {
@@ -158,22 +169,32 @@ export function Piano({ date, day, onTap }: { date: string; day: DayData; onTap:
     const [kind, id] = key.split(":");
     const top = (e.active.rect.current.translated?.top ?? 0) - e.over.rect.top;
     const dur = durationFor(res.partySize, period.name, settings);
-    const maxIdx = Math.max(0, Math.round((toMin(period.endTime) - startMin - dur) / settings.slotMinutes));
+    const maxIdx = Math.max(0, Math.round((endMin - startMin - dur) / slotMinutes));
     const idx = Math.min(maxIdx, Math.max(0, Math.round(top / ROW_H)));
+    const currentGroupIds = res.assignedTableId
+      ? [res.assignedTableId, ...(res.joinedTableIds ?? [])]
+      : [];
+    const staysInCurrentGroup = kind === "table" && currentGroupIds.includes(id);
     const capacity = kind === "table"
-      ? (() => {
-          const table = bootData.tables.find((t) => t.id === id);
-          return table ? Math.max(table.capacity, table.maxCapacity || 0) : 0;
-        })()
+      ? staysInCurrentGroup
+        ? currentGroupIds.reduce((sum, tableId) => {
+            const table = bootData.tables.find((t) => t.id === tableId);
+            return sum + (table ? Math.max(table.capacity, table.maxCapacity || 0) : 0);
+          }, 0)
+        : (() => {
+            const table = bootData.tables.find((t) => t.id === id);
+            return table ? Math.max(table.capacity, table.maxCapacity || 0) : 0;
+          })()
       : bootData.combos.find((c) => c.id === id)?.capacity ?? 0;
     const missing = Math.max(0, res.partySize - capacity);
     return {
       rail: false as const, res, kind, id, idx, capacity,
       valid: missing === 0,
       message: missing > 0 ? `mancano ${missing} posti` : undefined,
-      time: toHHMM(startMin + idx * settings.slotMinutes),
-      slots: Math.max(2, Math.round(dur / settings.slotMinutes)),
+      time: toHHMM(startMin + idx * slotMinutes),
+      slots: Math.max(2, Math.round(dur / slotMinutes)),
       colKey: key,
+      staysInCurrentGroup,
     };
   };
 
@@ -214,12 +235,25 @@ export function Piano({ date, day, onTap }: { date: string; day: DayData; onTap:
       setAssignRes(t.res);
       return;
     }
-    const samePlace = (t.kind === "table" && t.res.assignedTableId === t.id) || (t.kind === "combo" && t.res.assignedComboId === t.id);
+    const samePlace = (t.kind === "table" && t.staysInCurrentGroup)
+      || (t.kind === "combo" && t.res.assignedComboId === t.id);
     if (samePlace && t.time === t.res.time) return;
     const label = t.kind === "table"
       ? bootData.tables.find((x) => x.id === t.id)?.label
       : bootData.combos.find((c) => c.id === t.id)?.label;
-    patchAssign(t.res, { tableId: t.kind === "table" ? t.id : null, comboId: t.kind === "combo" ? t.id : null, time: t.time, label });
+    // Se si sposta soltanto l'orario restando nel gruppo corrente, si conserva
+    // l'intera tavolata. Su un tavolo nuovo l'assegnazione diventa singola.
+    patchAssign(t.res, {
+      tableId: t.kind === "table"
+        ? t.staysInCurrentGroup ? t.res.assignedTableId : t.id
+        : null,
+      comboId: t.kind === "combo" ? t.id : null,
+      joinedTableIds: t.kind === "table" && t.staysInCurrentGroup
+        ? (t.res.joinedTableIds ?? [])
+        : [],
+      time: t.time,
+      label,
+    });
   };
 
   const runAuto = async () => {
@@ -328,17 +362,18 @@ export function Piano({ date, day, onTap }: { date: string; day: DayData; onTap:
               {/* Scorre in orizzontale quando i tavoli sono tanti; la colonna
                   degli orari resta agganciata a sinistra per non perdere il riferimento. */}
               <div className="no-scrollbar flex overflow-x-auto rounded-2xl border border-line bg-surface">
-                <div className="sticky left-0 z-30 w-[46px] shrink-0 border-r border-line bg-surface">
-                  <div className="h-[44px] border-b border-line" />
-                  {Array.from({ length: slotCount }).map((_, i) => {
-                    const m = startMin + i * settings.slotMinutes;
-                    return (
-                      <div key={i} style={{ height: ROW_H }}
-                        className={`pr-1 text-right text-[11px] font-bold leading-none tabular-nums ${m % 60 === 0 ? "pt-1.5" : m % 30 === 0 ? "pt-1.5 opacity-60 text-[10px]" : ""} ${isOver(m) ? "bg-soon/15 text-soon" : "text-muted"}`}>
-                        {m % 60 === 0 ? toHHMM(m) : m % 30 === 0 ? toHHMM(m) : ""}
-                      </div>
-                    );
-                  })}
+                <div className="sticky left-0 z-30 w-[58px] shrink-0 border-r border-line bg-surface shadow-[3px_0_5px_rgba(0,0,0,0.04)]">
+                  <div className="flex h-[44px] items-center justify-center border-b border-line text-[10px] font-bold uppercase text-muted">
+                    Ora
+                  </div>
+                  {timelineSlots.map((slot) => (
+                    <div key={`${period.id}-${slot.minute}`} style={{ height: ROW_H }}
+                      className={`flex items-center justify-end pr-1.5 text-[10px] font-semibold tabular-nums ${
+                        slot.label ? "opacity-100" : "opacity-0"
+                      } ${isOver(slot.minute) ? "bg-soon/15 text-soon" : "text-muted"}`}>
+                      {slot.label ?? "·"}
+                    </div>
+                  ))}
                 </div>
                 {/* Larghezza proporzionale ai posti: un tavolo da 8 occupa più spazio
                     di un due-posti, come sulla mappa. Compressa, non lineare: con la

@@ -162,6 +162,24 @@ export function WallLayer({ elements, roomW, roomH, invalidIds, selectedIds }: {
   const walls = elements.filter((e) => e.kind === "wall").map(wallLine);
   if (!walls.length) return null;
   const pad = 80;
+  // Riempimenti QUADRATI nei punti condivisi. Non sono nodi grafici o cerchi:
+  // sono la vera unione dell'area dei due muri, con spigoli netti.
+  const joints: { key: string; x: number; y: number; size: number; invalid: boolean }[] = [];
+  for (let i = 0; i < walls.length; i++) {
+    for (let j = i + 1; j < walls.length; j++) {
+      for (const a of [walls[i].a, walls[i].b]) {
+        for (const b of [walls[j].a, walls[j].b]) {
+          if (Math.hypot(a.x - b.x, a.y - b.y) > 0.75) continue;
+          joints.push({
+            key: `${walls[i].id}-${walls[j].id}-${a.x}-${a.y}`,
+            x: a.x, y: a.y,
+            size: Math.max(walls[i].thickness, walls[j].thickness),
+            invalid: (invalidIds?.has(walls[i].id) ?? false) || (invalidIds?.has(walls[j].id) ?? false),
+          });
+        }
+      }
+    }
+  }
   return (
     <svg className="pointer-events-none absolute z-0 overflow-visible"
       style={{ left: -pad, top: -pad }}
@@ -184,6 +202,12 @@ export function WallLayer({ elements, roomW, roomH, invalidIds, selectedIds }: {
           </g>
         );
       })}
+      {joints.map((joint) => (
+        <rect key={joint.key}
+          x={joint.x - joint.size / 2} y={joint.y - joint.size / 2}
+          width={joint.size} height={joint.size}
+          fill={joint.invalid ? "var(--over)" : "var(--wall)"} />
+      ))}
     </svg>
   );
 }
@@ -235,7 +259,7 @@ export const ElementNode = forwardRef<HTMLDivElement, {
     : undefined;
   return (
     <div ref={ref} onPointerDown={onPointerDown}
-      className={`absolute left-0 top-0 ${isWall ? "z-0" : "z-10"} ${editable ? "cursor-move" : ""}`}
+      className={`absolute left-0 top-0 ${isWall ? (selected ? "z-30" : "z-0") : "z-10"} ${editable ? "cursor-move" : ""}`}
       style={{
         // il riquadro di hit resta quello reale: l'estensione è solo visiva
         width: el.w, height: el.h,
