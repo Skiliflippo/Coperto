@@ -1,10 +1,12 @@
 "use client";
 // ─────────────────────────────────────────────────────────────────────────────
 // EDITOR PIANTINA · full-screen, stile Figma/Miro ma con le parole della sala.
-// Performance: durante il trascinamento si scrive su element.style (nessun
-// re-render per frame); lo stato React si aggiorna al rilascio, con snap a griglia.
-// Vincolo: tavoli, muri e arredi restano SEMPRE dentro il perimetro della sala.
-// Accesso: solo il titolare.
+// Performance ottimizzata per tablet:
+// - Pan/zoom via GPU transform diretta + rAF (nessun re-render per frame)
+// - Drag tavoli/muri via element.style (nessun re-render per frame)
+// - liveWalls e badIds throttled via rAF per evitare re-render continui
+// - PointerEvents unificati con capture, touch-action: none, overscroll: none
+// - will-change + translate3d + backface-visibility per accelerazione hardware
 // ─────────────────────────────────────────────────────────────────────────────
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
@@ -29,8 +31,8 @@ import {
 import { ElementNode, GridBackdrop, PerimeterOverlay, RoomShell, TableNode, WallLayer, type TableNodeData } from "@/components/floor-shapes";
 import type { Bootstrap, Room, TableT } from "@/lib/types";
 
-const STEP = 25;                       // aggancio: mezza cella = 25 cm
-const PANEL_H = 108;                   // altezza reale della card proprietà compatta
+const STEP = 25;
+const PANEL_H = 108;
 const snapG = (v: number) => snapTo(v, STEP);
 type Tool = "select" | "table" | "wall" | "decor" | "perimetro";
 type Sel = { kind: "table" | "element"; id: string } | null;
@@ -58,15 +60,48 @@ export function FloorEditor({ boot, roomId, onClose }: { boot: Bootstrap; roomId
   const [saving, setSaving] = useState(false);
   const [rubber, setRubber] = useState<FloorElement | null>(null);
   const [rubberBad, setRubberBad] = useState(false);
-  const [marquee, setMarquee] = useState<Box | null>(null);   // Ctrl+drag: selezione rettangolare
-  // Posizioni temporanee dei muri durante il drag: WallLayer è SVG condiviso,
-  // quindi non può essere mosso scrivendo sul div trasparente dell'hit area.
+  const [marquee, setMarquee] = useState<Box | null>(null);
   const [liveWalls, setLiveWalls] = useState<Record<string, Partial<FloorElement>>>({});
-  const [badIds, setBadIds] = useState<string[]>([]);   // evidenza durante il trascinamento
+  const [badIds, setBadIds] = useState<string[]>([]);
   const [confirmClose, setConfirmClose] = useState(false);
 
+  // rAF batching per liveWalls e badIds — evita re-render ad ogni pixel su tablet
+  const pendingWalls = useRef<Record<string, Partial<FloorElement>> | null>(null);
+  const pendingBad = useRef<string[] | null>(null);
+  const wallsRaf = useRef<number>(0);
+  const badRaf = useRef<number>(0);
+
+  const scheduleWalls = useCallback((walls: Record<string, Partial<FloorElement>>) => {
+    pendingWalls.current = walls;
+    if (wallsRaf.current) return;
+    wallsRaf.current = requestAnimationFrame(() => {
+      wallsRaf.current = 0;
+      if (pendingWalls.current) {
+        setLiveWalls(pendingWalls.current);
+        pendingWalls.current = null;
+      }
+    });
+  }, []);
+
+  const scheduleBad = useCallback((bad: string[]) => {
+    pendingBad.current = bad;
+    if (badRaf.current) return;
+    badRaf.current = requestAnimationFrame(() => {
+      badRaf.current = 0;
+      if (pendingBad.current) {
+        // Solo se cambiato, per evitare re-render inutili
+        setBadIds((prev) => {
+          const next = pendingBad.current!;
+          if (prev.length === next.length && prev.every((id, i) => id === next[i])) return prev;
+          return next;
+        });
+        pendingBad.current = null;
+      }
+    });
+  }, []);
+
   const bounds = useMemo(() => polygonBounds(polygonOf(draft.layout)), [draft.layout]);
-  const { ref, vp, fit, zoomBy, toWorld, isPanning, bind, revealRect, cancelPan, holdFit } =
+  const { ref, contentRef, gridRef, vp, fit, zoomBy, toWorld, isPanning, bind, revealRect, cancelPan, holdFit } =
     useViewport(draft.layout.w, draft.layout.h, {
       padding: 90, bounds,
     });
@@ -76,14 +111,13 @@ export function FloorEditor({ boot, roomId, onClose }: { boot: Bootstrap; roomId
   const visibleElements = draft.layout.elements.map((element) =>
     liveWalls[element.id] ? { ...element, ...liveWalls[element.id] } : element,
   );
-  const std = boot.settings.standardTableSeats ?? 4;   // tavolo singolo del locale
+  const std = boot.settings.standardTableSeats ?? 4;
   const seatsByTable = useMemo(
     () => computeRoomSeats(draft.tables, poly, draft.layout.elements.map(elementBox)),
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [draft.tables, draft.layout],
   );
 
-  // Ingombri di tutto ciò che occupa spazio: serve a evitare sovrapposizioni.
   const tableBox = (t: TableNodeData): Box => aabb(t.x, t.y, t.width, t.height, t.rotation);
   const allBoxes = useCallback((exceptId?: string): Box[] => [
     ...draft.tables.filter((t) => t.id !== exceptId).map(tableBox),
@@ -108,19 +142,14 @@ export function FloorEditor({ boot, roomId, onClose }: { boot: Bootstrap; roomId
     return f.slice(1);
   });
 
-  // La selezione è una lista: con mouse e tastiera si possono prendere più oggetti
-  // insieme (shift/ctrl). Il pannello proprietà appare solo con un oggetto solo.
   const sel: Sel = selIds.length === 1
     ? { kind: draft.tables.some((t) => t.id === selIds[0]) ? "table" : "element", id: selIds[0] }
     : null;
   const selTable = sel?.kind === "table" ? draft.tables.find((t) => t.id === sel.id) ?? null : null;
   const selEl = sel?.kind === "element" ? draft.layout.elements.find((e) => e.id === sel.id) ?? null : null;
 
-  // OGGETTI FUORI POSTO: fuori dai muri o sovrapposti a un altro.
-  // Durante la modifica si possono creare liberamente — spostare un tavolo fuori
-  // per fare spazio è normale — ma restano segnati in rosso e bloccano il salvataggio.
   const invalidIds = useMemo(() => {
-    const room = polygonOf(draft.layout);
+    const roomPoly = polygonOf(draft.layout);
     const items = [
       ...draft.tables.map((t) => ({ id: t.id, type: "table" as const, box: aabb(t.x, t.y, t.width, t.height, t.rotation) })),
       ...draft.layout.elements.map((e) => ({ id: e.id, type: e.kind, box: elementBox(e) })),
@@ -129,15 +158,13 @@ export function FloorEditor({ boot, roomId, onClose }: { boot: Bootstrap; roomId
     for (const it of items) {
       if (it.type === "wall") {
         const wall = draft.layout.elements.find((e) => e.id === it.id);
-        if (wall && !wallInsideRoom(wall, room)) bad.add(it.id);
-      } else if (!boxInsideRoom(it.box, room)) bad.add(it.id);
+        if (wall && !wallInsideRoom(wall, roomPoly)) bad.add(it.id);
+      } else if (!boxInsideRoom(it.box, roomPoly)) bad.add(it.id);
     }
     for (let i = 0; i < items.length; i++) {
       for (let j = i + 1; j < items.length; j++) {
         if (!boxesOverlap(items[i].box, items[j].box)) continue;
         const a = items[i], b = items[j];
-        // muro+muro = giunto/incrocio valido; muro+arredo = arredo a filo muro.
-        // Un tavolo invece non può stare dentro una parete.
         if ((a.type === "wall" && b.type !== "table") || (b.type === "wall" && a.type !== "table")) continue;
         bad.add(a.id); bad.add(b.id);
       }
@@ -147,8 +174,6 @@ export function FloorEditor({ boot, roomId, onClose }: { boot: Bootstrap; roomId
 
   const isBad = (id: string) => badIds.includes(id) || invalidIds.has(id);
 
-  // Sposta un gruppo di oggetti dello stesso scostamento, agganciando alla griglia
-  // in valore ASSOLUTO: frecce e trascinamento finiscono sempre negli stessi punti.
   const moveSelection = useCallback((ids: string[], dx: number, dy: number) => {
     if (!ids.length) return;
     commit((d) => ({
@@ -158,9 +183,6 @@ export function FloorEditor({ boot, roomId, onClose }: { boot: Bootstrap; roomId
         ...d.layout,
         elements: d.layout.elements.map((e) => {
           if (!ids.includes(e.id)) return e;
-          // Un muro è già costruito fra due punti della griglia: traslandolo di
-          // un passo intero si preservano gli estremi. Non si snappera il suo
-          // angolo top-left, che è sfalsato di metà spessore.
           return e.kind === "wall"
             ? { ...e, x: e.x + snapG(dx), y: e.y + snapG(dy) }
             : { ...e, x: snapG(e.x + dx), y: snapG(e.y + dy) };
@@ -169,36 +191,29 @@ export function FloorEditor({ boot, roomId, onClose }: { boot: Bootstrap; roomId
     }));
   }, [commit]);
 
-  // Cambiando strumento si chiude sempre la selezione precedente: niente pannelli
-  // che restano appesi mentre stai facendo altro.
   const pickTool = (t: Tool) => { setTool(t); setSelIds([]); setDecorPick(false); };
 
-  // Quando selezioni qualcosa, la vista si sposta per non lasciarlo sotto il pannello.
   useEffect(() => {
     if (!sel) return;
     const box = selTable
       ? aabb(selTable.x, selTable.y, selTable.width, selTable.height, selTable.rotation)
       : selEl ? elementBox(selEl) : null;
-    // Il pannello è in basso e la toolbar gli sta sopra: si riserva l'intera
-    // fascia, così il muro/tavolo selezionato non viene coperto.
     if (box) revealRect(box, PANEL_H + 80);
   }, [sel, selTable?.id, selEl?.id]);   // eslint-disable-line react-hooks/exhaustive-deps
 
-  // ── Trascinamento ────────────────────────────────────────────────────────
-  // Scrive direttamente sul DOM (nessun re-render per frame) e committa al
-  // rilascio. Il movimento è LIBERO: si può portare un oggetto fuori dalla sala
-  // o sopra un altro per fare spazio. Resta segnato in rosso e blocca il salvataggio.
+  // ── Trascinamento ottimizzato per tablet ──────────────────────────────────
+  // Scrive direttamente su element.style, liveWalls/badIds throttled via rAF
   const dragNode = (e: React.PointerEvent, id: string) => {
     if (tool !== "select") return;
     e.stopPropagation();
     cancelPan();
+    // Pointer capture per ricevere move anche fuori dal nodo (essenziale su touch)
+    try { (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId); } catch {}
 
-    // shift/ctrl: aggiunge o toglie dalla selezione, senza trascinare
     if (e.shiftKey || e.ctrlKey || e.metaKey) {
       setSelIds((cur) => (cur.includes(id) ? cur.filter((x) => x !== id) : [...cur, id]));
       return;
     }
-    // trascinando un oggetto già selezionato si muove tutto il gruppo
     const group = selIds.includes(id) && selIds.length > 1 ? selIds : [id];
     setSelIds(group);
 
@@ -219,8 +234,6 @@ export function FloorEditor({ boot, roomId, onClose }: { boot: Bootstrap; roomId
       .filter((x): x is NonNullable<typeof x> => !!x);
     if (!items.length) return;
 
-    // Ingombri di tutto ciò che NON si sta muovendo: il tipo serve a distinguere
-    // giunti validi (muro+muro, muro+arredo) dalle collisioni vere.
     const otherItems = [
       ...draft.tables.filter((t) => !group.includes(t.id)).map((t) => ({ type: "table" as const, box: tableBox(t) })),
       ...draft.layout.elements.filter((el) => !group.includes(el.id)).map((el) => ({ type: el.kind, box: elementBox(el) })),
@@ -233,6 +246,8 @@ export function FloorEditor({ boot, roomId, onClose }: { boot: Bootstrap; roomId
 
     let delta = { x: 0, y: 0 };
     let moved = false;
+    let lastBad: string[] = [];
+    let lastWallMoves: Record<string, Partial<FloorElement>> = {};
 
     const move = (ev: PointerEvent) => {
       const p = toWorld(ev.clientX, ev.clientY);
@@ -241,11 +256,8 @@ export function FloorEditor({ boot, roomId, onClose }: { boot: Bootstrap; roomId
 
       if (single) {
         if (single.isWall) {
-          // Il muro intero si muove per multipli della stessa griglia dei suoi
-          // estremi: così entrambi restano sempre punti di ancoraggio validi.
           delta = { x: snapG(dx), y: snapG(dy) };
         } else {
-          // Tavoli e arredi: aggancio assoluto + magnete a muri/oggetti.
           let nx = snapG(single.x + dx);
           let ny = snapG(single.y + dy);
           const raw = boxAt(single, nx, ny);
@@ -255,7 +267,6 @@ export function FloorEditor({ boot, roomId, onClose }: { boot: Bootstrap; roomId
           delta = { x: nx - single.x, y: ny - single.y };
         }
       } else {
-        // Gruppo: stesso scostamento per tutti, agganciato alla griglia.
         delta = { x: snapG(dx), y: snapG(dy) };
       }
 
@@ -271,8 +282,6 @@ export function FloorEditor({ boot, roomId, onClose }: { boot: Bootstrap; roomId
           const top = it.kind === "table" ? ny - it.h / 2 : ny;
           node.style.transform = `translate3d(${left}px, ${top}px, 0) rotate(${it.rotation}deg)`;
         }
-        // Evidenza dal vivo. Muro+muro e muro+arredo sono contatti validi;
-        // tavolo+muro o due mobili/tavoli sovrapposti restano errori.
         const box = boxAt(it, nx, ny);
         const collision = otherItems.some((other) => {
           if (!boxesOverlap(box, other.box)) return false;
@@ -283,29 +292,41 @@ export function FloorEditor({ boot, roomId, onClose }: { boot: Bootstrap; roomId
         const inside = wall ? wallInsideRoom({ ...wall, x: nx, y: ny }, poly) : boxInsideRoom(box, poly);
         if (!inside || collision) bad.push(it.id);
       }
-      setLiveWalls(wallMoves);
-      setBadIds(bad);
+      // Throttle aggiornamenti React via rAF — su tablet riduce da 120 a 60 re-render/sec
+      // e solo se effettivamente cambiato
+      if (JSON.stringify(wallMoves) !== JSON.stringify(lastWallMoves)) {
+        lastWallMoves = wallMoves;
+        scheduleWalls(wallMoves);
+      }
+      if (JSON.stringify(bad) !== JSON.stringify(lastBad)) {
+        lastBad = bad;
+        scheduleBad(bad);
+      }
     };
 
-    const up = () => {
+    const up = (ev: PointerEvent) => {
+      try { (e.currentTarget as HTMLElement).releasePointerCapture((ev as any).pointerId ?? e.pointerId); } catch {}
       window.removeEventListener("pointermove", move);
       window.removeEventListener("pointerup", up);
+      window.removeEventListener("pointercancel", up);
+      if (wallsRaf.current) { cancelAnimationFrame(wallsRaf.current); wallsRaf.current = 0; }
+      if (badRaf.current) { cancelAnimationFrame(badRaf.current); badRaf.current = 0; }
+      pendingWalls.current = null;
+      pendingBad.current = null;
       setBadIds([]);
       setLiveWalls({});
       if (!moved || (delta.x === 0 && delta.y === 0)) return;
       moveSelection(group, delta.x, delta.y);
     };
-    window.addEventListener("pointermove", move);
+    window.addEventListener("pointermove", move, { passive: false });
     window.addEventListener("pointerup", up);
+    window.addEventListener("pointercancel", up);
   };
 
-  // Ridimensionamento di muri e arredi, corretto anche quando l'oggetto è ruotato:
-  // lo spostamento del dito viene proiettato negli assi DELL'OGGETTO, e il lato
-  // opposto resta fermo (il centro si sposta di conseguenza). Senza la proiezione,
-  // su un elemento ruotato trascinare un vertice dava effetti imprevedibili.
   const resizeEl = (e: React.PointerEvent, el: FloorElement, hx: -1 | 0 | 1, hy: -1 | 0 | 1) => {
     e.stopPropagation();
     cancelPan();
+    try { (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId); } catch {}
     const node = nodeRefs.current.get(el.id);
     if (!node) return;
     const start = toWorld(e.clientX, e.clientY);
@@ -317,18 +338,13 @@ export function FloorEditor({ boot, roomId, onClose }: { boot: Bootstrap; roomId
     const move = (ev: PointerEvent) => {
       const p = toWorld(ev.clientX, ev.clientY);
       const dxWorld = p.x - start.x, dyWorld = p.y - start.y;
-      // mondo → assi locali dell'oggetto (rotazione inversa)
       const rawDxLocal = dxWorld * cos + dyWorld * sin;
       const rawDyLocal = -dxWorld * sin + dyWorld * cos;
-      // Il resize dei muri è volutamente più lento e preciso: un movimento del
-      // dito di 100 cm produce 38 cm di muro. Gli arredi restano 1:1.
       const wallDamp = el.kind === "wall" ? 0.38 : 1;
       const dxLocal = rawDxLocal * wallDamp;
       const dyLocal = rawDyLocal * wallDamp;
 
       const min = el.kind === "wall" ? 4 : 15;
-      // Lunghezza sulla griglia da 25 cm; spessore dei muri con passo fine da 2 cm.
-      // Così si può ottenere davvero un muro da 4/6/8/10/12 cm senza saltare a 25.
       const horizontalWall = el.kind === "wall" && el.w >= el.h;
       const verticalWall = el.kind === "wall" && el.h > el.w;
       const snapWidth = verticalWall ? (v: number) => snapTo(v, 2) : snapG;
@@ -336,8 +352,6 @@ export function FloorEditor({ boot, roomId, onClose }: { boot: Bootstrap; roomId
       const w = hx === 0 ? el.w : Math.max(min, snapWidth(el.w + hx * dxLocal));
       const h = hy === 0 ? el.h : Math.max(min, snapHeight(el.h + hy * dyLocal));
 
-      // il bordo opposto resta fisso: il centro si sposta di metà della crescita,
-      // riportata in coordinate mondo
       const shiftLocalX = (hx * (w - el.w)) / 2;
       const shiftLocalY = (hy * (h - el.h)) / 2;
       const center = {
@@ -347,28 +361,32 @@ export function FloorEditor({ boot, roomId, onClose }: { boot: Bootstrap; roomId
       const x = center.x - w / 2, y = center.y - h / 2;
 
       const cand: Box = el.rotation ? aabb(center.x, center.y, w, h, el.rotation) : { x, y, w, h };
-      // Ridimensionamento libero: se sborda resta segnato in rosso e blocca il salvataggio.
-      setBadIds(boxFits(cand, el.id) ? [] : [el.id]);
+      // Throttled
+      scheduleBad(boxFits(cand, el.id) ? [] : [el.id]);
       box = { x, y, w, h };
       node.style.transform = `translate3d(${x}px, ${y}px, 0) rotate(${el.rotation}deg)`;
       node.style.width = `${w}px`;
       node.style.height = `${h}px`;
     };
-    const up = () => {
+    const up = (ev: PointerEvent) => {
+      try { (e.currentTarget as HTMLElement).releasePointerCapture((ev as any).pointerId ?? e.pointerId); } catch {}
       window.removeEventListener("pointermove", move);
       window.removeEventListener("pointerup", up);
+      window.removeEventListener("pointercancel", up);
+      if (badRaf.current) { cancelAnimationFrame(badRaf.current); badRaf.current = 0; }
+      pendingBad.current = null;
       setBadIds([]);
       commit((d) => ({ ...d, layout: { ...d.layout, elements: d.layout.elements.map((x) => (x.id === el.id ? { ...x, ...box } : x)) } }));
     };
-    window.addEventListener("pointermove", move);
+    window.addEventListener("pointermove", move, { passive: false });
     window.addEventListener("pointerup", up);
+    window.addEventListener("pointercancel", up);
   };
 
-  // Ridimensionamento del muro dai suoi due estremi. Non usa gli otto handle dei
-  // mobili: un muro ha una linea iniziale e una finale, entrambe sulla stessa griglia.
   const dragWallEndpoint = (e: React.PointerEvent, el: FloorElement, endpoint: "a" | "b") => {
     e.stopPropagation();
     cancelPan();
+    try { (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId); } catch {}
     const node = nodeRefs.current.get(el.id);
     if (!node) return;
     const original = wallLine(el);
@@ -388,7 +406,6 @@ export function FloorEditor({ boot, roomId, onClose }: { boot: Bootstrap; roomId
       target = snapWallEndpoint(target, otherWalls, poly, STEP, 10);
       if (horizontal) target.y = fixed.y;
       if (vertical) target.x = fixed.x;
-      // impedisce che l'estremo attraversi quello fisso e inverta il muro con un gesto minimo
       if (Math.hypot(target.x - fixed.x, target.y - fixed.y) < STEP) return;
       next = endpoint === "a"
         ? wallFromEndpoints(el.id, target, fixed, original.thickness, el.label)
@@ -396,49 +413,49 @@ export function FloorEditor({ boot, roomId, onClose }: { boot: Bootstrap; roomId
       node.style.transform = `translate3d(${next.x}px, ${next.y}px, 0) rotate(${next.rotation}deg)`;
       node.style.width = `${next.w}px`;
       node.style.height = `${next.h}px`;
-      setLiveWalls({ [el.id]: next });
+      scheduleWalls({ [el.id]: next });
       const nextBox = elementBox(next);
       const hitsTable = draft.tables.some((t) => boxesOverlap(nextBox, tableBox(t)));
-      setBadIds(wallInsideRoom(next, poly) && !hitsTable ? [] : [el.id]);
+      scheduleBad(wallInsideRoom(next, poly) && !hitsTable ? [] : [el.id]);
     };
-    const up = () => {
+    const up = (ev: PointerEvent) => {
+      try { (e.currentTarget as HTMLElement).releasePointerCapture((ev as any).pointerId ?? e.pointerId); } catch {}
       window.removeEventListener("pointermove", move);
       window.removeEventListener("pointerup", up);
+      window.removeEventListener("pointercancel", up);
+      if (wallsRaf.current) { cancelAnimationFrame(wallsRaf.current); wallsRaf.current = 0; }
+      if (badRaf.current) { cancelAnimationFrame(badRaf.current); badRaf.current = 0; }
+      pendingWalls.current = null;
+      pendingBad.current = null;
       setBadIds([]);
       setLiveWalls({});
       patchEl(el.id, next);
     };
-    window.addEventListener("pointermove", move);
+    window.addEventListener("pointermove", move, { passive: false });
     window.addEventListener("pointerup", up);
+    window.addEventListener("pointercancel", up);
   };
 
-  // ── Perimetro: trascina un angolo (anche obliquo), doppio tap per aggiungerlo ──
-  // Ogni vertice può andare in tutte le direzioni: se l'angolo esce dal bordo
-  // alto/sinistro, si trasla l'intera piantina (poligono, tavoli, arredi) così
-  // l'origine resta 0,0 e la sala cresce davvero anche da quei lati.
   const dragCorner = (e: React.PointerEvent, index: number) => {
     e.stopPropagation();
     cancelPan();
-    const before = draft;                 // snapshot: un solo passo di undo per trascinamento
-    holdFit(true);                        // niente re-inquadratura finché tengo il vertice
+    try { (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId); } catch {}
+    const before = draft;
+    holdFit(true);
     const origin = toWorld(e.clientX, e.clientY);
     const startPoint = polygonOf(draft.layout)[index];
-    const DAMP = 0.28;                    // il vertice segue il dito a meno di un terzo
-                                          // di velocità: spostare il perimetro è un'operazione
-                                          // che va fatta con cura, non di getto
+    const DAMP = 0.28;
     let pending: Point | null = null;
     let frame = 0;
 
     const applyPoint = (np: Point) => {
       setDraft((d) => {
         const pts = polygonOf(d.layout).map((q, i) => (i === index ? np : q));
-        // traslazione: quanto sborda oltre il bordo alto/sinistro
         const shiftX = Math.max(0, -Math.min(...pts.map((q) => q.x)));
         const shiftY = Math.max(0, -Math.min(...pts.map((q) => q.y)));
         const moved = pts.map((q) => ({ x: q.x + shiftX, y: q.y + shiftY }));
         const w = Math.max(400, Math.ceil(Math.max(...moved.map((q) => q.x)) / 50) * 50);
         const h = Math.max(400, Math.ceil(Math.max(...moved.map((q) => q.y)) / 50) * 50);
-        // la sala non può crescere all'infinito: oltre il limite il vertice si ferma
         if (w > MAX_ROOM_CM || h > MAX_ROOM_CM) return d;
 
         const elements = shiftX || shiftY
@@ -448,8 +465,6 @@ export function FloorEditor({ boot, roomId, onClose }: { boot: Bootstrap; roomId
           ? d.tables.map((t) => ({ ...t, x: t.x + shiftX, y: t.y + shiftY }))
           : d.tables;
 
-        // Il muro può passare sopra i tavoli: quelli che restano fuori si
-        // segnano in rosso e vanno sistemati prima di salvare.
         return { ...d, tables, layout: { ...d.layout, w, h, polygon: moved, elements } };
       });
     };
@@ -460,25 +475,27 @@ export function FloorEditor({ boot, roomId, onClose }: { boot: Bootstrap; roomId
         x: snapG(startPoint.x + (p.x - origin.x) * DAMP),
         y: snapG(startPoint.y + (p.y - origin.y) * DAMP),
       };
-      // un aggiornamento per frame: il pavimento segue il dito senza scatti
       if (frame) return;
       frame = requestAnimationFrame(() => {
         frame = 0;
         if (pending) applyPoint(pending);
       });
     };
-    const up = () => {
+    const up = (ev: PointerEvent) => {
+      try { (e.currentTarget as HTMLElement).releasePointerCapture((ev as any).pointerId ?? e.pointerId); } catch {}
       window.removeEventListener("pointermove", move);
       window.removeEventListener("pointerup", up);
+      window.removeEventListener("pointercancel", up);
       if (frame) { cancelAnimationFrame(frame); frame = 0; }
       if (pending) applyPoint(pending);
       holdFit(false);
-      fit();                               // a fine trascinamento si reinquadra, una volta sola
+      fit();
       setPast((prev) => [...prev.slice(-40), before]);
       setFuture([]);
     };
-    window.addEventListener("pointermove", move);
+    window.addEventListener("pointermove", move, { passive: false });
     window.addEventListener("pointerup", up);
+    window.addEventListener("pointercancel", up);
   };
   const addCorner = (index: number) => {
     const pts = polygonOf(draft.layout);
@@ -492,11 +509,10 @@ export function FloorEditor({ boot, roomId, onClose }: { boot: Bootstrap; roomId
     commit((d) => ({ ...d, layout: { ...d.layout, polygon: pts.filter((_, i) => i !== index) } }));
   };
 
-  // Ctrl/Cmd + trascinamento sullo sfondo: selezione rettangolare multipla,
-  // come negli editor desktop. Prende ogni oggetto toccato dal riquadro.
   const startMarquee = (e: React.PointerEvent) => {
     e.stopPropagation();
     cancelPan();
+    try { (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId); } catch {}
     const start = toWorld(e.clientX, e.clientY);
     let last: Box = { x: start.x, y: start.y, w: 0, h: 0 };
     const move = (ev: PointerEvent) => {
@@ -507,9 +523,11 @@ export function FloorEditor({ boot, roomId, onClose }: { boot: Bootstrap; roomId
       };
       setMarquee(last);
     };
-    const up = () => {
+    const up = (ev: PointerEvent) => {
+      try { (e.currentTarget as HTMLElement).releasePointerCapture((ev as any).pointerId ?? e.pointerId); } catch {}
       window.removeEventListener("pointermove", move);
       window.removeEventListener("pointerup", up);
+      window.removeEventListener("pointercancel", up);
       setMarquee(null);
       if (last.w < 5 && last.h < 5) { setSelIds([]); return; }
       const selected = [
@@ -518,11 +536,11 @@ export function FloorEditor({ boot, roomId, onClose }: { boot: Bootstrap; roomId
       ];
       setSelIds(selected);
     };
-    window.addEventListener("pointermove", move);
+    window.addEventListener("pointermove", move, { passive: false });
     window.addEventListener("pointerup", up);
+    window.addEventListener("pointercancel", up);
   };
 
-  // ── Sfondo: pan · piazza tavolo · disegna muro/arredo ──────────────────────
   const onCanvasDown = (e: React.PointerEvent) => {
     if (tool === "select") {
       if (e.ctrlKey || e.metaKey) startMarquee(e);
@@ -533,7 +551,6 @@ export function FloorEditor({ boot, roomId, onClose }: { boot: Bootstrap; roomId
 
     if (tool === "table") {
       const p = toWorld(e.clientX, e.clientY);
-      // un rettangolare parte da due tavoli accostati; i coperti si regolano dopo
       const cap = newShape === "round" ? 2 : newShape === "square" ? 4 : std * 2;
       const units = newShape === "rect" ? 2 : 1;
       const g = tableGeometry(cap, newShape, std, units);
@@ -553,9 +570,6 @@ export function FloorEditor({ boot, roomId, onClose }: { boot: Bootstrap; roomId
       return;
     }
 
-    // MURO: si disegna da estremo a estremo sulla stessa griglia. Il lato corto
-    // è centrato sulla linea, quindi un orizzontale e un verticale possono
-    // condividere lo STESSO identico punto di ancoraggio.
     if (tool === "wall") {
       const existingWalls = draft.layout.elements.filter((el) => el.kind === "wall");
       const rawStart = toWorld(e.clientX, e.clientY);
@@ -566,7 +580,6 @@ export function FloorEditor({ boot, roomId, onClose }: { boot: Bootstrap; roomId
         const horizontal = Math.abs(p.x - start.x) >= Math.abs(p.y - start.y);
         const axisPoint = horizontal ? { x: p.x, y: start.y } : { x: start.x, y: p.y };
         const end = snapWallEndpoint(axisPoint, existingWalls, poly, STEP);
-        // mantiene l'asse perfetto anche dopo il magnete
         if (horizontal) end.y = start.y;
         else end.x = start.x;
         current = wallFromEndpoints("rubber", start, end, 10);
@@ -578,6 +591,7 @@ export function FloorEditor({ boot, roomId, onClose }: { boot: Bootstrap; roomId
       const up = () => {
         window.removeEventListener("pointermove", move);
         window.removeEventListener("pointerup", up);
+        window.removeEventListener("pointercancel", up);
         setRubber(null);
         setRubberBad(false);
         setTool("select");
@@ -588,12 +602,12 @@ export function FloorEditor({ boot, roomId, onClose }: { boot: Bootstrap; roomId
         commit((d) => ({ ...d, layout: { ...d.layout, elements: [...d.layout.elements, wall] } }));
         setSelIds([wall.id]);
       };
-      window.addEventListener("pointermove", move);
+      window.addEventListener("pointermove", move, { passive: false });
       window.addEventListener("pointerup", up);
+      window.addEventListener("pointercancel", up);
       return;
     }
 
-    // ARREDO: si disegna come un rettangolo libero sulla griglia.
     const s0 = toWorld(e.clientX, e.clientY);
     let box: FloorElement | null = null;
     const move = (ev: PointerEvent) => {
@@ -610,6 +624,7 @@ export function FloorEditor({ boot, roomId, onClose }: { boot: Bootstrap; roomId
     const up = () => {
       window.removeEventListener("pointermove", move);
       window.removeEventListener("pointerup", up);
+      window.removeEventListener("pointercancel", up);
       setRubber(null);
       setRubberBad(false);
       setTool("select");
@@ -622,8 +637,9 @@ export function FloorEditor({ boot, roomId, onClose }: { boot: Bootstrap; roomId
       commit((d) => ({ ...d, layout: { ...d.layout, elements: [...d.layout.elements, el] } }));
       setSelIds([el.id]);
     };
-    window.addEventListener("pointermove", move);
+    window.addEventListener("pointermove", move, { passive: false });
     window.addEventListener("pointerup", up);
+    window.addEventListener("pointercancel", up);
   };
 
   const patchTable = (id: string, p: Partial<TableNodeData>) =>
@@ -642,7 +658,6 @@ export function FloorEditor({ boot, roomId, onClose }: { boot: Bootstrap; roomId
     commit((d) => ({
       ...d,
       tables: d.tables.filter((t) => !selIds.includes(t.id)),
-      // i tavoli già salvati vanno segnalati al server come rimossi
       deleted: [...d.deleted, ...selIds.filter((id) => boot.tables.some((t) => t.id === id))],
       layout: { ...d.layout, elements: d.layout.elements.filter((e) => !selIds.includes(e.id)) },
     }));
@@ -652,8 +667,6 @@ export function FloorEditor({ boot, roomId, onClose }: { boot: Bootstrap; roomId
   const setCapacity = (t: TableNodeData, cap: number) => {
     const c = clamp(cap, 1, 80);
     const nextMax = Math.max(c, t.maxCapacity ?? c);
-    // Mantiene la lunghezza già scelta (rettangolare da 4 = due tavoli), ma se
-    // i coperti richiedono più unità la allunga automaticamente.
     const existingUnits = t.shape === "rect" ? tableLengthUnits(t.width, std) : 1;
     const requiredUnits = tableUnits(Math.max(c, nextMax), std);
     const units = Math.max(existingUnits, requiredUnits);
@@ -685,7 +698,6 @@ export function FloorEditor({ boot, roomId, onClose }: { boot: Bootstrap; roomId
       if ((e.target as HTMLElement)?.tagName === "INPUT") return;
       if (e.key === "Escape") { selIds.length ? setSelIds([]) : tool !== "select" ? setTool("select") : onClose(); }
       if ((e.key === "Delete" || e.key === "Backspace") && selIds.length) { e.preventDefault(); removeSel(); }
-      // ctrl/cmd+A: prende tutto, comodo per spostare in blocco
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "a") {
         e.preventDefault();
         setSelIds([...draft.tables.map((t) => t.id), ...draft.layout.elements.map((x) => x.id)]);
@@ -694,7 +706,6 @@ export function FloorEditor({ boot, roomId, onClose }: { boot: Bootstrap; roomId
       if (e.key.toLowerCase() === "t") pickTool("table");
       if (e.key.toLowerCase() === "m") pickTool("wall");
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "z") { e.preventDefault(); e.shiftKey ? redo() : undo(); }
-      // Frecce: stesso passo e stesso aggancio del trascinamento, sull'intera selezione.
       const nudge = e.shiftKey ? STEP * 4 : STEP;
       const dir: Record<string, [number, number]> = {
         ArrowLeft: [-nudge, 0], ArrowRight: [nudge, 0], ArrowUp: [0, -nudge], ArrowDown: [0, nudge],
@@ -709,7 +720,6 @@ export function FloorEditor({ boot, roomId, onClose }: { boot: Bootstrap; roomId
     return () => window.removeEventListener("keydown", h);
   });
 
-  // Porta in vista il primo oggetto fuori posto e lo seleziona.
   const focusInvalid = () => {
     const id = [...invalidIds][0];
     if (!id) return;
@@ -723,8 +733,6 @@ export function FloorEditor({ boot, roomId, onClose }: { boot: Bootstrap; roomId
   };
 
   const save = async () => {
-    // Si può disporre la sala come si vuole mentre si lavora, ma non si salva
-    // una piantina con tavoli fuori dai muri o sovrapposti.
     if (invalidIds.size) {
       toast({
         title: `${invalidIds.size} ${invalidIds.size === 1 ? "oggetto è fuori posto" : "oggetti sono fuori posto"}`,
@@ -777,11 +785,29 @@ export function FloorEditor({ boot, roomId, onClose }: { boot: Bootstrap; roomId
         </button>
       </div>
 
-      <div ref={ref} {...bind} onPointerDown={onCanvasDown}
-        className={`relative flex-1 touch-none overflow-hidden bg-bg ${tool === "select" ? (isPanning ? "cursor-grabbing" : "cursor-grab") : "cursor-crosshair"}`}>
-        <GridBackdrop vp={vp} strong />
-        <div className="absolute left-0 top-0 origin-top-left"
-          style={{ transform: `translate3d(${vp.panX}px, ${vp.panY}px, 0) scale(${vp.zoom})` }}>
+      <div
+        ref={ref}
+        onPointerMove={bind.onPointerMove}
+        onPointerUp={bind.onPointerUp}
+        onPointerCancel={bind.onPointerCancel}
+        onPointerDown={onCanvasDown}
+        className={`floor-viewport relative flex-1 overflow-hidden bg-bg ${tool === "select" ? (isPanning ? "cursor-grabbing" : "cursor-grab") : "cursor-crosshair"}`}
+        style={{
+          ...(bind.style as any),
+          willChange: isPanning ? "transform" : undefined,
+        }}
+      >
+        <GridBackdrop ref={gridRef} vp={vp} strong />
+        <div ref={contentRef}
+          className="floor-content absolute left-0 top-0 origin-top-left"
+          style={{
+            transform: `translate3d(${vp.panX}px, ${vp.panY}px, 0) scale(${vp.zoom})`,
+            willChange: "transform",
+            backfaceVisibility: "hidden",
+            WebkitBackfaceVisibility: "hidden" as any,
+            transformStyle: "preserve-3d",
+            contain: "layout style paint",
+          }}>
           <RoomShell w={draft.layout.w} h={draft.layout.h} polygon={draft.layout.polygon} />
           {marquee && (
             <div className="pointer-events-none absolute z-40 border-2 border-dashed border-brand bg-brand/10"
@@ -797,8 +823,6 @@ export function FloorEditor({ boot, roomId, onClose }: { boot: Bootstrap; roomId
             selectedIds={new Set(selIds)} />
           <PerimeterOverlay w={draft.layout.w} h={draft.layout.h} polygon={draft.layout.polygon} />
 
-          {/* Muri al livello inferiore, arredi sopra: un mobile appoggiato al muro
-              non viene coperto dalla parete. */}
           {[...draft.layout.elements]
             .sort((a, b) => Number(a.kind === "decor") - Number(b.kind === "decor"))
             .map((el) => (
@@ -807,7 +831,6 @@ export function FloorEditor({ boot, roomId, onClose }: { boot: Bootstrap; roomId
               onPointerDown={(e) => dragNode(e, el.id)}>
               {sel?.kind === "element" && sel.id === el.id && tool === "select" && (
                 el.kind === "wall" ? (
-                  // Solo i due veri estremi del segmento, entrambi sulla griglia comune.
                   (["a", "b"] as const).map((end) => {
                     const horizontal = el.w >= el.h;
                     const first = end === "a";
@@ -819,6 +842,7 @@ export function FloorEditor({ boot, roomId, onClose }: { boot: Bootstrap; roomId
                           left: `calc(${horizontal ? (first ? "0%" : "100%") : "50%"} - ${12 / vp.zoom}px)`,
                           top: `calc(${horizontal ? "50%" : (first ? "0%" : "100%")} - ${12 / vp.zoom}px)`,
                           cursor: horizontal ? "ew-resize" : "ns-resize",
+                          touchAction: "none",
                         }} />
                     );
                   })
@@ -831,6 +855,7 @@ export function FloorEditor({ boot, roomId, onClose }: { boot: Bootstrap; roomId
                         left: `calc(${hx === -1 ? "0%" : hx === 1 ? "100%" : "50%"} - ${13 / vp.zoom}px)`,
                         top: `calc(${hy === -1 ? "0%" : hy === 1 ? "100%" : "50%"} - ${13 / vp.zoom}px)`,
                         cursor: rotatedCursor(hx, hy, el.rotation),
+                        touchAction: "none",
                       }} />
                   ))
                 )
@@ -849,7 +874,6 @@ export function FloorEditor({ boot, roomId, onClose }: { boot: Bootstrap; roomId
               onPointerDown={(e) => dragNode(e, t.id)} />
           ))}
 
-          {/* maniglie del perimetro: qui nascono i muri obliqui */}
           {tool === "perimetro" && poly.map((p, i) => {
             const next = poly[(i + 1) % poly.length];
             const mid = { x: (p.x + next.x) / 2, y: (p.y + next.y) / 2 };
@@ -858,7 +882,7 @@ export function FloorEditor({ boot, roomId, onClose }: { boot: Bootstrap; roomId
               <div key={i}>
                 <span onPointerDown={(e) => dragCorner(e, i)} onDoubleClick={() => removeCorner(i)}
                   className="absolute cursor-move rounded-full border-[4px] border-brand bg-surface shadow"
-                  style={{ width: r, height: r, left: p.x - r / 2, top: p.y - r / 2 }} />
+                  style={{ width: r, height: r, left: p.x - r / 2, top: p.y - r / 2, touchAction: "none" as any }} />
                 <span onPointerDown={(e) => { e.stopPropagation(); addCorner(i); }}
                   className="absolute grid cursor-copy place-items-center rounded-full bg-brand/85 text-on-brand"
                   style={{ width: r * 0.8, height: r * 0.8, left: mid.x - r * 0.4, top: mid.y - r * 0.4, fontSize: r * 0.5 }}>
@@ -885,7 +909,6 @@ export function FloorEditor({ boot, roomId, onClose }: { boot: Bootstrap; roomId
         )}
       </div>
 
-      {/* Scelta arredo: compare sopra la toolbar, si chiude da sola dopo la scelta */}
       {decorPick && (
         <div className="absolute inset-x-0 z-20 flex justify-center px-3" style={{ bottom: `calc(env(safe-area-inset-bottom) + ${selIds.length ? PANEL_H + 84 : 84}px)` }}>
           <div className="grid max-w-md grid-cols-5 gap-1.5 rounded-3xl border border-line bg-surface p-2 shadow-2xl">
@@ -899,13 +922,12 @@ export function FloorEditor({ boot, roomId, onClose }: { boot: Bootstrap; roomId
         </div>
       )}
 
-      {/* TOOLBAR */}
       <div className="pointer-events-none absolute inset-x-0 flex justify-center px-3"
         style={{ bottom: `calc(env(safe-area-inset-bottom) + ${selIds.length ? PANEL_H + 14 : 16}px)` }}>
         <div className="pointer-events-auto flex items-center gap-1.5 rounded-3xl border border-line bg-surface/95 p-1.5 shadow-2xl backdrop-blur">
           <ToolBtn active={tool === "select"} onClick={() => pickTool("select")} icon={<MousePointer2 className="h-5 w-5" />} label="Sposta" />
           <div className="flex items-center gap-1 rounded-2xl bg-raised/60 p-1">
-            {([["round", <CircleDot key="a" className="h-4 w-4" />], ["square", <Square key="b" className="h-4 w-4" />], ["rect", <RectangleHorizontal key="c" className="h-4 w-4" />]] as const).map(([sh, ic]) => (
+            {([[ "round", <CircleDot key="a" className="h-4 w-4" />], ["square", <Square key="b" className="h-4 w-4" />], ["rect", <RectangleHorizontal key="c" className="h-4 w-4" />]] as const).map(([sh, ic]) => (
               <button key={sh} onClick={() => { setNewShape(sh as TableShape); pickTool("table"); }}
                 className={`grid h-11 w-11 place-items-center rounded-xl active:scale-95 ${tool === "table" && newShape === sh ? "bg-brand text-on-brand" : "bg-surface"}`}
                 aria-label={`Tavolo ${sh === "round" ? "tondo" : sh === "square" ? "quadrato" : "rettangolare"}`}>
@@ -919,7 +941,6 @@ export function FloorEditor({ boot, roomId, onClose }: { boot: Bootstrap; roomId
         </div>
       </div>
 
-      {/* PANNELLO PROPRIETÀ · compatto, largo quanto serve, non un rettangolone */}
       {selIds.length > 1 && (
         <ContextPanel onClose={() => setSelIds([])}
           title={`${selIds.length} oggetti selezionati`}
@@ -1042,8 +1063,6 @@ export function FloorEditor({ boot, roomId, onClose }: { boot: Bootstrap; roomId
                   <option value="generico">Altro</option>
                 </select>
 
-                {/* Cinque sfumature pastello: colore visibile, ma non ruba
-                    attenzione agli stati operativi dei tavoli. */}
                 <div className="flex h-11 shrink-0 items-center gap-1 rounded-xl bg-raised px-1.5" title="Sfumatura arredo">
                   {DECOR_TONES.map((tone) => (
                     <button key={tone.id} onClick={() => patchEl(selEl.id, { tone: tone.id as DecorTone })}
@@ -1086,8 +1105,6 @@ export function FloorEditor({ boot, roomId, onClose }: { boot: Bootstrap; roomId
   );
 }
 
-// Il cursore deve indicare la direzione REALE di ridimensionamento: su un oggetto
-// ruotato di 90° la maniglia destra allarga in verticale.
 function rotatedCursor(hx: -1 | 0 | 1, hy: -1 | 0 | 1, rotation: number): string {
   const base = Math.atan2(hy, hx) * (180 / Math.PI);
   const angle = ((base + rotation) % 180 + 180) % 180;
@@ -1119,7 +1136,6 @@ function ToolBtn({ active, onClick, icon, label }: { active: boolean; onClick: (
   );
 }
 
-// Scheda proprietà: una card centrata, non una fascia che copre mezzo schermo.
 function ContextPanel({ title, subtitle, children, onClose }: {
   title: string; subtitle?: string; children: React.ReactNode; onClose: () => void;
 }) {

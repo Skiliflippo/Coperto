@@ -130,15 +130,63 @@
   background-color: var(--wall);
 }
 
-html { -webkit-tap-highlight-color: transparent; }
+html {
+  -webkit-tap-highlight-color: transparent;
+  /* Previene zoom doppio tap e scroll elastico su iOS */
+  touch-action: manipulation;
+  overscroll-behavior: none;
+  -webkit-text-size-adjust: 100%;
+}
 body {
   background: var(--bg);
   color: var(--ink);
   font-size: 17px;
+  overscroll-behavior: none;
   overscroll-behavior-y: none;
+  /* Evita rimbalzo elastico su Safari iOS */
+  -webkit-overflow-scrolling: touch;
+  /* GPU layer per body su tablet */
+  transform: translateZ(0);
 }
-button { touch-action: manipulation; user-select: none; }
+button { touch-action: manipulation; user-select: none; -webkit-user-select: none; }
 input, textarea { font-size: 17px; }
+
+/* ── Ottimizzazioni Touch per mappa sala ──
+   Queste regole prevengono conflitti tra scroll nativo e gesti mappa,
+   e forzano accelerazione GPU su Safari iOS / Chrome Android */
+.floor-viewport {
+  touch-action: none !important;
+  overscroll-behavior: none !important;
+  -webkit-user-select: none !important;
+  user-select: none !important;
+  -webkit-touch-callout: none !important;
+  -webkit-tap-highlight-color: transparent !important;
+  /* Crea un nuovo stacking context GPU */
+  isolation: isolate;
+  will-change: transform;
+  transform: translateZ(0);
+  backface-visibility: hidden;
+  -webkit-backface-visibility: hidden;
+}
+
+.floor-content {
+  will-change: transform;
+  transform: translateZ(0);
+  backface-visibility: hidden;
+  -webkit-backface-visibility: hidden;
+  transform-style: preserve-3d;
+  /* Contenimento layout per ridurre reflow su tablet */
+  contain: layout style paint;
+}
+
+/* Tavoli: layer GPU separato per evitare repaint durante pan */
+.floor-table {
+  will-change: transform;
+  transform: translateZ(0);
+  backface-visibility: hidden;
+  -webkit-backface-visibility: hidden;
+  contain: layout style paint;
+}
 ::selection { background: color-mix(in srgb, var(--brand) 30%, transparent); }
 
 .no-scrollbar::-webkit-scrollbar { display: none; }
