@@ -6,6 +6,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 import type { Combo, Period, Reservation, Settings, TableT } from "./types";
 import { findJoinProposals } from "./join";
+import { planLargeParty } from "./large-party";
 import { toMin } from "./time";
 import { durationFor } from "./estimates";
 
@@ -14,7 +15,7 @@ export type Proposal = {
   target:
     | { kind: "table"; table: TableT }
     | { kind: "combo"; combo: Combo }
-    | { kind: "join"; tables: TableT[]; label: string };   // tavoli da accostare
+    | { kind: "join"; tables: TableT[]; label: string; zones?: number }; // accostati o distribuiti
   reason: string;
 };
 export type Skipped = { reservationId: string; name: string; partySize: number; time: string; reason: string };
@@ -47,6 +48,7 @@ export function autoAssign(params: {
     const dur = durationFor(r.partySize, pName, settings);
     const s = toMin(r.time), e = s + dur + buf, lbl = `${r.guestName} ${r.time}`;
     if (r.assignedTableId) pushBusy(r.assignedTableId, s, e, lbl);
+    for (const tid of r.joinedTableIds ?? []) pushBusy(tid, s, e, lbl);
     if (r.assignedComboId) {
       const c = combos.find((x) => x.id === r.assignedComboId);
       c?.tableIds.forEach((id) => pushBusy(id, s, e, lbl));
@@ -100,9 +102,30 @@ export function autoAssign(params: {
       }
     }
     if (!cands.length) {
+      // Gruppo molto grande: se una singola catena non basta, lo si distribuisce
+      // su poche zone vicine. È una proposta spiegabile, non un fallimento generico.
+      const libere = tables.filter((t) => t.state !== "fuori_servizio" && freeAt(t.id, s, e));
+      const large = planLargeParty({
+        party: r.partySize,
+        tables: libere,
+        maxGapCm: gap,
+        preferredRoomId: wanted,
+      });
+      if (large.complete && large.tables.length) {
+        const label = large.tables.map((t) => t.label).join("+");
+        proposals.push({
+          reservationId: r.id, name: r.guestName, partySize: r.partySize, time: r.time,
+          target: { kind: "join", tables: large.tables, label, zones: large.groups.length },
+          reason: large.reason,
+        });
+        for (const table of large.tables) pushBusy(table.id, s, e, r.guestName);
+        continue;
+      }
       skipped.push({
         reservationId: r.id, name: r.guestName, partySize: r.partySize, time: r.time,
-        reason: `Nessun tavolo libero dalle ${r.time} per ${dur} min + ${buf} di riassetto`,
+        reason: large.shortfall > 0
+          ? `${large.totalSeats} posti liberi · ne mancano ${large.shortfall}`
+          : `Nessun tavolo libero dalle ${r.time} per ${dur} min + ${buf} di riassetto`,
       });
       continue;
     }

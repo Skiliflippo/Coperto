@@ -3,7 +3,7 @@
 // Tutto in coordinate mondo (cm); la scala la applica il contenitore trasformato.
 import { forwardRef, useId } from "react";
 import {
-  CM_PER_CELL, rectPolygon, tableSeats, wallLine,
+  CM_PER_CELL, DECOR_TONES, clamp, rectPolygon, tableSeats, wallLine,
   type DecorIcon, type FloorElement, type Point, type TableShape,
 } from "@/lib/floor";
 import type { Viewport } from "@/lib/use-viewport";
@@ -80,16 +80,22 @@ export const TableNode = forwardRef<HTMLDivElement, {
 });
 
 // Disegno dell'arredo in base al tipo: un bancone non è una scala.
-function DecorFace({ icon, w, h, label, labelRotation = 0 }: {
-  icon: DecorIcon; w: number; h: number; label: string; labelRotation?: number;
+function DecorFace({ icon, w, h, label, labelRotation = 0, labelScale = 1, textColor }: {
+  icon: DecorIcon; w: number; h: number; label: string;
+  labelRotation?: number; labelScale?: number; textColor?: string;
 }) {
   const common = "absolute inset-0";
-  // L'etichetta resta SEMPRE dentro l'oggetto: il corpo scala con il lato corto,
-  // e si riduce ancora se il nome è lungo rispetto alla larghezza disponibile.
-  const usableW = w * 0.86, usableH = h * 0.7;
-  const byHeight = usableH * 0.5;
-  const byWidth = label ? (usableW / Math.max(3, label.length)) * 1.7 : byHeight;
-  const fs = Math.max(7, Math.min(byHeight, byWidth, Math.min(w, h) * 0.3));
+  // Il nome usa lo spazio REALE dopo la rotazione: a 90° larghezza e altezza si
+  // scambiano. Prima il calcolo ignorava questo e tagliava testo che sarebbe entrato.
+  const quarterTurn = Math.abs(labelRotation % 180) === 90;
+  const usableW = (quarterTurn ? h : w) * 0.86;
+  const usableH = (quarterTurn ? w : h) * 0.68;
+  // Stima conservativa della larghezza media di una lettera bold (~0.58em).
+  const fitByWidth = label ? usableW / (Math.max(1, label.length) * 0.58) : usableH;
+  const autoSize = Math.min(usableH * 0.58, fitByWidth, 24);
+  const fs = clamp(autoSize * clamp(labelScale, 0.6, 1.5), 6, 30);
+  const estimatedWidth = label.length * fs * 0.58;
+  const mustEllipsize = estimatedWidth > usableW + 1;
   return (
     <>
       {icon === "scala" && (
@@ -124,14 +130,18 @@ function DecorFace({ icon, w, h, label, labelRotation = 0 }: {
       {label && icon !== "pilastro" && (
         // Nessuna contro-rotazione: il nome segue l'orientamento dell'arredo,
         // come è scritto davvero su una piantina.
-        <span className={`${common} grid place-items-center overflow-hidden px-[6%] text-center font-sans font-bold uppercase leading-none tracking-wide text-muted`}
+        <span className="absolute left-1/2 top-1/2 grid place-items-center overflow-hidden text-center font-sans font-bold uppercase leading-none tracking-wide"
+          title={mustEllipsize ? label : undefined}
           style={{
+            width: usableW,
+            height: usableH,
             fontSize: fs,
+            color: textColor,
             whiteSpace: "nowrap",
-            textOverflow: "ellipsis",
-            transform: `rotate(${labelRotation}deg)`,
+            textOverflow: mustEllipsize ? "ellipsis" : "clip",
+            transform: `translate(-50%, -50%) rotate(${labelRotation}deg)`,
           }}>
-          <span className="max-w-full overflow-hidden text-ellipsis whitespace-nowrap">{label}</span>
+          <span className={`max-w-full whitespace-nowrap ${mustEllipsize ? "overflow-hidden text-ellipsis" : ""}`}>{label}</span>
         </span>
       )}
     </>
@@ -211,6 +221,8 @@ export const ElementNode = forwardRef<HTMLDivElement, {
 }>(function ElementNode({ el, selected, editable, invalid, onPointerDown, children }, ref) {
   const isWall = el.kind === "wall";
   const isPlant = el.icon === "pianta";
+  const decorTone = DECOR_TONES.find((tone) => tone.id === (el.tone ?? (isPlant ? "verde" : "neutro")))
+    ?? DECOR_TONES[0];
   // Mezzo spessore di estensione SOLO agli estremi della lunghezza. Estendere
   // anche sopra/sotto raddoppiava visivamente lo spessore: un muro salvato da
   // 6 cm sembrava ancora da 12.
@@ -240,11 +252,14 @@ export const ElementNode = forwardRef<HTMLDivElement, {
           <DecorFace icon="pianta" w={el.w} h={el.h} label="" />
         </div>
       ) : (
-        <div className={`relative h-full w-full overflow-hidden rounded-md border-[5px] border-oos/45 bg-oos/15 ${selected && !invalid ? "outline outline-[6px] outline-brand" : ""} ${invalid ? "!border-[6px] !border-dashed !border-over !bg-over/25" : ""}`}>
+        <div className={`relative h-full w-full overflow-hidden rounded-md border-[5px] ${selected && !invalid ? "outline outline-[6px] outline-brand" : ""} ${invalid ? "!border-[6px] !border-dashed !border-over !bg-over/25" : ""}`}
+          style={{ backgroundColor: decorTone.fill, borderColor: decorTone.border }}>
           <DecorFace
             icon={el.icon ?? "generico"}
             w={el.w} h={el.h} label={el.label}
-            labelRotation={el.labelRotation ?? 0} />
+            labelRotation={el.labelRotation ?? 0}
+            labelScale={el.labelScale ?? 1}
+            textColor={decorTone.text} />
         </div>
       )}
       {children}
@@ -293,24 +308,13 @@ export function RoomShell({ w, h, polygon }: { w: number; h: number; polygon?: P
   const maxX = Math.max(w, ...xs) + pad, maxY = Math.max(h, ...ys) + pad;
   const vw = maxX - minX, vh = maxY - minY;
   const pts = poly.map((p) => `${p.x},${p.y}`).join(" ");
-  // ID stabile: se cambiasse a ogni frame (es. derivato dalle dimensioni) il
-  // browser perderebbe il riferimento url(#id) mentre trascini un angolo e il
-  // pavimento sparirebbe a intermittenza.
-  const id = useId();
-  const T = PERIMETER_THICKNESS;   // spessore muro in cm, tutto verso l'esterno
   return (
     <svg className="pointer-events-none absolute" width={vw} height={vh}
       style={{ left: minX, top: minY }} viewBox={`${minX} ${minY} ${vw} ${vh}`}>
-      <defs>
-        <mask id={id}>
-          <rect x={minX} y={minY} width={vw} height={vh} fill="white" />
-          <polygon points={pts} fill="black" />
-        </mask>
-      </defs>
+      {/* Solo pavimento: il muro esterno è disegnato una volta sola dal
+          PerimeterOverlay, sopra ai divisori interni. */}
       <polygon points={pts} fill="var(--surface)" />
-      <polygon points={pts} fill="none" stroke="var(--oos)" strokeWidth={T * 2}
-        strokeLinejoin="miter" strokeLinecap="square" mask={`url(#${id})`} opacity={0.85} />
-      <polygon points={pts} fill="none" stroke="var(--line)" strokeWidth={2} strokeLinejoin="round" />
+      <polygon points={pts} fill="none" stroke="var(--line)" strokeWidth={1} />
     </svg>
   );
 }

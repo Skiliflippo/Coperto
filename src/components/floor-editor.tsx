@@ -17,19 +17,19 @@ import { useSession } from "@/store/session";
 import { toast } from "@/components/toast";
 import { useViewport } from "@/lib/use-viewport";
 import {
-  DECOR_PRESETS, MAX_ROOM_CM, aabb, boxInsideRoom, boxesOverlap, clamp, clampPointToRoom, computeRoomSeats,
+  DECOR_PRESETS, DECOR_TONES, MAX_ROOM_CM, aabb, boxInsideRoom, boxesOverlap, clamp, clampPointToRoom, computeRoomSeats,
   suggestedSplitParts,
   polygonBounds,
   elementBox, iconFromLabel, normalizeLayout, polygonOf, rectPolygon,
   shapeForCapacity, snapBoxToWalls, snapTo, snapWallEndpoint, tableGeometry,
-  tableLengthUnits, tableUnits, uid, wallFromEndpoints, wallInsideRoom, wallLine,
-  type Box, type DecorIcon, type FloorElement, type Point, type RoomLayout, type TableShape,
+  tableLengthUnits, tableUnits, uid, unitTableSide, wallFromEndpoints, wallInsideRoom, wallLine,
+  type Box, type DecorIcon, type DecorTone, type FloorElement, type Point, type RoomLayout, type TableShape,
 } from "@/lib/floor";
 import { ElementNode, GridBackdrop, PerimeterOverlay, RoomShell, TableNode, WallLayer, type TableNodeData } from "@/components/floor-shapes";
 import type { Bootstrap, Room, TableT } from "@/lib/types";
 
 const STEP = 25;                       // aggancio: mezza cella = 25 cm
-const PANEL_H = 150;                   // ingombro del pannello proprietà
+const PANEL_H = 240;                   // pannello + toolbar: l'oggetto deve restare sopra
 const snapG = (v: number) => snapTo(v, STEP);
 type Tool = "select" | "table" | "wall" | "decor" | "perimetro";
 type Sel = { kind: "table" | "element"; id: string } | null;
@@ -782,7 +782,7 @@ export function FloorEditor({ boot, roomId, onClose }: { boot: Bootstrap; roomId
               style={{ left: marquee.x, top: marquee.y, width: marquee.w, height: marquee.h }} />
           )}
           <WallLayer
-            elements={rubber?.kind === "wall" ? [...draft.layout.elements, rubber] : draft.layout.elements}
+            elements={rubber?.kind === "wall" ? [...visibleElements, rubber] : visibleElements}
             roomW={draft.layout.w} roomH={draft.layout.h}
             invalidIds={new Set([
               ...invalidIds,
@@ -863,7 +863,7 @@ export function FloorEditor({ boot, roomId, onClose }: { boot: Bootstrap; roomId
           })}
         </div>
 
-        <div className="absolute bottom-4 right-3 flex flex-col gap-1.5" style={{ bottom: sel ? PANEL_H + 16 : 16 }}>
+        <div className="absolute bottom-4 right-3 flex flex-col gap-1.5" style={{ bottom: selIds.length ? PANEL_H + 16 : 16 }}>
           <button onClick={() => zoomBy(1.25)} className="grid h-11 w-11 place-items-center rounded-2xl bg-surface shadow-lg ring-1 ring-line active:scale-95" aria-label="Ingrandisci"><ZoomIn className="h-5 w-5" /></button>
           <button onClick={() => zoomBy(0.8)} className="grid h-11 w-11 place-items-center rounded-2xl bg-surface shadow-lg ring-1 ring-line active:scale-95" aria-label="Riduci"><ZoomOut className="h-5 w-5" /></button>
           <button onClick={fit} className="grid h-11 w-11 place-items-center rounded-2xl bg-surface shadow-lg ring-1 ring-line active:scale-95" aria-label="Adatta"><Maximize2 className="h-5 w-5" /></button>
@@ -881,7 +881,7 @@ export function FloorEditor({ boot, roomId, onClose }: { boot: Bootstrap; roomId
 
       {/* Scelta arredo: compare sopra la toolbar, si chiude da sola dopo la scelta */}
       {decorPick && (
-        <div className="absolute inset-x-0 z-20 flex justify-center px-3" style={{ bottom: `calc(env(safe-area-inset-bottom) + ${sel ? PANEL_H + 84 : 84}px)` }}>
+        <div className="absolute inset-x-0 z-20 flex justify-center px-3" style={{ bottom: `calc(env(safe-area-inset-bottom) + ${selIds.length ? PANEL_H + 84 : 84}px)` }}>
           <div className="grid max-w-md grid-cols-5 gap-1.5 rounded-3xl border border-line bg-surface p-2 shadow-2xl">
             {DECOR_PRESETS.map((d) => (
               <button key={d.icon} onClick={() => { setNewDecor(d.icon); setTool("decor"); setDecorPick(false); setSelIds([]); }}
@@ -895,7 +895,7 @@ export function FloorEditor({ boot, roomId, onClose }: { boot: Bootstrap; roomId
 
       {/* TOOLBAR */}
       <div className="pointer-events-none absolute inset-x-0 flex justify-center px-3"
-        style={{ bottom: `calc(env(safe-area-inset-bottom) + ${sel ? PANEL_H + 14 : 16}px)` }}>
+        style={{ bottom: `calc(env(safe-area-inset-bottom) + ${selIds.length ? PANEL_H + 14 : 16}px)` }}>
         <div className="pointer-events-auto flex items-center gap-1.5 rounded-3xl border border-line bg-surface/95 p-1.5 shadow-2xl backdrop-blur">
           <ToolBtn active={tool === "select"} onClick={() => pickTool("select")} icon={<MousePointer2 className="h-5 w-5" />} label="Sposta" />
           <div className="flex items-center gap-1 rounded-2xl bg-raised/60 p-1">
@@ -918,7 +918,7 @@ export function FloorEditor({ boot, roomId, onClose }: { boot: Bootstrap; roomId
         <ContextPanel onClose={() => setSelIds([])}
           title={`${selIds.length} oggetti selezionati`}
           subtitle="Trascinali insieme o spostali con le frecce">
-          <div className="flex flex-wrap items-center gap-1.5">
+          <div className="no-scrollbar flex flex-nowrap items-center gap-1.5 overflow-x-auto pb-0.5">
             <button onClick={() => moveSelection(selIds, -STEP, 0)} className="h-12 rounded-xl bg-raised px-4 text-sm font-bold active:scale-95">←</button>
             <button onClick={() => moveSelection(selIds, STEP, 0)} className="h-12 rounded-xl bg-raised px-4 text-sm font-bold active:scale-95">→</button>
             <button onClick={() => moveSelection(selIds, 0, -STEP)} className="h-12 rounded-xl bg-raised px-4 text-sm font-bold active:scale-95">↑</button>
@@ -933,7 +933,7 @@ export function FloorEditor({ boot, roomId, onClose }: { boot: Bootstrap; roomId
       {selTable && (
         <ContextPanel onClose={() => setSelIds([])} title={`Tavolo ${selTable.label}`}
           subtitle={`${selTable.capacity}${(selTable.maxCapacity ?? selTable.capacity) > selTable.capacity ? `-${selTable.maxCapacity}` : ""} coperti · ${Math.round(selTable.width)}×${Math.round(selTable.height)} cm`}>
-          <div className="flex flex-wrap items-center gap-1.5">
+          <div className="no-scrollbar flex flex-nowrap items-center gap-1.5 overflow-x-auto pb-0.5">
             <input value={selTable.label} onChange={(e) => patchTable(selTable.id, { label: e.target.value.slice(0, 6) })}
               className="h-12 w-16 rounded-xl border border-line bg-bg text-center font-display text-lg font-extrabold outline-none focus:border-brand" aria-label="Numero tavolo" />
             <Spin label="Coperti" value={selTable.capacity} onMinus={() => setCapacity(selTable, selTable.capacity - 1)} onPlus={() => setCapacity(selTable, selTable.capacity + 1)} />
@@ -961,29 +961,25 @@ export function FloorEditor({ boot, roomId, onClose }: { boot: Bootstrap; roomId
               }}
                 className={`h-12 rounded-xl px-3 text-sm font-bold active:scale-95 ${selTable.shape === sh ? "bg-brand text-on-brand" : "bg-raised"}`}>{lb}</button>
             ))}
-            <button onClick={removeSel} className="grid h-12 w-12 place-items-center rounded-xl bg-over/15 text-over active:scale-95" aria-label="Elimina tavolo"><Trash2 className="h-5 w-5" /></button>
+            {selTable.shape !== "round" && selTable.width > unitTableSide(std) && (
+              <button
+                onClick={() => patchTable(selTable.id, {
+                  splitInto: (selTable.splitInto ?? 0) >= 2
+                    ? 0
+                    : Math.max(2, tableLengthUnits(selTable.width, std)),
+                })}
+                title={(selTable.splitInto ?? 0) >= 2
+                  ? `Staccabile in ${selTable.splitInto} tavoli da ${std}`
+                  : "Tavolo unico, non staccabile"}
+                aria-label="Attiva o disattiva tavolo staccabile"
+                className={`grid h-12 w-12 shrink-0 place-items-center rounded-xl active:scale-95 ${
+                  (selTable.splitInto ?? 0) >= 2 ? "bg-ok/15 text-ok" : "bg-raised text-muted"
+                }`}>
+                <Scissors className="h-5 w-5" />
+              </button>
+            )}
+            <button onClick={removeSel} className="grid h-12 w-12 shrink-0 place-items-center rounded-xl bg-over/15 text-over active:scale-95" aria-label="Elimina tavolo"><Trash2 className="h-5 w-5" /></button>
           </div>
-
-          {/* Un tavolo più grande dello standard di solito è più tavoli accostati.
-              L'app lo dà per scontato, ma i tavoloni massicci esistono: qui si dice
-              che questo è un pezzo unico e non va mai separato. */}
-          {selTable.capacity > std && selTable.shape !== "round" && (
-            <button
-              onClick={() => patchTable(selTable.id, {
-                splitInto: (selTable.splitInto ?? 0) >= 2 ? 0 : (suggestedSplitParts(selTable.capacity, selTable.shape, std) || 2),
-              })}
-              className="mt-2 flex w-full items-center gap-2 rounded-xl bg-raised/60 px-3 py-2 text-left active:scale-[0.99]">
-              <Scissors className="h-4 w-4 shrink-0 text-muted" />
-              <span className="min-w-0 flex-1 text-[13px] font-semibold text-muted">
-                {(selTable.splitInto ?? 0) >= 2
-                  ? <>Sono <span className="text-ink">{selTable.splitInto} tavoli da {std}</span> accostati: si possono staccare</>
-                  : <>È <span className="text-ink">un tavolo unico</span>: non si stacca mai</>}
-              </span>
-              <span className={`relative h-7 w-12 shrink-0 rounded-full transition-colors ${(selTable.splitInto ?? 0) >= 2 ? "bg-ok" : "bg-line"}`}>
-                <span className={`absolute top-1 h-5 w-5 rounded-full bg-surface shadow transition-all ${(selTable.splitInto ?? 0) >= 2 ? "left-6" : "left-1"}`} />
-              </span>
-            </button>
-          )}
         </ContextPanel>
       )}
 
@@ -1007,7 +1003,7 @@ export function FloorEditor({ boot, roomId, onClose }: { boot: Bootstrap; roomId
           subtitle={selEl.kind === "wall"
             ? `${Math.round(Math.max(selEl.w, selEl.h))} cm di lunghezza · ${Math.round(Math.min(selEl.w, selEl.h))} cm di spessore`
             : `${Math.round(selEl.w)}×${Math.round(selEl.h)} cm${selEl.rotation ? ` · ruotato ${selEl.rotation}°` : ""}`}>
-          <div className="flex flex-wrap items-center gap-1.5">
+          <div className="no-scrollbar flex flex-nowrap items-center gap-1.5 overflow-x-auto pb-0.5">
             {selEl.kind === "wall" ? (
               <>
                 <Spin label="Spessore" value={Math.round(Math.min(selEl.w, selEl.h))}
@@ -1018,25 +1014,48 @@ export function FloorEditor({ boot, roomId, onClose }: { boot: Bootstrap; roomId
             ) : (
               <>
                 <input value={selEl.label}
-                  onChange={(e) => patchEl(selEl.id, { label: e.target.value.slice(0, 20), icon: iconFromLabel(e.target.value, selEl.icon) })}
-                  placeholder="Bancone, Cucina…"
-                  className="h-12 min-w-[140px] flex-1 rounded-xl border border-line bg-bg px-3 font-semibold outline-none focus:border-brand" />
-                <select value={selEl.icon ?? "generico"} onChange={(e) => patchEl(selEl.id, { icon: e.target.value as DecorIcon })}
-                  className="h-12 rounded-xl border border-line bg-bg px-2 text-sm font-bold outline-none focus:border-brand">
+                  onChange={(e) => patchEl(selEl.id, { label: e.target.value.slice(0, 28), icon: iconFromLabel(e.target.value, selEl.icon) })}
+                  placeholder="Nome arredo"
+                  title="Nome arredo"
+                  className="h-11 w-[180px] shrink-0 rounded-xl border border-line bg-bg px-3 text-sm font-semibold outline-none focus:border-brand" />
+                <select value={selEl.icon ?? "generico"} title="Tipo di arredo"
+                  onChange={(e) => patchEl(selEl.id, { icon: e.target.value as DecorIcon })}
+                  className="h-11 w-[105px] shrink-0 rounded-xl border border-line bg-bg px-2 text-xs font-bold outline-none focus:border-brand">
                   {DECOR_PRESETS.map((d) => <option key={d.icon} value={d.icon}>{d.label}</option>)}
                   <option value="generico">Altro</option>
                 </select>
+
+                {/* Cinque sfumature pastello: colore visibile, ma non ruba
+                    attenzione agli stati operativi dei tavoli. */}
+                <div className="flex h-11 shrink-0 items-center gap-1 rounded-xl bg-raised px-1.5" title="Sfumatura arredo">
+                  {DECOR_TONES.map((tone) => (
+                    <button key={tone.id} onClick={() => patchEl(selEl.id, { tone: tone.id as DecorTone })}
+                      aria-label={`Colore ${tone.label}`}
+                      className={`h-7 w-7 rounded-full border-2 active:scale-90 ${(selEl.tone ?? "neutro") === tone.id ? "border-brand ring-1 ring-brand" : "border-surface"}`}
+                      style={{ backgroundColor: tone.fill }} />
+                  ))}
+                </div>
+
                 <button onClick={() => patchEl(selEl.id, { rotation: (selEl.rotation + 90) % 360 })}
-                  className="flex h-12 items-center gap-1 rounded-xl bg-raised px-3 text-sm font-bold active:scale-95">
-                  <RotateCw className="h-4 w-4" /> Oggetto 90°
+                  title="Ruota oggetto di 90°" aria-label="Ruota oggetto di 90 gradi"
+                  className="grid h-11 w-11 shrink-0 place-items-center rounded-xl bg-raised active:scale-95">
+                  <RotateCw className="h-4 w-4" />
                 </button>
                 <button onClick={() => patchEl(selEl.id, { rotation: (selEl.rotation + 15) % 360 })}
-                  className="h-12 rounded-xl bg-raised px-3 text-sm font-bold active:scale-95">Oggetto +15°</button>
+                  title="Ruota oggetto di 15°" aria-label="Ruota oggetto di 15 gradi"
+                  className="h-11 w-11 shrink-0 rounded-xl bg-raised text-xs font-bold active:scale-95">+15°</button>
                 {selEl.label && (
-                  <button onClick={() => patchEl(selEl.id, { labelRotation: ((selEl.labelRotation ?? 0) + 90) % 360 })}
-                    className="flex h-12 items-center gap-1 rounded-xl bg-raised px-3 text-sm font-bold active:scale-95">
-                    <RotateCw className="h-4 w-4" /> Nome 90°
-                  </button>
+                  <>
+                    <button onClick={() => patchEl(selEl.id, { labelRotation: ((selEl.labelRotation ?? 0) + 90) % 360 })}
+                      title="Ruota il nome di 90°" aria-label="Ruota il nome di 90 gradi"
+                      className="h-11 w-11 shrink-0 rounded-xl bg-raised text-xs font-bold active:scale-95">A↻</button>
+                    <button onClick={() => patchEl(selEl.id, { labelScale: clamp((selEl.labelScale ?? 1) - 0.1, 0.6, 1.5) })}
+                      title="Riduci il nome" aria-label="Riduci il nome"
+                      className="h-11 w-11 shrink-0 rounded-xl bg-raised text-xs font-bold active:scale-95">A−</button>
+                    <button onClick={() => patchEl(selEl.id, { labelScale: clamp((selEl.labelScale ?? 1) + 0.1, 0.6, 1.5) })}
+                      title="Ingrandisci il nome" aria-label="Ingrandisci il nome"
+                      className="h-11 w-11 shrink-0 rounded-xl bg-raised text-sm font-bold active:scale-95">A+</button>
+                  </>
                 )}
               </>
             )}
@@ -1089,7 +1108,7 @@ function ContextPanel({ title, subtitle, children, onClose }: {
 }) {
   return (
     <div className="pointer-events-none absolute inset-x-0 bottom-0 z-30 flex justify-center px-2 pb-[calc(env(safe-area-inset-bottom)+8px)]">
-      <div className="pointer-events-auto w-full max-w-xl animate-sheet-up rounded-3xl border border-line bg-surface/97 p-3 shadow-2xl backdrop-blur">
+      <div className="pointer-events-auto w-full max-w-[min(96vw,980px)] animate-sheet-up rounded-2xl border border-line bg-surface/97 p-2.5 shadow-2xl backdrop-blur">
         <div className="mb-2 flex items-center gap-2">
           <div className="min-w-0 flex-1">
             <p className="truncate text-[15px] font-bold leading-tight">{title}</p>

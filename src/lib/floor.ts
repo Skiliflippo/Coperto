@@ -11,6 +11,8 @@ export const MAX_ROOM_CM = 3000;        // 30 m per lato: copre anche le sale gr
 export const MAX_ZOOM = 2.4;
 
 export type ElementKind = "wall" | "decor";
+export type DecorTone = "neutro" | "verde" | "azzurro" | "sabbia" | "rosa";
+
 export type FloorElement = {
   id: string;
   kind: ElementKind;      // wall = muro/divisorio · decor = bancone, cucina, pilastro…
@@ -20,6 +22,8 @@ export type FloorElement = {
   label: string;
   icon?: DecorIcon;       // aspetto dell'arredo sulla mappa
   labelRotation?: number; // rotazione del nome rispetto all'arredo (0/90/180/270)
+  labelScale?: number;    // regolazione manuale A− / A+ (0.6–1.5)
+  tone?: DecorTone;       // sfumatura leggera dell'arredo
 };
 export type Point = { x: number; y: number };
 export type RoomLayout = {
@@ -36,6 +40,16 @@ export const uid = () => `el_${Math.random().toString(36).slice(2, 10)}`;
 
 // ── ARREDI: pochi, quelli che esistono in ogni locale ────────────────────────
 export type DecorIcon = "bancone" | "cucina" | "cassa" | "scala" | "bagno" | "porta" | "pilastro" | "pianta" | "generico";
+export const DECOR_TONES: {
+  id: DecorTone; label: string; fill: string; border: string; text: string;
+}[] = [
+  { id: "neutro", label: "Neutro", fill: "#D8D2C7", border: "#8C8578", text: "#4D4941" },
+  { id: "verde", label: "Verde", fill: "#D6E9D8", border: "#7BA381", text: "#365B3D" },
+  { id: "azzurro", label: "Azzurro", fill: "#D9E8F1", border: "#83A5BA", text: "#35596E" },
+  { id: "sabbia", label: "Sabbia", fill: "#EFE1C8", border: "#B69A69", text: "#685433" },
+  { id: "rosa", label: "Rosa", fill: "#EEDADD", border: "#B88C94", text: "#6C424A" },
+];
+
 export const DECOR_PRESETS: { icon: DecorIcon; label: string; w: number; h: number }[] = [
   { icon: "bancone",  label: "Bancone",  w: 240, h: 70 },
   { icon: "cucina",   label: "Cucina",   w: 200, h: 180 },
@@ -633,6 +647,10 @@ export function normalizeLayout(raw: unknown): RoomLayout {
           label: String(e.label ?? ""),
           icon: (e.icon as DecorIcon) ?? (kind === "decor" ? iconFromLabel(String(e.label ?? "")) : undefined),
           labelRotation: ((Math.round(e.labelRotation ?? 0) % 360) + 360) % 360,
+          labelScale: clamp(Number(e.labelScale ?? 1), 0.6, 1.5),
+          tone: (["neutro", "verde", "azzurro", "sabbia", "rosa"].includes(e.tone)
+            ? e.tone
+            : (e.icon === "pianta" ? "verde" : "neutro")) as DecorTone,
         };
       }),
     };

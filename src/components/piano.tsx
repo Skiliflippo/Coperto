@@ -5,7 +5,7 @@
 import { useRef, useState } from "react";
 import { DndContext, DragOverlay, PointerSensor, useDraggable, useDroppable, useSensor, useSensors, type DragEndEvent, type DragMoveEvent, type DragStartEvent } from "@dnd-kit/core";
 import { useQueryClient } from "@tanstack/react-query";
-import { Check, ListPlus, Printer, Scissors, Zap } from "lucide-react";
+import { Check, ListPlus, Printer, Scissors, Users, Zap } from "lucide-react";
 import { api } from "@/lib/api";
 import { useBootstrap, useNow } from "@/lib/hooks";
 import { useSession } from "@/store/session";
@@ -14,6 +14,7 @@ import { overlaps, toHHMM, toMin, todayISO } from "@/lib/time";
 import { Btn, Sheet } from "@/components/ui";
 import { toast } from "@/components/toast";
 import { findJoinProposals } from "@/lib/join";
+import { planLargeParty } from "@/lib/large-party";
 import type { AssignPlan } from "@/lib/autoassign";
 import type { Bootstrap, DayData, Reservation } from "@/lib/types";
 
@@ -30,7 +31,10 @@ export function Piano({ date, day, onTap }: { date: string; day: DayData; onTap:
   const [periodId, setPeriodId] = useState<string | null>(null);
   const [dragRes, setDragRes] = useState<Reservation | null>(null);
   // anteprima stile calendario: mostra in quale colonna e su quali slot finirebbe
-  const [preview, setPreview] = useState<{ col: string; top: number; height: number; time: string } | null>(null);
+  const [preview, setPreview] = useState<{
+    col: string; top: number; height: number; time: string;
+    valid: boolean; message?: string;
+  } | null>(null);
   const [assignRes, setAssignRes] = useState<Reservation | null>(null);
   const [plan, setPlan] = useState<AssignPlan | null>(null);
   const [planOpen, setPlanOpen] = useState(false);
@@ -73,9 +77,19 @@ export function Piano({ date, day, onTap }: { date: string; day: DayData; onTap:
     .sort((a, b) => Number(needsJoin(b)) - Number(needsJoin(a)) || b.partySize - a.partySize || toMin(a.time) - toMin(b.time));
   const assigned = inPeriod.filter((r) => r.assignedTableId || r.assignedComboId);
   const blocksByCol = new Map<string, Reservation[]>();
+  const pushBlock = (key: string | null, reservation: Reservation) => {
+    if (!key) return;
+    const list = blocksByCol.get(key) ?? [];
+    if (!list.some((r) => r.id === reservation.id)) list.push(reservation);
+    blocksByCol.set(key, list);
+  };
   for (const r of assigned) {
-    const key = r.assignedTableId ? colKey("table", r.assignedTableId) : colKey("combo", r.assignedComboId);
-    if (key) { const a = blocksByCol.get(key) ?? []; a.push(r); blocksByCol.set(key, a); }
+    if (r.assignedTableId) {
+      pushBlock(colKey("table", r.assignedTableId), r);
+      for (const id of r.joinedTableIds ?? []) pushBlock(colKey("table", id), r);
+    } else {
+      pushBlock(colKey("combo", r.assignedComboId), r);
+    }
   }
 
   // Overbooking: coperti per fascia vs capienza totale (soglia configurabile)
@@ -94,7 +108,9 @@ export function Piano({ date, day, onTap }: { date: string; day: DayData; onTap:
     const perTable = new Map<string, { id: string; a: number; b: number }[]>();
     for (const r of assigned) {
       const a = toMin(r.time), b = a + durationFor(r.partySize, period.name, settings) + settings.bufferMinutes;
-      const ids = r.assignedTableId ? [r.assignedTableId] : bootData.combos.find((c) => c.id === r.assignedComboId)?.tableIds ?? [];
+      const ids = r.assignedTableId
+        ? [r.assignedTableId, ...(r.joinedTableIds ?? [])]
+        : bootData.combos.find((c) => c.id === r.assignedComboId)?.tableIds ?? [];
       for (const tid of ids) { const arr = perTable.get(tid) ?? []; arr.push({ id: r.id, a, b }); perTable.set(tid, arr); }
     }
     const bad = new Set<string>();
@@ -113,7 +129,13 @@ export function Piano({ date, day, onTap }: { date: string; day: DayData; onTap:
     qc.setQueryData<DayData>(key, (old) => old && ({
       ...old,
       reservations: old.reservations.map((r) => (r.id === res.id
-        ? { ...r, assignedTableId: patch.tableId, assignedComboId: patch.comboId, time: patch.time ?? r.time }
+        ? {
+            ...r,
+            assignedTableId: patch.tableId,
+            assignedComboId: patch.comboId,
+            joinedTableIds: [],
+            time: patch.time ?? r.time,
+          }
         : r)),
     }));
     try {
@@ -139,8 +161,17 @@ export function Piano({ date, day, onTap }: { date: string; day: DayData; onTap:
     const dur = durationFor(res.partySize, period.name, settings);
     const maxIdx = Math.max(0, Math.round((toMin(period.endTime) - startMin - dur) / settings.slotMinutes));
     const idx = Math.min(maxIdx, Math.max(0, Math.round(top / ROW_H)));
+    const capacity = kind === "table"
+      ? (() => {
+          const table = bootData.tables.find((t) => t.id === id);
+          return table ? Math.max(table.capacity, table.maxCapacity || 0) : 0;
+        })()
+      : bootData.combos.find((c) => c.id === id)?.capacity ?? 0;
+    const missing = Math.max(0, res.partySize - capacity);
     return {
-      rail: false as const, res, kind, id, idx,
+      rail: false as const, res, kind, id, idx, capacity,
+      valid: missing === 0,
+      message: missing > 0 ? `mancano ${missing} posti` : undefined,
       time: toHHMM(startMin + idx * settings.slotMinutes),
       slots: Math.max(2, Math.round(dur / settings.slotMinutes)),
       colKey: key,
@@ -153,9 +184,16 @@ export function Piano({ date, day, onTap }: { date: string; day: DayData; onTap:
     const t = dropTarget(e);
     if (!t || t.rail) { setPreview(null); return; }
     setPreview((prev) =>
-      prev && prev.col === t.colKey && prev.time === t.time
+      prev && prev.col === t.colKey && prev.time === t.time && prev.valid === t.valid
         ? prev
-        : { col: t.colKey, top: t.idx * ROW_H, height: t.slots * ROW_H, time: t.time });
+        : {
+            col: t.colKey,
+            top: t.idx * ROW_H,
+            height: t.slots * ROW_H,
+            time: t.time,
+            valid: t.valid,
+            message: t.message,
+          });
   };
   const onDragEnd = (e: DragEndEvent) => {
     justDragged.current = true;
@@ -166,6 +204,15 @@ export function Piano({ date, day, onTap }: { date: string; day: DayData; onTap:
     if (!t) return;
     if (t.rail) {
       if (t.res.assignedTableId || t.res.assignedComboId) patchAssign(t.res, { tableId: null, comboId: null });
+      return;
+    }
+    if (!t.valid) {
+      toast({
+        title: `Tavolo troppo piccolo: ${t.message}`,
+        msg: "Ti mostro i tavoli da accostare o le zone disponibili.",
+        tone: "err",
+      });
+      setAssignRes(t.res);
       return;
     }
     const samePlace = (t.kind === "table" && t.res.assignedTableId === t.id) || (t.kind === "combo" && t.res.assignedComboId === t.id);
@@ -343,7 +390,15 @@ export function Piano({ date, day, onTap }: { date: string; day: DayData; onTap:
               <div key={p.reservationId} className="flex items-start gap-3 rounded-2xl border border-ok/40 bg-ok/10 p-3">
                 <Check className="mt-0.5 h-5 w-5 shrink-0 text-ok" />
                 <div>
-                  <p className="font-bold">{p.name} · {p.partySize} p. · {p.time} → {p.target.kind === "table" ? `Tavolo ${p.target.table.label}` : p.target.kind === "combo" ? `Accorpati ${p.target.combo.label}` : `Accosta ${p.target.label}`}</p>
+                  <p className="font-bold">
+                    {p.name} · {p.partySize} p. · {p.time} → {p.target.kind === "table"
+                      ? `Tavolo ${p.target.table.label}`
+                      : p.target.kind === "combo"
+                        ? `Accorpati ${p.target.combo.label}`
+                        : p.target.zones && p.target.zones > 1
+                          ? `Distribuisci su ${p.target.zones} zone (${p.target.tables.length} tavoli)`
+                          : `Accosta ${p.target.label}`}
+                  </p>
                   <p className="text-[13px] font-medium text-muted">{p.reason}</p>
                 </div>
               </div>
@@ -398,7 +453,10 @@ function RailChip({ res, onTap, lateMin, lateThr, needsJoin }: {
 
 function Column({ k, label, cap, oos, height, rows, preview, children }: {
   k: string; label: string; cap: number; oos: boolean; height: number; rows: number;
-  preview?: { top: number; height: number; time: string } | null;
+  preview?: {
+    top: number; height: number; time: string;
+    valid: boolean; message?: string;
+  } | null;
   children?: React.ReactNode;
 }) {
   const { setNodeRef, isOver } = useDroppable({ id: k });
@@ -413,10 +471,14 @@ function Column({ k, label, cap, oos, height, rows, preview, children }: {
           <div key={i} style={{ height: ROW_H }} className={`border-b ${i % 4 === 3 ? "border-line" : "border-line/50"}`} />
         ))}
         {preview && (
-          <div className="pointer-events-none absolute inset-x-0.5 z-20 rounded-lg border-2 border-dashed border-brand bg-brand/20"
+          <div className={`pointer-events-none absolute inset-x-0.5 z-20 rounded-lg border-2 border-dashed ${
+            preview.valid ? "border-brand bg-brand/20" : "border-over bg-over/20"
+          }`}
             style={{ top: preview.top, height: preview.height }}>
-            <span className="absolute -top-1 left-1 rounded bg-brand px-1 font-sans text-[10px] font-bold leading-tight text-on-brand">
-              {preview.time}
+            <span className={`absolute -top-1 left-1 rounded px-1 font-sans text-[10px] font-bold leading-tight text-white ${
+              preview.valid ? "bg-brand" : "bg-over"
+            }`}>
+              {preview.time}{preview.message ? ` · ${preview.message}` : ""}
             </span>
           </div>
         )}
@@ -481,6 +543,7 @@ export function AssignSheet({ res, date, onClose }: { res: Reservation | null; d
     tableId: string | null; comboId: string | null; joined: string[];
     waste: number; pref: boolean;
     splitTableId?: string;   // da staccare prima di assegnare
+    zones?: { roomId: string; people: number; seats: number; labels: string }[];
   };
   const opts: Opt[] = [
     ...tables.map((t) => ({
@@ -511,16 +574,21 @@ export function AssignSheet({ res, date, onClose }: { res: Reservation | null; d
     }
   }
 
-  // Accorpamento al volo: solo se non basta un tavolo singolo. Si valutano i tavoli
-  // liberi in quella fascia oraria, non lo stato "adesso".
+  // Tutti i tavoli liberi NELLA FASCIA della prenotazione: base per accorpamenti
+  // e tavolate molto grandi.
+  const freeAtTime = freeTargetsAt({
+    timeMin: toMin(res.time), party: 1, dur, buf: b.settings.bufferMinutes,
+    tables: b.tables, combos: [], assigned: busyAtTime,
+    durFor: (p) => durationFor(p, period?.name ?? null, b.settings),
+  }).tables;
+
+  // Accorpamento al volo: catena realmente consecutiva.
   if (!opts.length && b.settings.allowTableJoin) {
-    const freeNow = freeTargetsAt({
-      timeMin: toMin(res.time), party: 1, dur, buf: b.settings.bufferMinutes,
-      tables: b.tables, combos: [], assigned: busyAtTime,
-      durFor: (p) => durationFor(p, period?.name ?? null, b.settings),
-    }).tables;
     for (const j of findJoinProposals({
-      party: res.partySize, tables: freeNow, maxGapCm: b.settings.joinMaxGapCm ?? 150,
+      party: res.partySize,
+      tables: freeAtTime,
+      maxGapCm: b.settings.joinMaxGapCm ?? 150,
+      maxTables: 20,
     })) {
       opts.push({
         key: j.label, label: `Accosta ${j.label}`, sub: j.reason,
@@ -528,6 +596,35 @@ export function AssignSheet({ res, date, onClose }: { res: Reservation | null; d
         waste: j.waste, pref: !!preferred && j.tables.every((t) => t.roomId === preferred),
       });
     }
+  }
+
+  // Se una sola catena non basta, divide in poche zone vicine e spiega come.
+  const largePlan = !opts.length
+    ? planLargeParty({
+        party: res.partySize,
+        tables: freeAtTime,
+        maxGapCm: b.settings.joinMaxGapCm ?? 150,
+        preferredRoomId: preferred,
+      })
+    : null;
+  if (largePlan?.complete && largePlan.tables.length) {
+    const zones = largePlan.groups.map((group) => ({
+      roomId: group.roomId,
+      people: group.people,
+      seats: group.seats,
+      labels: group.tables.map((t) => t.label).join("+"),
+    }));
+    opts.push({
+      key: `large-${res.id}`,
+      label: zones.length === 1 ? "Prepara una zona" : `Distribuisci su ${zones.length} zone`,
+      sub: largePlan.reason,
+      tableId: largePlan.tables[0].id,
+      comboId: null,
+      joined: largePlan.tables.slice(1).map((t) => t.id),
+      waste: largePlan.waste,
+      pref: !!preferred && largePlan.groups[0]?.roomId === preferred,
+      zones,
+    });
   }
   // prima la sala richiesta dal cliente, poi chi spreca meno posti
   opts.sort((x, y) => Number(y.pref) - Number(x.pref) || x.waste - y.waste);
@@ -572,20 +669,34 @@ export function AssignSheet({ res, date, onClose }: { res: Reservation | null; d
                 o.splitTableId ? "bg-busy" : o.joined.length ? "bg-soon text-ink" : "bg-ok"}`}>
                 {o.splitTableId
                   ? <Scissors className="h-4 w-4" />
-                  : o.label.replace("Tavolo ", "").replace("Accorpati ", "").replace("Accosta ", "")}
+                  : o.zones
+                    ? <Users className="h-4 w-4" />
+                    : o.label.replace("Tavolo ", "").replace("Accorpati ", "").replace("Accosta ", "")}
               </span>
               <span className="min-w-0 flex-1 font-bold">
                 {o.label}
-                <span className="block truncate text-[13px] font-medium text-muted">{o.sub}</span>
+                <span className={`block text-[13px] font-medium text-muted ${o.zones ? "leading-snug" : "truncate"}`}>{o.sub}</span>
+                {o.zones?.map((zone, index) => (
+                  <span key={`${zone.roomId}-${index}`} className="mt-1 block rounded-lg bg-surface/70 px-2 py-1 text-[12px] font-semibold text-ink">
+                    {zone.people} persone · {roomName(zone.roomId)} · tavoli {zone.labels}
+                  </span>
+                ))}
               </span>
               {o.pref && <span className="shrink-0 text-[11px] font-bold text-soon">sala giusta</span>}
             </button>
           ))}
         </div>
       ) : (
-        <p className="rounded-2xl border border-soon/50 bg-soon/10 p-4 text-center font-semibold text-soon">
-          Nessun tavolo libero per {res.partySize} persone alle {res.time}. Sposta l&apos;orario o libera un accorpamento.
-        </p>
+        <div className="rounded-2xl border border-over/50 bg-over/10 p-4 text-center">
+          <p className="font-semibold text-over">
+            {largePlan?.shortfall
+              ? `${largePlan.totalSeats} posti disponibili: ne mancano ${largePlan.shortfall}`
+              : `Nessun tavolo disponibile per ${res.partySize} persone alle ${res.time}`}
+          </p>
+          <p className="mt-1 text-[13px] text-muted">
+            Sposta l&apos;orario oppure libera tavoli già impegnati da altre prenotazioni.
+          </p>
+        </div>
       )}
     </Sheet>
   );

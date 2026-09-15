@@ -26,6 +26,7 @@ export function periodFor(partyTimeMin: number, periods: Period[]): Period | nul
 export type ResLite = {
   id: string; guestName: string; time: string; partySize: number; status: string;
   assignedTableId: string | null; assignedComboId: string | null;
+  joinedTableIds?: string[];
 };
 export type TableStatus = {
   state: TableLiveState;
@@ -51,7 +52,7 @@ export function computeTableStatuses(args: {
     // impegna da "hold" minuti prima fino a un'ora dopo l'orario (poi è ritardo conclamato)
     if (t - nowMinOfDay > hold || nowMinOfDay - t > 60) continue;
     const ids = r.assignedTableId
-      ? [r.assignedTableId]
+      ? [r.assignedTableId, ...(r.joinedTableIds ?? [])]
       : combos.find((c) => c.id === r.assignedComboId)?.tableIds ?? [];
     for (const id of ids) {
       const cur = holds.get(id);
@@ -135,7 +136,11 @@ export function availableTargets(args: {
 export function freeTargetsAt(params: {
   timeMin: number; party: number; dur: number; buf: number;
   tables: TableT[]; combos: Combo[];
-  assigned: { id?: string; time: string; partySize: number; assignedTableId: string | null; assignedComboId: string | null }[];
+  assigned: {
+    id?: string; time: string; partySize: number;
+    assignedTableId: string | null; assignedComboId: string | null;
+    joinedTableIds?: string[];
+  }[];
   durFor: (partySize: number) => number;
 }): { tables: TableT[]; combos: Combo[] } {
   const { timeMin, party, dur, buf, tables, combos, assigned, durFor } = params;
@@ -147,6 +152,7 @@ export function freeTargetsAt(params: {
   for (const r of assigned) {
     const a = toMin(r.time), b = a + durFor(r.partySize) + buf;
     if (r.assignedTableId) push(r.assignedTableId, a, b);
+    for (const tid of r.joinedTableIds ?? []) push(tid, a, b);
     if (r.assignedComboId) combos.find((c) => c.id === r.assignedComboId)?.tableIds.forEach((tid) => push(tid, a, b));
   }
   const free = (id: string) => !(busyByTable.get(id) ?? []).some(([a, b]) => s < b && a < e);

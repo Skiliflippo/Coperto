@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { db } from "@/db";
 import * as s from "@/db/schema";
-import { eq } from "drizzle-orm";
+import { eq, inArray } from "drizzle-orm";
 import { broadcast } from "@/server/hub";
 import { assertStaffInRestaurant, logActivity } from "@/server/data";
 export const dynamic = "force-dynamic";
@@ -19,9 +19,45 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
   const patch: Partial<typeof s.reservations.$inferInsert> = { updatedAt: new Date() };
   let msg = "";
   if (action === "assign") {
+    const joinedIds: string[] = Array.isArray(f.joinedTableIds)
+      ? [...new Set((f.joinedTableIds as unknown[])
+          .filter((value): value is string => typeof value === "string"))]
+      : [];
+
+    // Capienza verificata sul server. Un singolo tavolo troppo piccolo non è una
+    // decisione discrezionale: è un dato fisico. Per le tavolate si sommano
+    // tavolo principale + joinedTableIds.
+    if (f.tableId) {
+      const ids = [...new Set([String(f.tableId), ...joinedIds])];
+      const rows = await db.select().from(s.tables).where(inArray(s.tables.id, ids));
+      if (rows.length !== ids.length || rows.some((table) => table.restaurantId !== cur.restaurantId || table.archived)) {
+        return NextResponse.json({ error: "Uno dei tavoli non appartiene a questo ristorante" }, { status: 403 });
+      }
+      const capacity = rows.reduce((sum, table) => sum + Math.max(table.capacity, table.maxCapacity || 0), 0);
+      if (capacity < cur.partySize) {
+        return NextResponse.json({
+          error: `Posti insufficienti: ${capacity} disponibili per ${cur.partySize} persone`,
+          capacity,
+          missing: cur.partySize - capacity,
+        }, { status: 409 });
+      }
+    } else if (f.comboId) {
+      const [combo] = await db.select().from(s.tableCombinations).where(eq(s.tableCombinations.id, String(f.comboId)));
+      if (!combo || combo.restaurantId !== cur.restaurantId) {
+        return NextResponse.json({ error: "Accorpamento non valido per questo ristorante" }, { status: 403 });
+      }
+      if (combo.capacity < cur.partySize) {
+        return NextResponse.json({
+          error: `Posti insufficienti: ${combo.capacity} disponibili per ${cur.partySize} persone`,
+          capacity: combo.capacity,
+          missing: cur.partySize - combo.capacity,
+        }, { status: 409 });
+      }
+    }
+
     patch.assignedTableId = f.tableId ?? null;
     patch.assignedComboId = f.comboId ?? null;
-    patch.joinedTableIds = Array.isArray(f.joinedTableIds) ? f.joinedTableIds : [];
+    patch.joinedTableIds = joinedIds;
     if (f.time) patch.time = f.time;
     const lbl = f.label ? `tavolo ${f.label}` : "nessun tavolo";
     msg = `${staffName}: ${cur.guestName} → ${lbl}${f.time ? ` alle ${f.time}` : ""}`;
@@ -37,7 +73,27 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
   } else {
     if (f.time) patch.time = f.time;
     if (f.date) patch.date = f.date;
-    if (f.partySize) patch.partySize = f.partySize;
+    if (f.partySize) {
+      const nextParty = Math.max(1, Math.min(80, Number(f.partySize)));
+      patch.partySize = nextParty;
+      // Se la prenotazione cresce oltre i tavoli già scelti, torna da sistemare.
+      if (cur.assignedTableId) {
+        const ids = [cur.assignedTableId, ...(cur.joinedTableIds ?? [])];
+        const rows = await db.select().from(s.tables).where(inArray(s.tables.id, ids));
+        const capacity = rows.reduce((sum, table) => sum + Math.max(table.capacity, table.maxCapacity || 0), 0);
+        if (capacity < nextParty) {
+          patch.assignedTableId = null;
+          patch.assignedComboId = null;
+          patch.joinedTableIds = [];
+        }
+      } else if (cur.assignedComboId) {
+        const [combo] = await db.select().from(s.tableCombinations).where(eq(s.tableCombinations.id, cur.assignedComboId));
+        if (!combo || combo.capacity < nextParty) {
+          patch.assignedComboId = null;
+          patch.joinedTableIds = [];
+        }
+      }
+    }
     if (f.notes !== undefined) patch.notes = f.notes;
     if (f.guestName) patch.guestName = f.guestName;
     if (f.guestPhone !== undefined) patch.guestPhone = f.guestPhone;
