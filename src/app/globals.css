@@ -130,15 +130,77 @@
   background-color: var(--wall);
 }
 
-html { -webkit-tap-highlight-color: transparent; }
+/* PWA: niente zoom pagina, niente bounce, feel app nativa */
+html {
+  -webkit-tap-highlight-color: transparent;
+  -webkit-text-size-adjust: 100%;
+  -webkit-touch-callout: none;
+  touch-action: pan-y;
+  overscroll-behavior: none;
+  overscroll-behavior-y: none;
+}
 body {
   background: var(--bg);
   color: var(--ink);
   font-size: 17px;
+  overscroll-behavior: none;
   overscroll-behavior-y: none;
+  -webkit-overflow-scrolling: touch;
+  /* PWA standalone: niente selezione testo accidentale su tutta l'app */
+  -webkit-user-select: none;
+  user-select: none;
+  /* Fissa il body per evitare scroll elastico che crasha iOS */
+  position: relative;
+  min-height: 100dvh;
+  min-height: -webkit-fill-available;
 }
-button { touch-action: manipulation; user-select: none; }
-input, textarea { font-size: 17px; }
+/* Input e textarea devono rimanere selezionabili */
+input, textarea, [contenteditable] {
+  -webkit-user-select: text !important;
+  user-select: text !important;
+  font-size: 17px;
+}
+button { touch-action: manipulation; user-select: none; -webkit-user-select: none; }
+
+/* Mappa sala: ultra fluido 60 FPS — GPU only, niente repaint */
+.floor-viewport {
+  touch-action: none !important;
+  overscroll-behavior: none !important;
+  -webkit-user-select: none !important;
+  user-select: none !important;
+  -webkit-touch-callout: none !important;
+  -webkit-tap-highlight-color: transparent !important;
+  isolation: isolate;
+  /* Contenimento per ridurre paint area, ma senza clip che tagliava tavoli */
+  contain: layout style;
+}
+.floor-content {
+  /* Unico layer GPU per tutta la sala, will-change solo durante pan via JS */
+  transform: translateZ(0);
+  backface-visibility: hidden;
+  /* Evita che il browser ricalcoli layout dei figli durante pan */
+  contain: layout style;
+}
+.floor-grid {
+  transform: translateZ(0);
+  backface-visibility: hidden;
+  /* Grid via transform, non backgroundPosition, per compositor-only */
+  will-change: transform;
+}
+/* Durante il pan: disabilita ombre e filtri costosi per 60 FPS su iPad */
+.floor-viewport.is-panning .floor-grid {
+  opacity: 0.7;
+}
+.floor-viewport.is-panning .shadow,
+.floor-viewport.is-panning .shadow-md,
+.floor-viewport.is-panning .shadow-lg,
+.floor-viewport.is-panning [class*=\"shadow-\"] {
+  box-shadow: none !important;
+}
+.floor-viewport.is-panning * {
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+}
 ::selection { background: color-mix(in srgb, var(--brand) 30%, transparent); }
 
 .no-scrollbar::-webkit-scrollbar { display: none; }

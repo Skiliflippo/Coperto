@@ -31,7 +31,7 @@ export function FloorView({ boot, statuses, onPick, viewToggle }: {
   const layout = normalizeLayout(room?.layout);
   const tables = boot.tables.filter((t) => t.roomId === room?.id);
   const roomCounts = tallyTables(tables, statuses);
-  const { ref, contentRef, gridRef, vp, fit, isPanning, isAnimating, bind, cancelPan } = useViewport(layout.w, layout.h, {
+  const { ref, contentRef, gridRef, vp, fit, isPanning, isAnimating, bind, cancelPan, freeze } = useViewport(layout.w, layout.h, {
     padding: 34, bounds: polygonBounds(polygonOf(layout)),
   });
 
@@ -44,7 +44,9 @@ export function FloorView({ boot, statuses, onPick, viewToggle }: {
 
   const tapRef = useRef<{ x: number; y: number; key: string; time: number } | null>(null);
   const startTap = (e: React.PointerEvent, key: string) => {
-    // non far partire pan da qui, gestiamo solo tap
+    // se c'è momentum, fermalo subito alla posizione corrente — effetto Google Earth
+    // così tap su tavolo durante scorrimento non fa tornare indietro la mappa
+    freeze();
     e.stopPropagation();
     tapRef.current = { x: e.clientX, y: e.clientY, key, time: Date.now() };
   };
@@ -56,6 +58,7 @@ export function FloorView({ boot, statuses, onPick, viewToggle }: {
     if (Date.now() - s.time > 350) return;
     e.stopPropagation();
     e.preventDefault();
+    // cancelPan è smart: se c'era momentum freeza, altrimenti reverta jitter
     cancelPan();
     onPick(table);
   };

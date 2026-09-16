@@ -399,7 +399,46 @@ export function useViewport(
     setPanning(false);
   }, [clampVp, applyDom]);
 
+  // freeze: ferma tutto e committa posizione corrente — usato per tap su tavolo durante momentum
+  // così la mappa non torna indietro ma si ferma dove è
+  const freeze = useCallback(() => {
+    const wasAnimating = !!animateRaf.current || !!momentumRaf.current;
+    cancelAnimations();
+    if (rafId.current) {
+      cancelAnimationFrame(rafId.current);
+      rafId.current = 0;
+    }
+    let cur: Viewport;
+    if (pendingVp.current) {
+      cur = clampVp(pendingVp.current);
+      pendingVp.current = null;
+    } else {
+      cur = clampVp(vpRef.current);
+    }
+    committedVpRef.current = cur;
+    applyDom(cur);
+    setVpState(cur);
+    pointers.current.clear();
+    pinch.current = null;
+    panning.current = null;
+    rectCache.current = null;
+    moveHistory.current = [];
+    velocity.current = { x: 0, y: 0 };
+    setPanning(false);
+    return wasAnimating;
+  }, [clampVp, applyDom, cancelAnimations]);
+
   const cancelPan = useCallback(() => {
+    // se c'è momentum/animazione in corso, freeza alla posizione corrente, non revertare
+    // altrimenti revert per evitare jitter da 1-2px su tap tavolo
+    if (animateRaf.current || momentumRaf.current) {
+      freeze();
+      enabled.current = false;
+      setTimeout(() => {
+        enabled.current = true;
+      }, 50);
+      return;
+    }
     enabled.current = false;
     cancelAnimations();
     if (rafId.current) {
@@ -407,7 +446,7 @@ export function useViewport(
       rafId.current = 0;
     }
     pendingVp.current = null;
-    // revert DOM a ultimo commit — fondamentale per tap su tavolo
+    // revert DOM a ultimo commit — fondamentale per tap su tavolo senza momentum
     applyDom(committedVpRef.current);
     pointers.current.clear();
     pinch.current = null;
@@ -419,7 +458,7 @@ export function useViewport(
     setTimeout(() => {
       enabled.current = true;
     }, 50);
-  }, [applyDom, cancelAnimations]);
+  }, [applyDom, cancelAnimations, freeze]);
 
   // MOMENTUM — effetto ghiaccio Google Earth
   const startMomentum = useCallback(
@@ -477,9 +516,45 @@ export function useViewport(
   const onPointerDown = useCallback(
     (e: React.PointerEvent) => {
       const target = e.target as HTMLElement;
-      if (target.closest("button")) return;
-      // se clic su tavolo, non iniziare pan — lascia gestire a TableNode (tap vs pan da background)
-      if (target.closest("[data-table-id]")) return;
+      const isOnButton = !!target.closest("button");
+      const isOnTable = !!target.closest("[data-table-id]");
+      const wasAnimating = !!animateRaf.current || !!momentumRaf.current;
+
+      // Se c'è momentum/animazione, fermalo subito alla posizione corrente (effetto Google Earth: tap per fermare)
+      if (wasAnimating) {
+        // committa posizione corrente
+        cancelAnimations();
+        if (rafId.current) {
+          cancelAnimationFrame(rafId.current);
+          rafId.current = 0;
+        }
+        let cur: Viewport;
+        if (pendingVp.current) {
+          cur = clampVp(pendingVp.current);
+          pendingVp.current = null;
+        } else {
+          cur = clampVp(vpRef.current);
+        }
+        committedVpRef.current = cur;
+        applyDom(cur);
+        setVpState(cur);
+        pointers.current.clear();
+        pinch.current = null;
+        panning.current = null;
+        rectCache.current = null;
+        moveHistory.current = [];
+        velocity.current = { x: 0, y: 0 };
+        setPanning(false);
+
+        // se tap su bottone o tavolo durante momentum, ferma e lascia gestire al bottone/tavolo
+        if (isOnButton || isOnTable) return;
+        // altrimenti (sfondo) continua per iniziare nuovo drag immediatamente — drag consecutivi
+      }
+
+      if (isOnButton) return;
+      // se clic su tavolo senza momentum, non iniziare pan — lascia gestire a TableNode
+      if (isOnTable) return;
+
       cancelAnimations();
       if (e.pointerType === "touch") e.preventDefault();
       enabled.current = true;
@@ -526,7 +601,7 @@ export function useViewport(
       };
       setPanning(true);
     },
-    [cancelAnimations],
+    [cancelAnimations, clampVp, applyDom],
   );
 
   const onPointerMove = useCallback(
@@ -748,6 +823,7 @@ export function useViewport(
     centerOn,
     revealRect,
     cancelPan,
+    freeze,
     stopPan,
     holdFit: (hold: boolean) => {
       fitHold.current = hold;

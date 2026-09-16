@@ -88,7 +88,7 @@ export default function Home() {
           </label>
 
           <p className={`mt-2 min-h-5 text-sm font-semibold ${error ? "text-over" : "text-muted"}`} role="alert">
-            {error || "Lo trovi nel messaggio ricevuto dal ristoratore."}
+            {error || "Lo trovi nell'email di attivazione."}
           </p>
 
           <button type="submit" disabled={loading || !value.trim()}
