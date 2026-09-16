@@ -88,11 +88,12 @@ export const TableNode = memo(
       seats?: Point[];
       onPointerDown?: (e: React.PointerEvent) => void;
       onPointerUp?: (e: React.PointerEvent) => void;
+      onPointerCancel?: (e: React.PointerEvent) => void;
       onClick?: (e: React.MouseEvent) => void;
       children?: React.ReactNode;
     }
   >(function TableNode(
-    { t, tone = "border-line", dotClass, sub, selected, dimmed, invalid, seats: given, onPointerDown, onPointerUp, onClick, children },
+    { t, tone = "border-line", dotClass, sub, selected, dimmed, invalid, seats: given, onPointerDown, onPointerUp, onPointerCancel, onClick, children },
     ref,
   ) {
     const seats = given ?? tableSeats(t);
@@ -101,14 +102,17 @@ export const TableNode = memo(
     return (
       <div
         ref={ref}
+        data-table-id={t.id}
         onPointerDown={onPointerDown}
         onPointerUp={onPointerUp}
+        onPointerCancel={onPointerCancel}
         onClick={onClick}
         className={`absolute left-0 top-0 z-20 ${dimmed ? "opacity-40" : ""}`}
         style={{
           width: t.width,
           height: t.height,
           transform: `translate(${t.x - t.width / 2}px, ${t.y - t.height / 2}px) rotate(${t.rotation}deg)`,
+          touchAction: "none",
         }}
       >
         {seats.map((s, i) => (
@@ -412,6 +416,7 @@ export const JoinedNode = memo(function JoinedNode({
   dotClass,
   onPointerDown,
   onPointerUp,
+  onPointerCancel,
 }: {
   box: { x: number; y: number; w: number; h: number };
   label: string;
@@ -420,17 +425,21 @@ export const JoinedNode = memo(function JoinedNode({
   dotClass?: string;
   onPointerDown?: (e: React.PointerEvent) => void;
   onPointerUp?: (e: React.PointerEvent) => void;
+  onPointerCancel?: (e: React.PointerEvent) => void;
 }) {
   const fs = Math.max(26, Math.min(box.w, box.h) * 0.3);
   return (
     <div
+      data-table-id={label}
       onPointerDown={onPointerDown}
       onPointerUp={onPointerUp}
+      onPointerCancel={onPointerCancel}
       className="absolute left-0 top-0 z-20 cursor-pointer"
       style={{
         width: box.w,
         height: box.h,
         transform: `translate(${box.x}px, ${box.y}px)`,
+        touchAction: "none",
       }}
     >
       <div className={`grid h-full w-full place-items-center rounded-[16px] border-[7px] bg-surface shadow-lg ${tone}`}>

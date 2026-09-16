@@ -44,6 +44,8 @@ export function FloorView({ boot, statuses, onPick, viewToggle }: {
 
   const tapRef = useRef<{ x: number; y: number; key: string; time: number } | null>(null);
   const startTap = (e: React.PointerEvent, key: string) => {
+    // non far partire pan da qui, gestiamo solo tap
+    e.stopPropagation();
     tapRef.current = { x: e.clientX, y: e.clientY, key, time: Date.now() };
   };
   const endTap = (e: React.PointerEvent, key: string, table: TableT) => {
@@ -53,8 +55,12 @@ export function FloorView({ boot, statuses, onPick, viewToggle }: {
     if (Math.hypot(e.clientX - s.x, e.clientY - s.y) > 8) return;
     if (Date.now() - s.time > 350) return;
     e.stopPropagation();
+    e.preventDefault();
     cancelPan();
     onPick(table);
+  };
+  const cancelTap = () => {
+    tapRef.current = null;
   };
 
   const joinedGroups = new Map<string, { seating: Seating; tables: TableT[] }>();
@@ -130,7 +136,8 @@ export function FloorView({ boot, statuses, onPick, viewToggle }: {
             return (
               <TableNode key={t.id} t={t} tone={meta.card} dotClass={meta.dot} sub={sub} seats={seatsByTable.get(t.id)}
                 onPointerDown={(e) => startTap(e, t.id)}
-                onPointerUp={(e) => endTap(e, t.id, t)} />
+                onPointerUp={(e) => endTap(e, t.id, t)}
+                onPointerCancel={cancelTap} />
             );
           })}
 
@@ -144,7 +151,8 @@ export function FloorView({ boot, statuses, onPick, viewToggle }: {
                 label={label} tone={meta.card} dotClass={meta.dot}
                 sub={`${seating.partySize}p · ${st?.minutesSeated ?? 0}′`}
                 onPointerDown={(e) => startTap(e, seating.id)}
-                onPointerUp={(e) => endTap(e, seating.id, group[0])} />
+                onPointerUp={(e) => endTap(e, seating.id, group[0])}
+                onPointerCancel={cancelTap} />
             );
           })}
         </div>

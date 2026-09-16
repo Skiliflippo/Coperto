@@ -71,6 +71,7 @@ export function useViewport(
   const [vp, setVpState] = useState<Viewport>({ zoom: 0.4, panX: 0, panY: 0 });
   const [zoomLevel, setZoomLevel] = useState<ZoomLevel>(() => getZoomLevel(0.4));
   const vpRef = useRef(vp);
+  const committedVpRef = useRef(vp);
   useEffect(() => {
     vpRef.current = vp;
     setZoomLevel(getZoomLevel(vp.zoom));
@@ -210,6 +211,7 @@ export function useViewport(
         rafId.current = 0;
       }
       pendingVp.current = null;
+      committedVpRef.current = clamped;
       applyDom(clamped);
       setVpState(clamped);
     },
@@ -250,6 +252,7 @@ export function useViewport(
           animateRaf.current = requestAnimationFrame(tick);
         } else {
           animateRaf.current = 0;
+          committedVpRef.current = clampedTarget;
           setVpState(clampedTarget);
           setPanning(false);
           setAnimating(false);
@@ -383,6 +386,7 @@ export function useViewport(
         rafId.current = 0;
       }
       pendingVp.current = null;
+      committedVpRef.current = final;
       applyDom(final);
       setVpState(final);
     }
@@ -403,11 +407,19 @@ export function useViewport(
       rafId.current = 0;
     }
     pendingVp.current = null;
-    stopPan();
+    // revert DOM a ultimo commit — fondamentale per tap su tavolo
+    applyDom(committedVpRef.current);
+    pointers.current.clear();
+    pinch.current = null;
+    panning.current = null;
+    rectCache.current = null;
+    moveHistory.current = [];
+    velocity.current = { x: 0, y: 0 };
+    setPanning(false);
     setTimeout(() => {
       enabled.current = true;
     }, 50);
-  }, [stopPan, cancelAnimations]);
+  }, [applyDom, cancelAnimations]);
 
   // MOMENTUM — effetto ghiaccio Google Earth
   const startMomentum = useCallback(
@@ -436,6 +448,7 @@ export function useViewport(
         if (speed < minVelocity) {
           momentumRaf.current = 0;
           const final = clampVp(vpRef.current);
+          committedVpRef.current = final;
           applyDom(final);
           setVpState(final);
           setPanning(false);
@@ -465,6 +478,8 @@ export function useViewport(
     (e: React.PointerEvent) => {
       const target = e.target as HTMLElement;
       if (target.closest("button")) return;
+      // se clic su tavolo, non iniziare pan — lascia gestire a TableNode (tap vs pan da background)
+      if (target.closest("[data-table-id]")) return;
       cancelAnimations();
       if (e.pointerType === "touch") e.preventDefault();
       enabled.current = true;
