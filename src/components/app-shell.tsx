@@ -54,11 +54,19 @@ function Shell({ children }: { children: ReactNode }) {
 
   // Database svuotato o non ancora configurato: la sessione salvata nel browser
   // non vale più. Si riparte dal primo avvio invece di restare a caricare.
+  // Fix iPhone: non cancellare lo staff su errori di rete (offline) — solo su DATABASE_EMPTY / RESTAURANT_NOT_FOUND
   useEffect(() => {
     if (!boot.isError) return;
-    useSession.getState().setStaff(null);
-    router.replace(tp("/setup"));
-  }, [boot.isError, router, tp]);
+    const err = boot.error as any;
+    const status = err?.status;
+    const code = err?.payload?.code;
+    // Solo 503 (DB vuoto) o 404 (slug non trovato) meritano redirect a setup
+    // Errori di rete (status 0) o 500 non devono sloggare l'utente iPhone appena loggato
+    if (status === 503 || status === 404 || code === "DATABASE_EMPTY" || code === "RESTAURANT_NOT_FOUND") {
+      useSession.getState().setStaff(null);
+      router.replace(tp("/setup"));
+    }
+  }, [boot.isError, boot.error, router, tp]);
 
   // Fix iPhone: mostra loading solo se davvero non sappiamo nulla.
   // Se staff esiste già in memoria (appena fatto login), mostra la sala anche se hydrated è ancora false

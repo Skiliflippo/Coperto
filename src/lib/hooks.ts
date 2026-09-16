@@ -19,8 +19,14 @@ export function useBootstrap() {
       // Dopo clone/reseed il browser può conservare UUID di ristorante e staff
       // appartenenti al vecchio DB. Non trasferiamo un'identità fra tenant:
       // azzeriamo la sessione e AppShell riporta al login del database corrente.
-      if (staff && data.restaurant.id !== staff.restaurantId) {
-        useSession.getState().setStaff(null);
+      // Fix iPhone: se slug è vuoto (fallback server al primo ristorante), non cancellare lo staff
+      // appena loggato — altrimenti si torna al login in loop.
+      if (staff && slug && data.restaurant.id !== staff.restaurantId) {
+        // Solo se lo slug nell'URL è autorevole e non corrisponde al ristorante dello staff,
+        // allora lo staff è di un altro locale → logout
+        if (data.restaurant.slug === slug) {
+          useSession.getState().setStaff(null);
+        }
       }
       return data;
     },

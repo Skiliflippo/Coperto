@@ -92,19 +92,42 @@ export const useSession = create<SessionState>()(
       // Il flag è runtime-only: non deve rientrare da localStorage già impostato a true.
       partialize: ({ staff, slug, rememberedSlug, theme, roomId, roomOrder }) =>
         ({ staff, slug, rememberedSlug, theme, roomId, roomOrder }) as SessionState,
+      // Fix iPhone: se l'utente fa login prima che la rehydration finisca (iOS lento),
+      // la merge di default sovrascriverebbe staff con null dal vecchio storage → torna al login.
+      merge: (persisted, current) => {
+        const p = persisted as Partial<SessionState> | undefined;
+        if (!p) return current as SessionState;
+        return {
+          ...current,
+          ...p,
+          staff: (current as SessionState).staff ?? p.staff ?? null,
+          slug: (current as SessionState).slug ?? p.slug ?? null,
+          rememberedSlug: p.rememberedSlug ?? (current as SessionState).rememberedSlug ?? null,
+          theme: p.theme ?? (current as SessionState).theme,
+          roomId: p.roomId ?? (current as SessionState).roomId ?? null,
+          roomOrder: p.roomOrder ?? (current as SessionState).roomOrder ?? [],
+          hydrated: (current as SessionState).hydrated,
+        } as SessionState;
+      },
       onRehydrateStorage: () => (state, error) => {
-        // Anche in caso di errore (es. JSON corrotto, SecurityError iOS), sblocca l'app
-        // Al ripristino si riallinea l'identità usata dalle chiamate al server.
         try {
-          setApiIdentity(state?.staff?.id ?? null);
+          const currentStaff = useSession.getState().staff ?? state?.staff ?? null;
+          setApiIdentity(currentStaff?.id ?? null);
+          if (currentStaff && state && !state.staff) {
+            // preserva login avvenuto durante rehydration lenta
+            state.staff = currentStaff;
+          }
         } catch {}
-        // Se c'è errore di rehydration, pulisci storage corrotto e vai avanti
         if (error) {
           try {
             safeStorage.removeItem("coperto.session.v4");
           } catch {}
         }
         state?.setHydrated(true);
+        try {
+          const s = useSession.getState();
+          if (!s.hydrated) s.setHydrated(true);
+        } catch {}
       },
     },
   ),

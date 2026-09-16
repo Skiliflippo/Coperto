@@ -44,9 +44,13 @@ export default function LoginPage() {
         method: "POST",
         body: { staffId: sel.id, pin: completePin, slug },
       });
-      setStaff(session);
-      // Login riuscito: questo dispositivo riaprirà direttamente questo locale.
-      useSession.getState().rememberLocale(slug);
+      // Fix iPhone: imposta slug + staff atomico prima di navigare, altrimenti
+      // la rehydration lenta di zustand può sovrascrivere staff con null
+      const store = useSession.getState();
+      store.setSlug(slug);
+      store.setStaff(session);
+      store.rememberLocale(slug);
+      store.setHydrated(true);
       router.replace(tp("/sala"));
     } catch (error: unknown) {
       setErr(error instanceof ApiError ? error.message : "Accesso non riuscito");
