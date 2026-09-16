@@ -37,6 +37,17 @@ function Shell({ children }: { children: ReactNode }) {
     }
     root.classList.add(`theme-${palette}`);
   }, [theme, palette]);
+  // Fallback iPhone: se la hydration di zustand non completa (localStorage SecurityError in private/PWA),
+  // forza hydrated=true dopo 800ms per sbloccare l'app — fix "rimane chiodato su sta aprendo la sala"
+  useEffect(() => {
+    if (hydrated) return;
+    const id = setTimeout(() => {
+      const s = useSession.getState();
+      if (!s.hydrated) s.setHydrated(true);
+    }, 800);
+    return () => clearTimeout(id);
+  }, [hydrated]);
+
   useEffect(() => {
     if (hydrated && !staff) router.replace(tp("/login"));
   }, [hydrated, staff, router, tp]);
@@ -49,7 +60,20 @@ function Shell({ children }: { children: ReactNode }) {
     router.replace(tp("/setup"));
   }, [boot.isError, router, tp]);
 
-  if (!hydrated || !staff) {
+  // Fix iPhone: mostra loading solo se davvero non sappiamo nulla.
+  // Se staff esiste già in memoria (appena fatto login), mostra la sala anche se hydrated è ancora false
+  // Altrimenti su iPhone con localStorage bloccato si resta chiodati su "sta aprendo la sala"
+  if (!hydrated && !staff) {
+    return (
+      <div className="grid min-h-dvh place-items-center">
+        <div className="flex flex-col items-center gap-3">
+          <div className="grid h-16 w-16 animate-pop place-items-center rounded-[22px] bg-brand font-display text-3xl font-bold text-on-brand">C</div>
+          <p className="text-sm font-semibold text-muted">Coperto sta aprendo la sala…</p>
+        </div>
+      </div>
+    );
+  }
+  if (!staff) {
     return (
       <div className="grid min-h-dvh place-items-center">
         <div className="flex flex-col items-center gap-3">

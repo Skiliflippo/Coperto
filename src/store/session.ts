@@ -1,6 +1,6 @@
 "use client";
 import { create } from "zustand";
-import { persist } from "zustand/middleware";
+import { persist, createJSONStorage } from "zustand/middleware";
 import { setApiIdentity } from "@/lib/api";
 import type { StaffSession } from "@/lib/types";
 
@@ -21,6 +21,35 @@ type SessionState = {
   setRoom: (id: string) => void;
   setRoomOrder: (ids: string[]) => void;
   setHydrated: (value: boolean) => void;
+};
+
+// Storage sicuro per iOS Safari: in private mode o PWA, localStorage può lanciare SecurityError
+// e bloccare la hydration di zustand → l'app resta chiodata su "sta aprendo la sala"
+const safeStorage = {
+  getItem: (name: string) => {
+    try {
+      if (typeof window === "undefined" || !window.localStorage) return null;
+      return window.localStorage.getItem(name);
+    } catch {
+      return null;
+    }
+  },
+  setItem: (name: string, value: string) => {
+    try {
+      if (typeof window === "undefined" || !window.localStorage) return;
+      window.localStorage.setItem(name, value);
+    } catch {
+      // quota exceeded o SecurityError su iOS private → ignora, l'app funziona in memoria
+    }
+  },
+  removeItem: (name: string) => {
+    try {
+      if (typeof window === "undefined" || !window.localStorage) return;
+      window.localStorage.removeItem(name);
+    } catch {
+      // ignora
+    }
+  },
 };
 
 export const useSession = create<SessionState>()(
@@ -59,12 +88,22 @@ export const useSession = create<SessionState>()(
     }),
     {
       name: "coperto.session.v4",
+      storage: createJSONStorage(() => safeStorage as any),
       // Il flag è runtime-only: non deve rientrare da localStorage già impostato a true.
       partialize: ({ staff, slug, rememberedSlug, theme, roomId, roomOrder }) =>
         ({ staff, slug, rememberedSlug, theme, roomId, roomOrder }) as SessionState,
-      onRehydrateStorage: () => (state) => {
+      onRehydrateStorage: () => (state, error) => {
+        // Anche in caso di errore (es. JSON corrotto, SecurityError iOS), sblocca l'app
         // Al ripristino si riallinea l'identità usata dalle chiamate al server.
-        setApiIdentity(state?.staff?.id ?? null);
+        try {
+          setApiIdentity(state?.staff?.id ?? null);
+        } catch {}
+        // Se c'è errore di rehydration, pulisci storage corrotto e vai avanti
+        if (error) {
+          try {
+            safeStorage.removeItem("coperto.session.v4");
+          } catch {}
+        }
         state?.setHydrated(true);
       },
     },
