@@ -2,6 +2,7 @@ import { notFound } from "next/navigation";
 import type { ReactNode } from "react";
 import { getRestaurantBySlug } from "@/server/data";
 import { TenantProvider } from "@/lib/tenant";
+import { normalizeTenantCode } from "@/lib/tenant-code";
 
 export const dynamic = "force-dynamic";
 
@@ -10,8 +11,10 @@ export const dynamic = "force-dynamic";
 export default async function TenantLayout(
   { children, params }: { children: ReactNode; params: Promise<{ slug: string }> },
 ) {
-  const { slug } = await params;
-  const restaurant = await getRestaurantBySlug(slug);
+  const { slug: raw } = await params;
+  // Fix iPhone/PC: slug case-insensitive — BDHC8PMU7D == bdhc8pmu7d
+  const normalized = normalizeTenantCode(raw) || raw.trim();
+  const restaurant = (await getRestaurantBySlug(raw)) ?? (await getRestaurantBySlug(normalized)) ?? (await getRestaurantBySlug(normalized.toLowerCase()));
   if (!restaurant) notFound();
-  return <TenantProvider slug={slug}>{children}</TenantProvider>;
+  return <TenantProvider slug={restaurant.slug}>{children}</TenantProvider>;
 }

@@ -1,5 +1,7 @@
 "use client";
-// Bottom sheet del tavolo: tutte le azioni a portata di pollice, pulsanti grandi.
+// Bottom sheet del tavolo: Optimistic UI + Local-First
+// - Azioni operative (occupa, libera, sposta, coperti, note) aggiornano UI ALL'ISTANTE
+// - API inviata in background, realtime agli altri via /api/events
 import { useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import {
@@ -8,13 +10,14 @@ import {
 import { api } from "@/lib/api";
 import { useBootstrap, useDay, useNow } from "@/lib/hooks";
 import { useSession } from "@/store/session";
+import { useTenant } from "@/lib/tenant";
 import { computeTableStatuses } from "@/lib/estimates";
 import { nowMin, todayISO } from "@/lib/time";
 import { TABLE_STATE, fmtCovers } from "@/lib/meta";
 import { Btn, Sheet, Chip } from "@/components/ui";
-import { runWithUndo, toast } from "@/components/toast";
+import { toast } from "@/components/toast";
 import { PartyGrid, SuggestedTables, useSeat } from "@/components/seat-flow";
-import type { TableT } from "@/lib/types";
+import type { TableT, DayData, Bootstrap } from "@/lib/types";
 
 export function TableSheet({ table, onClose }: { table: TableT | null; onClose: () => void }) {
   const boot = useBootstrap();
@@ -22,6 +25,7 @@ export function TableSheet({ table, onClose }: { table: TableT | null; onClose: 
   const now = useNow();
   const rid = useSession((s) => s.staff?.restaurantId);
   const me = useSession((s) => s.staff?.name) ?? "";
+  const slug = useTenant();
   const qc = useQueryClient();
   const seat = useSeat();
   const [mode, setMode] = useState<"main" | "seat" | "move" | "party" | "note">("main");
@@ -38,8 +42,8 @@ export function TableSheet({ table, onClose }: { table: TableT | null; onClose: 
   const seating = status.seating;
   const state = status.state;
   const meta = TABLE_STATE[state];
+  const date = todayISO();
 
-  // Stacca/riunisce: azioni di sala, le fa chiunque sia in servizio.
   const splitTable = async () => {
     if (!table) return;
     try {
@@ -61,9 +65,37 @@ export function TableSheet({ table, onClose }: { table: TableT | null; onClose: 
     } catch (e: any) { toast({ title: e?.message ?? "Non riuscito", tone: "err" }); }
   };
 
-  const act = async (path: string, body: unknown) => {
-    await api(path, { method: "PATCH", body: { restaurantId: rid, staffName: me, ...(body as object) } });
-    await Promise.all([qc.invalidateQueries({ queryKey: ["day", rid] }), qc.invalidateQueries({ queryKey: ["bootstrap"] })]);
+  // Optimistic act: aggiorna cache day/bootstrap immediatamente, poi API in background
+  const actOptimistic = async (
+    path: string,
+    body: any,
+    optimisticUpdater?: (dayData: DayData) => DayData,
+    bootstrapUpdater?: (bootData: Bootstrap) => Bootstrap,
+  ) => {
+    const prevDay = qc.getQueryData<DayData>(["day", rid, date]);
+    const prevBoot = qc.getQueryData<Bootstrap>(["bootstrap", slug || rid || "default"]);
+
+    // 1) Optimistic UI istantaneo
+    if (optimisticUpdater && prevDay) {
+      qc.setQueryData(["day", rid, date], optimisticUpdater(prevDay));
+    }
+    if (bootstrapUpdater && prevBoot) {
+      qc.setQueryData(["bootstrap", slug || rid || "default"], bootstrapUpdater(prevBoot));
+    }
+
+    try {
+      // 2) API in background
+      await api(path, { method: "PATCH", body: { restaurantId: rid, staffName: me, ...body } });
+      // 3) Sync leggero in background (non blocca UI)
+      qc.invalidateQueries({ queryKey: ["day", rid] });
+      qc.invalidateQueries({ queryKey: ["bootstrap"] });
+    } catch (e: any) {
+      // Rollback su errore
+      if (prevDay) qc.setQueryData(["day", rid, date], prevDay);
+      if (prevBoot) qc.setQueryData(["bootstrap", slug || rid || "default"], prevBoot);
+      toast({ title: e?.message ?? "Errore", tone: "err" });
+      throw e;
+    }
   };
 
   return (
@@ -96,18 +128,49 @@ export function TableSheet({ table, onClose }: { table: TableT | null; onClose: 
           )}
           {seating ? (
             <>
-              <Btn variant="ok" size="xl" onClick={() => {
+              <Btn variant="ok" size="xl" onClick={async () => {
                 const label = seating.tableIds.length > 1 ? `Tavoli ${seating.tableLabel} liberati` : `Tavolo ${table.label} liberato`;
                 onClose();
-                runWithUndo(label,
-                  () => act(`/api/seatings/${seating.id}`, { action: "libera" }),
-                  () => act(`/api/seatings/${seating.id}`, { action: "riapri" }));
+                // Optimistic: libera subito
+                const prev = qc.getQueryData<DayData>(["day", rid, date]);
+                if (prev) {
+                  qc.setQueryData(["day", rid, date], {
+                    ...prev,
+                    seatings: prev.seatings.map((s) => s.id === seating.id ? { ...s, status: "chiuso" as const, actualEndAt: new Date().toISOString() } : s),
+                  });
+                }
+                toast({ title: label, tone: "ok" });
+                try {
+                  await api(`/api/seatings/${seating.id}`, { method: "PATCH", body: { restaurantId: rid, staffName: me, action: "libera" } });
+                  qc.invalidateQueries({ queryKey: ["day", rid] });
+                } catch (e: any) {
+                  if (prev) qc.setQueryData(["day", rid, date], prev);
+                  toast({ title: e?.message ?? "Errore", tone: "err" });
+                }
               }}>
                 <DoorOpen className="h-6 w-6" /> Libera il tavolo
               </Btn>
               <div className="grid grid-cols-2 gap-3">
-                <Btn variant="soft" onClick={() => act(`/api/seatings/${seating.id}`, { action: "extend", minutes: 15 })}><Clock className="h-5 w-5" /> +15 min</Btn>
-                <Btn variant="soft" onClick={() => act(`/api/seatings/${seating.id}`, { action: "extend", minutes: 30 })}><Clock className="h-5 w-5" /> +30 min</Btn>
+                <Btn variant="soft" onClick={() => {
+                  const prev = qc.getQueryData<DayData>(["day", rid, date]);
+                  if (prev) {
+                    qc.setQueryData(["day", rid, date], {
+                      ...prev,
+                      seatings: prev.seatings.map((s) => s.id === seating.id ? { ...s, expectedEndAt: new Date(new Date(s.expectedEndAt).getTime() + 15*60000).toISOString() } : s),
+                    });
+                  }
+                  actOptimistic(`/api/seatings/${seating.id}`, { action: "extend", minutes: 15 });
+                }}><Clock className="h-5 w-5" /> +15 min</Btn>
+                <Btn variant="soft" onClick={() => {
+                  const prev = qc.getQueryData<DayData>(["day", rid, date]);
+                  if (prev) {
+                    qc.setQueryData(["day", rid, date], {
+                      ...prev,
+                      seatings: prev.seatings.map((s) => s.id === seating.id ? { ...s, expectedEndAt: new Date(new Date(s.expectedEndAt).getTime() + 30*60000).toISOString() } : s),
+                    });
+                  }
+                  actOptimistic(`/api/seatings/${seating.id}`, { action: "extend", minutes: 30 });
+                }}><Clock className="h-5 w-5" /> +30 min</Btn>
                 <Btn variant="soft" onClick={() => { setParty(seating.partySize); setMode("party"); }}><Users className="h-5 w-5" /> Coperti: {seating.partySize}</Btn>
                 <Btn variant="soft" onClick={() => setMode("move")}><ArrowLeftRight className="h-5 w-5" /> Sposta tavolo</Btn>
                 <Btn variant="soft" onClick={() => { setNote(seating.note); setMode("note"); }}><StickyNote className="h-5 w-5" /> Nota veloce</Btn>
@@ -117,8 +180,6 @@ export function TableSheet({ table, onClose }: { table: TableT | null; onClose: 
             <>
               <Btn size="xl" onClick={() => { setParty(2); setMode("seat"); }}><Users className="h-6 w-6" /> Siedi qualcuno qui</Btn>
 
-              {/* Un tavolone che in realtà sono più tavoli accostati: si può separare
-                  al volo per non sprecare coperti con un gruppo piccolo. */}
               {table.splitInto >= 2 && (
                 <Btn variant="soft" onClick={() => splitTable()}>
                   <Scissors className="h-5 w-5" />
@@ -133,11 +194,23 @@ export function TableSheet({ table, onClose }: { table: TableT | null; onClose: 
 
               <div className="grid grid-cols-2 gap-3">
                 <Btn variant="soft" onClick={() => { setNote(table.note); setMode("note"); }}><StickyNote className="h-5 w-5" /> Nota tavolo</Btn>
-                <Btn variant="soft" onClick={() => {
+                <Btn variant="soft" onClick={async () => {
+                  const prevBoot = qc.getQueryData<Bootstrap>(["bootstrap", slug || rid || "default"]);
+                  if (prevBoot) {
+                    qc.setQueryData(["bootstrap", slug || rid || "default"], {
+                      ...prevBoot,
+                      tables: prevBoot.tables.map((t) => t.id === table.id ? { ...t, state: "fuori_servizio" as const } : t),
+                    });
+                  }
                   onClose();
-                  runWithUndo(`Tavolo ${table.label} fuori servizio`,
-                    () => act(`/api/tables/${table.id}`, { action: "fuori_servizio" }),
-                    () => act(`/api/tables/${table.id}`, { action: "in_servizio" }));
+                  toast({ title: `Tavolo ${table.label} fuori servizio`, tone: "info" });
+                  try {
+                    await api(`/api/tables/${table.id}`, { method: "PATCH", body: { restaurantId: rid, staffName: me, action: "fuori_servizio" } });
+                    qc.invalidateQueries({ queryKey: ["bootstrap"] });
+                  } catch (e: any) {
+                    if (prevBoot) qc.setQueryData(["bootstrap", slug || rid || "default"], prevBoot);
+                    toast({ title: e?.message ?? "Errore", tone: "err" });
+                  }
                 }}>
                   <Ban className="h-5 w-5" /> Fuori servizio
                 </Btn>
@@ -157,7 +230,23 @@ export function TableSheet({ table, onClose }: { table: TableT | null; onClose: 
               </Btn>
             </>
           ) : (
-            <Btn size="xl" onClick={() => act(`/api/tables/${table.id}`, { action: "in_servizio" })}><Undo2 className="h-6 w-6" /> Rimetti in servizio</Btn>
+            <Btn size="xl" onClick={async () => {
+              const prevBoot = qc.getQueryData<Bootstrap>(["bootstrap", slug || rid || "default"]);
+              if (prevBoot) {
+                qc.setQueryData(["bootstrap", slug || rid || "default"], {
+                  ...prevBoot,
+                  tables: prevBoot.tables.map((t) => t.id === table.id ? { ...t, state: "libero" as const } : t),
+                });
+              }
+              toast({ title: `Tavolo ${table.label} rimesso in servizio`, tone: "ok" });
+              try {
+                await api(`/api/tables/${table.id}`, { method: "PATCH", body: { restaurantId: rid, staffName: me, action: "in_servizio" } });
+                qc.invalidateQueries({ queryKey: ["bootstrap"] });
+              } catch (e: any) {
+                if (prevBoot) qc.setQueryData(["bootstrap", slug || rid || "default"], prevBoot);
+                toast({ title: e?.message ?? "Errore", tone: "err" });
+              }
+            }}><Undo2 className="h-6 w-6" /> Rimetti in servizio</Btn>
           )}
         </div>
       )}
@@ -178,7 +267,23 @@ export function TableSheet({ table, onClose }: { table: TableT | null; onClose: 
         <div className="grid gap-3">
           <p className="text-sm font-semibold text-muted">Sposta {seating.name || "il gruppo"} ({seating.partySize} p.) su:</p>
           <SuggestedTables party={seating.partySize} excludeIds={seating.tableIds}
-            onPick={(t) => act(`/api/seatings/${seating.id}`, { action: "move", ...t }).then(() => { setMode("main"); onClose(); })} />
+            onPick={async (t) => {
+              const prev = qc.getQueryData<DayData>(["day", rid, date]);
+              if (prev) {
+                qc.setQueryData(["day", rid, date], {
+                  ...prev,
+                  seatings: prev.seatings.map((s) => s.id === seating.id ? { ...s, tableIds: t.tableIds, tableLabel: t.tableLabel } : s),
+                });
+              }
+              setMode("main"); onClose();
+              try {
+                await api(`/api/seatings/${seating.id}`, { method: "PATCH", body: { restaurantId: rid, staffName: me, action: "move", ...t } });
+                qc.invalidateQueries({ queryKey: ["day", rid] });
+              } catch (e: any) {
+                if (prev) qc.setQueryData(["day", rid, date], prev);
+                toast({ title: e?.message ?? "Errore", tone: "err" });
+              }
+            }} />
           <Btn variant="ghost" onClick={() => setMode("main")}>Indietro</Btn>
         </div>
       )}
@@ -186,7 +291,23 @@ export function TableSheet({ table, onClose }: { table: TableT | null; onClose: 
       {mode === "party" && seating && (
         <div className="grid gap-4">
           <PartyGrid value={party} onChange={setParty} />
-          <Btn onClick={() => act(`/api/seatings/${seating.id}`, { action: "party", partySize: party }).then(() => { setMode("main"); })}><Check className="h-5 w-5" /> Conferma {party} coperti</Btn>
+          <Btn onClick={async () => {
+            const prev = qc.getQueryData<DayData>(["day", rid, date]);
+            if (prev) {
+              qc.setQueryData(["day", rid, date], {
+                ...prev,
+                seatings: prev.seatings.map((s) => s.id === seating.id ? { ...s, partySize: party } : s),
+              });
+            }
+            setMode("main");
+            try {
+              await api(`/api/seatings/${seating.id}`, { method: "PATCH", body: { restaurantId: rid, staffName: me, action: "party", partySize: party } });
+              qc.invalidateQueries({ queryKey: ["day", rid] });
+            } catch (e: any) {
+              if (prev) qc.setQueryData(["day", rid, date], prev);
+              toast({ title: e?.message ?? "Errore", tone: "err" });
+            }
+          }}><Check className="h-5 w-5" /> Conferma {party} coperti</Btn>
           <Btn variant="ghost" onClick={() => setMode("main")}>Indietro</Btn>
         </div>
       )}
@@ -195,7 +316,32 @@ export function TableSheet({ table, onClose }: { table: TableT | null; onClose: 
         <div className="grid gap-3">
           <input value={note} onChange={(e) => setNote(e.target.value)} placeholder="es. compleanno, allergia, abituale…"
             className="min-h-[56px] w-full rounded-2xl border border-line bg-bg px-4 font-medium outline-none focus:border-brand" />
-          <Btn onClick={() => act(seating ? `/api/seatings/${seating.id}` : `/api/tables/${table.id}`, { action: "note", note }).then(() => { setMode("main"); onClose(); })}>
+          <Btn onClick={async () => {
+            const prev = qc.getQueryData<DayData>(["day", rid, date]);
+            if (seating && prev) {
+              qc.setQueryData(["day", rid, date], {
+                ...prev,
+                seatings: prev.seatings.map((s) => s.id === seating.id ? { ...s, note } : s),
+              });
+            }
+            const prevBoot = qc.getQueryData<Bootstrap>(["bootstrap", slug || rid || "default"]);
+            if (!seating && prevBoot) {
+              qc.setQueryData(["bootstrap", slug || rid || "default"], {
+                ...prevBoot,
+                tables: prevBoot.tables.map((t) => t.id === table.id ? { ...t, note } : t),
+              });
+            }
+            setMode("main"); onClose();
+            try {
+              await api(seating ? `/api/seatings/${seating.id}` : `/api/tables/${table.id}`, { method: "PATCH", body: { restaurantId: rid, staffName: me, action: "note", note } });
+              qc.invalidateQueries({ queryKey: ["day", rid] });
+              qc.invalidateQueries({ queryKey: ["bootstrap"] });
+            } catch (e: any) {
+              if (prev) qc.setQueryData(["day", rid, date], prev);
+              if (prevBoot) qc.setQueryData(["bootstrap", slug || rid || "default"], prevBoot);
+              toast({ title: e?.message ?? "Errore", tone: "err" });
+            }
+          }}>
             <Check className="h-5 w-5" /> Salva nota
           </Btn>
           <Btn variant="ghost" onClick={() => setMode("main")}>Indietro</Btn>

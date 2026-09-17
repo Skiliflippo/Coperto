@@ -24,30 +24,57 @@ export default function LoginPage() {
   const slug = useTenant();
   const tp = useTenantPath();
 
-  useEffect(() => { if (staff) router.replace(tp("/sala")); }, [staff, router, tp]);
+  // Evita loop infinito: tp cambiava ogni render prima del fix useCallback
   useEffect(() => {
-    api<{ needsSetup?: boolean; restaurantName: string | null; staff: StaffLite[] }>(withSlug(slug, "/api/staff"))
+    if (!staff) return;
+    const target = `/r/${slug}/sala`;
+    try {
+      router.replace(target);
+    } catch {
+      window.location.replace(target);
+    }
+  }, [staff, slug, router]);
+
+  useEffect(() => {
+    const effectiveSlug = slug || (() => { try { const m = window.location.pathname.match(/\/r\/([^\/]+)/); return m ? m[1] : ""; } catch { return ""; } })();
+    if (!effectiveSlug) return;
+    let cancelled = false;
+    api<{ needsSetup?: boolean; restaurantName: string | null; staff: StaffLite[] }>(`/api/staff?slug=${encodeURIComponent(effectiveSlug)}`)
       .then((d) => {
-        // Database vuoto o senza account: si passa al primo avvio guidato.
-        if (d.needsSetup) { router.replace(tp("/setup")); return; }
+        if (cancelled) return;
+        if (d.needsSetup) { router.replace(`/r/${effectiveSlug}/setup`); return; }
         setRestName(d.restaurantName ?? "");
         setList(d.staff);
       })
-      .catch(() => setErr("Server non raggiungibile. Riprova tra poco."));
-  }, [router, slug, tp]);
+      .catch(() => { if (!cancelled) setErr("Server non raggiungibile. Riprova tra poco."); });
+    return () => { cancelled = true; };
+  }, [slug, router]);
 
   const submitPin = async (completePin: string) => {
     if (!sel || completePin.length !== 4 || busy) return;
     setBusy(true);
     try {
+      const effectiveSlug = slug || (() => { try { const m = window.location.pathname.match(/\/r\/([^\/]+)/); return m ? m[1] : ""; } catch { return ""; } })();
       const session = await api<StaffSession>("/api/login", {
         method: "POST",
-        body: { staffId: sel.id, pin: completePin, slug },
+        body: { staffId: sel.id, pin: completePin, slug: effectiveSlug },
       });
-      setStaff(session);
-      // Login riuscito: questo dispositivo riaprirà direttamente questo locale.
-      useSession.getState().rememberLocale(slug);
-      router.replace(tp("/sala"));
+      const store = useSession.getState();
+      store.setSlug(effectiveSlug);
+      store.setStaff(session);
+      store.rememberLocale(effectiveSlug);
+      store.setHydrated(true);
+      const target = `/r/${effectiveSlug}/sala`;
+      // Fix iPhone: hard navigation più affidabile di router.replace in PWA standalone
+      // Prova soft, poi hard dopo 100ms se ancora su login
+      try {
+        router.replace(target);
+      } catch {}
+      setTimeout(() => {
+        try {
+          if (window.location.pathname !== target) window.location.replace(target);
+        } catch {}
+      }, 150);
     } catch (error: unknown) {
       setErr(error instanceof ApiError ? error.message : "Accesso non riuscito");
       setPin("");

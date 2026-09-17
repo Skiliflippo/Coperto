@@ -631,12 +631,24 @@ export function normalizeLayout(raw: unknown): RoomLayout {
       w, h, polygon,
       elements: l.elements.map((e: any) => {
         const kind: ElementKind = e.kind === "decor" ? "decor" : "wall";
-        let width = Math.max(kind === "wall" ? 10 : 10, Math.round(e.w ?? 100));
-        let height = Math.max(kind === "wall" ? 10 : 10, Math.round(e.h ?? 20));
+        let width = Math.max(10, Math.round(e.w ?? 100));
+        let height = Math.max(10, Math.round(e.h ?? 20));
         if (kind === "wall") {
-          // Un solo sistema: spessore 10/15/20/... cm. La lunghezza resta libera.
-          if (width >= height) height = Math.max(10, Math.round(height / 5) * 5);
-          else width = Math.max(10, Math.round(width / 5) * 5);
+          // Un solo sistema: spessore 10/15/20/... cm. La lunghezza resta libera ma non gigante.
+          if (width >= height) {
+            height = Math.max(10, Math.round(height / 5) * 5);
+            // spessore max 300cm, lunghezza max = lato lungo sala (evita crash con muri enormi)
+            height = clamp(height, 10, 300);
+            width = clamp(width, 10, Math.max(w, h));
+          } else {
+            width = Math.max(10, Math.round(width / 5) * 5);
+            width = clamp(width, 10, 300);
+            height = clamp(height, 10, Math.max(w, h));
+          }
+        } else {
+          // decor: generoso ma mai più grande della sala — fix crash pagina con arredi enormi
+          width = clamp(width, 10, Math.min(w, MAX_ROOM_CM));
+          height = clamp(height, 10, Math.min(h, MAX_ROOM_CM));
         }
         return {
           id: String(e.id ?? uid()),

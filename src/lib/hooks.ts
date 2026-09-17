@@ -12,15 +12,13 @@ export function useBootstrap() {
   const slug = useTenant();
   const rid = staff?.restaurantId;
   return useQuery({
-    // La cache è per ristorante: aprendo un altro locale non si riusa la sua.
     queryKey: ["bootstrap", slug || rid || "default"],
     queryFn: async () => {
       const data = await api<Bootstrap>(withSlug(slug, `/api/bootstrap${rid ? `?rid=${encodeURIComponent(rid)}` : ""}`));
-      // Dopo clone/reseed il browser può conservare UUID di ristorante e staff
-      // appartenenti al vecchio DB. Non trasferiamo un'identità fra tenant:
-      // azzeriamo la sessione e AppShell riporta al login del database corrente.
-      if (staff && data.restaurant.id !== staff.restaurantId) {
-        useSession.getState().setStaff(null);
+      if (staff && slug && data.restaurant.id !== staff.restaurantId) {
+        if (data.restaurant.slug === slug) {
+          useSession.getState().setStaff(null);
+        }
       }
       return data;
     },
@@ -35,11 +33,10 @@ export function useDay(date: string) {
     queryKey: ["day", rid, date],
     queryFn: () => api<DayData>(`/api/day?rid=${rid}&date=${date}`),
     enabled: !!rid,
-    refetchInterval: 30_000, // rete di riserva se il realtime cade
+    refetchInterval: 30_000,
   });
 }
 
-// Clock vivo per i timer della sala
 export function useNow(stepMs = 15_000): number {
   const [now, setNow] = useState(() => Date.now());
   useEffect(() => {
@@ -49,7 +46,7 @@ export function useNow(stepMs = 15_000): number {
   return now;
 }
 
-// Realtime SSE: ogni cambiamento di un collega → invalida + notifica "chi ha fatto cosa"
+// Realtime SSE - Local-First: non interrompe gesto in corso
 export function useRealtime(): "online" | "offline" | "connecting" {
   const rid = useSession((s) => s.staff?.restaurantId);
   const myName = useSession((s) => s.staff?.name);
@@ -65,18 +62,32 @@ export function useRealtime(): "online" | "offline" | "connecting" {
       setStatus("connecting");
       es = new EventSource(`/api/events?rid=${rid}`);
       es.onopen = () => setStatus("online");
-      es.onerror = () => { setStatus(navigator.onLine ? "connecting" : "offline"); es?.close(); setTimeout(connect, 3000); };
+      es.onerror = () => {
+        setStatus(navigator.onLine ? "connecting" : "offline");
+        es?.close();
+        setTimeout(connect, 3000);
+      };
       es.onmessage = (e) => {
         try {
           const d = JSON.parse(e.data);
           if (d.kind === "ping" || d.kind === "hello") return;
-          qc.invalidateQueries({ queryKey: ["day", rid] });
-          qc.invalidateQueries({ queryKey: ["bootstrap"] });
-          qc.invalidateQueries({ queryKey: ["summary", rid] });
+          // Se utente sta pannando, accoda invalidazione dopo 600ms
+          const isPanning = typeof document !== "undefined" && !!document.querySelector('[data-panning="1"]');
+          if (isPanning) {
+            setTimeout(() => {
+              qc.invalidateQueries({ queryKey: ["day", rid] });
+              qc.invalidateQueries({ queryKey: ["bootstrap"] });
+              qc.invalidateQueries({ queryKey: ["summary", rid] });
+            }, 600);
+          } else {
+            qc.invalidateQueries({ queryKey: ["day", rid] });
+            qc.invalidateQueries({ queryKey: ["bootstrap"] });
+            qc.invalidateQueries({ queryKey: ["summary", rid] });
+          }
           if (d.msg && d.actor && d.actor !== myName) {
             toast({ title: d.msg, tone: d.kind === "seating" ? "ok" : "info" });
           }
-        } catch { /* json non valido */ }
+        } catch {}
       };
     };
     connect();
@@ -84,7 +95,8 @@ export function useRealtime(): "online" | "offline" | "connecting" {
     window.addEventListener("offline", onOff);
     window.addEventListener("online", onOff);
     return () => {
-      closed = true; es?.close();
+      closed = true;
+      es?.close();
       window.removeEventListener("offline", onOff);
       window.removeEventListener("online", onOff);
     };

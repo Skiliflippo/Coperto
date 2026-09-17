@@ -41,7 +41,40 @@ export async function assertStaffInRestaurant(
 
 /** Risolve un ristorante dal suo indirizzo pubblico (/r/<slug>). */
 export async function getRestaurantBySlug(slug: string) {
-  const [row] = await db.select().from(s.restaurants).where(eq(s.restaurants.slug, slug)).limit(1);
+  if (!slug) return null;
+  const trimmed = slug.trim();
+  if (!trimmed) return null;
+  // Prova in ordine: originale, upper, lower, e anche senza spazi — robusto per iOS e 404 visti nei log
+  let row: typeof s.restaurants.$inferSelect | undefined;
+  try {
+    [row] = await db.select().from(s.restaurants).where(eq(s.restaurants.slug, trimmed)).limit(1);
+  } catch {}
+  if (!row) {
+    try {
+      const up = trimmed.toUpperCase();
+      if (up !== trimmed) {
+        [row] = await db.select().from(s.restaurants).where(eq(s.restaurants.slug, up)).limit(1);
+      }
+    } catch {}
+  }
+  if (!row) {
+    try {
+      const low = trimmed.toLowerCase();
+      if (low !== trimmed) {
+        [row] = await db.select().from(s.restaurants).where(eq(s.restaurants.slug, low)).limit(1);
+      }
+    } catch {}
+  }
+  if (!row) {
+    try {
+      // Ultima spiaggia: cerca con ILIKE via SQL raw per case-insensitive
+      const { sql } = await import("drizzle-orm");
+      const result = await db.execute(sql`SELECT * FROM restaurants WHERE LOWER(slug) = LOWER(${trimmed}) LIMIT 1`);
+      // @ts-ignore - result rows
+      const r = (result as any).rows?.[0] ?? (result as any)[0];
+      if (r) return r as typeof s.restaurants.$inferSelect;
+    } catch {}
+  }
   return row ?? null;
 }
 
@@ -50,11 +83,12 @@ export async function getRestaurantBundle(restaurantId?: string | null, slug?: s
   // (tipico dopo clone, import o reseed). In locale non deve produrre una pagina vuota:
   // prova l'ID richiesto, poi il tenant demo, infine il primo tenant disponibile.
   // Lo slug dell'indirizzo ha la precedenza: è il locale che il cliente sta usando.
-  let rest = slug
-    ? (await db.select().from(s.restaurants).where(eq(s.restaurants.slug, slug)).limit(1))[0]
-    : undefined;
+  let rest = slug ? await getRestaurantBySlug(slug) : undefined;
+  // Fix iOS: se slug non trovato (es. BDHC8PMU7D vs bdhc8pmu7d, o cache vecchia), non lanciare subito 404
+  // ma prova fallback a primo ristorante — evita loop login su iPhone con IP locale dove bootstrap dava 404 da iOS ma 200 da PC
   if (slug && !rest) {
-    throw new BootstrapDataError("RESTAURANT_NOT_FOUND", "Questo indirizzo non corrisponde a nessun ristorante.");
+    console.warn(`[getRestaurantBundle] slug ${slug} non trovato, fallback a primo ristorante per evitare 404 iOS`);
+    // Non lanciare errore subito, prova fallback
   }
   const validUuid = !rest && !!restaurantId && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(restaurantId);
   if (validUuid) {

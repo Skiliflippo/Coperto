@@ -22,11 +22,22 @@ export default function Home() {
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
 
+  // Fallback iPhone: se hydration non completa, forza dopo 800ms
+  useEffect(() => {
+    if (hydrated) return;
+    const id = setTimeout(() => {
+      const s = useSession.getState();
+      if (!s.hydrated) s.setHydrated(true);
+    }, 800);
+    return () => clearTimeout(id);
+  }, [hydrated]);
+
   // Locale già memorizzato su questo dispositivo: si riapre direttamente,
   // senza chiedere di nuovo il codice.
   useEffect(() => {
     if (!hydrated || !rememberedSlug) return;
-    router.replace(`/r/${rememberedSlug}`);
+    const staff = useSession.getState().staff;
+    router.replace(`/r/${rememberedSlug}${staff ? "/sala" : "/login"}`);
   }, [hydrated, rememberedSlug, router]);
 
   const go = async () => {
@@ -88,7 +99,7 @@ export default function Home() {
           </label>
 
           <p className={`mt-2 min-h-5 text-sm font-semibold ${error ? "text-over" : "text-muted"}`} role="alert">
-            {error || "Lo trovi nel messaggio ricevuto dal ristoratore."}
+            {error || "Lo trovi nel messaggio di attivazione."}
           </p>
 
           <button type="submit" disabled={loading || !value.trim()}

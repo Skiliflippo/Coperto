@@ -128,7 +128,7 @@ function Clock({ now, staff }: { now: number; staff?: string }) {
 }
 
 // Toggle mappa/lista: una sola icona, quella della vista in cui puoi passare.
-export function ViewToggle({ view, setView }: { view: "mappa" | "lista"; setView: (v: "mappa" | "lista") => void }) {
+function ViewToggle({ view, setView }: { view: "mappa" | "lista"; setView: (v: "mappa" | "lista") => void }) {
   const next = view === "mappa" ? "lista" : "mappa";
   return (
     <button onClick={() => setView(next)} aria-label={`Passa alla vista ${next}`} title={`Vista ${next}`}
@@ -146,35 +146,56 @@ function ListView({ boot, statuses, onPick, viewToggle, counts }: {
   counts: Tally;
 }) {
   const [roomId, setRoomId] = useActiveRoom(boot.rooms);
-  const tables = boot.tables.filter((t) => t.roomId === roomId);
+  const order: Record<string, number> = { libero: 0, prenotato: 1, occupato: 2, oltre_tempo: 3, fuori_servizio: 4 };
+  const tables = [...boot.tables.filter((t) => t.roomId === roomId)].sort((a, b) => {
+    const sa = statuses.get(a.id)?.state ?? "libero";
+    const sb = statuses.get(b.id)?.state ?? "libero";
+    const oa = order[sa] ?? 9;
+    const ob = order[sb] ?? 9;
+    if (oa !== ob) return oa - ob;
+    const na = parseInt(a.label, 10);
+    const nb = parseInt(b.label, 10);
+    if (!isNaN(na) && !isNaN(nb)) return na - nb;
+    return a.label.localeCompare(b.label);
+  });
   return (
     <div className="mt-2.5 flex min-h-0 flex-1 flex-col">
       <RoomTabs rooms={boot.rooms} active={roomId} onPick={setRoomId} right={viewToggle} />
       <div className="mt-1.5"><StatusBar counts={counts} /></div>
-      <div className="no-scrollbar mt-2.5 grid min-h-0 flex-1 grid-cols-3 gap-1.5 overflow-y-auto sm:grid-cols-4 lg:grid-cols-6">
+      <div className="no-scrollbar mt-2 grid min-h-0 flex-1 auto-rows-min grid-cols-3 gap-2 overflow-y-auto pb-2 sm:grid-cols-4 md:grid-cols-5 lg:grid-cols-6 xl:grid-cols-8">
         {tables.map((t) => {
           const st = statuses.get(t.id);
-          const meta = TABLE_STATE[st?.state ?? "libero"];
+          const state = st?.state ?? "libero";
+          const meta = TABLE_STATE[state];
+          const tone =
+            state === "libero" ? "border-ok/20 bg-ok/[0.05] hover:bg-ok/[0.09]" :
+            state === "prenotato" ? "border-soon/25 bg-soon/[0.07] hover:bg-soon/[0.12]" :
+            state === "occupato" ? "border-busy/20 bg-busy/[0.06] hover:bg-busy/[0.10]" :
+            state === "oltre_tempo" ? "border-over/25 bg-over/[0.07] hover:bg-over/[0.12]" :
+            "border-line bg-raised/60 hover:bg-raised";
           return (
             <button key={t.id} onClick={() => onPick(t)}
-              className={`flex h-[62px] flex-col justify-between rounded-xl border bg-surface px-2 py-1.5 text-left active:scale-[0.97] ${meta.card}`}>
-              <span className="flex items-start justify-between gap-1">
-                <span className="font-display text-[17px] font-extrabold leading-none">{t.label}</span>
-                <span className={`h-2 w-2 rounded-full ${meta.dot}`} />
+              className={`group flex h-[52px] flex-col justify-between rounded-[12px] border px-2.5 py-2 text-left transition-colors active:scale-[0.97] ${tone}`}>
+              <span className="flex items-center justify-between gap-1">
+                <span className="font-display text-[18px] font-extrabold leading-none tracking-tight">{t.label}</span>
+                <span className={`h-[6px] w-[6px] shrink-0 rounded-full ${meta.dot} group-active:scale-110`} />
               </span>
               {st?.seating ? (
-                <span className="block leading-tight">
-                  <span className="block truncate text-[11px] font-bold">{st.seating.name || "Walk-in"}</span>
-                  <span className={`block text-[10px] font-semibold tabular-nums ${st.state === "oltre_tempo" ? "text-over" : "text-muted"}`}>
+                <span className="block min-w-0 leading-[1.1]">
+                  <span className="block truncate text-[11px] font-bold leading-none">{st.seating.name?.split(" ")[0] || "Walk-in"}</span>
+                  <span className={`block truncate text-[10px] font-semibold tabular-nums ${state === "oltre_tempo" ? "text-over" : "text-muted"}`}>
                     {st.seating.partySize}p · {st.minutesSeated}′
                   </span>
                 </span>
-              ) : st?.state === "prenotato" ? (
-                <span className="block truncate text-[10px] font-bold leading-tight text-soon">
-                  {st.reservation?.time} {st.reservation?.guestName}
+              ) : state === "prenotato" ? (
+                <span className="block min-w-0 leading-[1.1]">
+                  <span className="block truncate text-[10px] font-bold leading-none text-soon">{st?.reservation?.time} · {st?.reservation?.partySize}p</span>
+                  <span className="block truncate text-[10px] font-medium leading-none text-muted">{st?.reservation?.guestName}</span>
                 </span>
+              ) : state === "fuori_servizio" ? (
+                <span className="block text-[10px] font-bold leading-none text-oos">Fuori servizio</span>
               ) : (
-                <span className={`block text-[10px] font-bold leading-tight ${meta.text}`}>{meta.label} · {t.capacity}p</span>
+                <span className="block text-[11px] font-semibold leading-none text-muted">{t.capacity}p{t.maxCapacity > t.capacity ? `-${t.maxCapacity}` : ""}</span>
               )}
             </button>
           );

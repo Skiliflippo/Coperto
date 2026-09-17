@@ -18,11 +18,21 @@ export function setApiIdentity(staffId: string | null) {
   currentStaffId = staffId;
 }
 
+function getStaffId(): string | null {
+  if (currentStaffId) return currentStaffId;
+  try {
+    const { useSession } = require("@/store/session") as any;
+    return useSession?.getState?.()?.staff?.id ?? null;
+  } catch {
+    return null;
+  }
+}
+
 export async function api<T = any>(path: string, opts?: { method?: string; body?: unknown }): Promise<T> {
   const method = opts?.method ?? "GET";
-  // Il corpo viene arricchito con staffId solo se è un oggetto semplice.
+  const staffId = getStaffId();
   const body = opts?.body && typeof opts.body === "object" && !Array.isArray(opts.body)
-    ? { staffId: currentStaffId, ...(opts.body as Record<string, unknown>) }
+    ? { staffId, ...(opts.body as Record<string, unknown>) }
     : opts?.body;
 
   let res: Response;
