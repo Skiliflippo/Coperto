@@ -2,7 +2,7 @@
 // Il ristorante corrente vive nell'indirizzo: /r/<slug>/sala.
 // Qui si tiene allineata la sessione e si costruiscono i link interni, così
 // nessuna pagina può finire per sbaglio sul locale di un altro cliente.
-import { createContext, useContext, useEffect, type ReactNode } from "react";
+import { createContext, useCallback, useContext, useEffect, type ReactNode } from "react";
 import { useParams } from "next/navigation";
 import { useSession } from "@/store/session";
 
@@ -39,7 +39,8 @@ export function useTenant(): string {
 /** Costruisce un percorso interno al ristorante corrente. */
 export function useTenantPath(): (path: string) => string {
   const slug = useTenant();
-  return (path: string) => `/r/${slug}${path.startsWith("/") ? path : `/${path}`}`;
+  // Memoizza la funzione per evitare loop infiniti in useEffect che dipendono da tp
+  return useCallback((path: string) => `/r/${slug}${path.startsWith("/") ? path : `/${path}`}`, [slug]);
 }
 
 /** Aggiunge lo slug a una query string di API. */

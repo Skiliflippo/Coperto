@@ -25,7 +25,7 @@ type SessionState = {
 
 // Storage sicuro per iOS Safari: in private mode o PWA, localStorage può lanciare SecurityError
 // e bloccare la hydration di zustand → l'app resta chiodata su "sta aprendo la sala"
-// Su iPhone proviamo in ordine: localStorage → sessionStorage → cookie → memoria
+// Su iPhone proviamo: localStorage → sessionStorage → memoria (no cookie: troppo piccolo per sessione)
 let memoryFallback: Record<string, string> = {};
 
 const safeStorage = {
@@ -42,32 +42,17 @@ const safeStorage = {
         if (v !== null) return v;
       }
     } catch {}
-    try {
-      if (typeof document !== "undefined") {
-        const m = document.cookie.match(new RegExp("(?:^|; )" + name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + "=([^;]*)"));
-        if (m) return decodeURIComponent(m[1]);
-      }
-    } catch {}
     return memoryFallback[name] ?? null;
   },
   setItem: (name: string, value: string) => {
-    let ok = false;
     try {
       if (typeof window !== "undefined" && window.localStorage) {
         window.localStorage.setItem(name, value);
-        ok = true;
       }
     } catch {}
     try {
       if (typeof window !== "undefined" && window.sessionStorage) {
         window.sessionStorage.setItem(name, value);
-        ok = true;
-      }
-    } catch {}
-    try {
-      if (typeof document !== "undefined") {
-        document.cookie = `${name}=${encodeURIComponent(value)}; path=/; max-age=31536000; SameSite=Lax`;
-        ok = true;
       }
     } catch {}
     // Sempre salva in memoria come ultima spiaggia — così anche se storage bloccato, la sessione resta in RAM
@@ -79,9 +64,6 @@ const safeStorage = {
     } catch {}
     try {
       if (typeof window !== "undefined" && window.sessionStorage) window.sessionStorage.removeItem(name);
-    } catch {}
-    try {
-      if (typeof document !== "undefined") document.cookie = `${name}=; path=/; max-age=0`;
     } catch {}
     delete memoryFallback[name];
   },

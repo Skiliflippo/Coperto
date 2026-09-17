@@ -24,29 +24,31 @@ export default function LoginPage() {
   const slug = useTenant();
   const tp = useTenantPath();
 
+  // Evita loop infinito: tp cambiava ogni render prima del fix useCallback
   useEffect(() => {
-    if (staff) {
-      // iPhone PWA: router.replace a volte non sblocca, usa hard navigation se necessario
-      const target = tp("/sala");
-      try {
-        router.replace(target);
-      } catch {
-        window.location.replace(target);
-      }
+    if (!staff) return;
+    const target = `/r/${slug}/sala`;
+    try {
+      router.replace(target);
+    } catch {
+      window.location.replace(target);
     }
-  }, [staff, router, tp]);
+  }, [staff, slug, router]);
 
   useEffect(() => {
-    // Fallback iPhone: se slug vuoto da context, prendilo da URL
     const effectiveSlug = slug || (() => { try { const m = window.location.pathname.match(/\/r\/([^\/]+)/); return m ? m[1] : ""; } catch { return ""; } })();
-    api<{ needsSetup?: boolean; restaurantName: string | null; staff: StaffLite[] }>(withSlug(effectiveSlug, "/api/staff"))
+    if (!effectiveSlug) return;
+    let cancelled = false;
+    api<{ needsSetup?: boolean; restaurantName: string | null; staff: StaffLite[] }>(`/api/staff?slug=${encodeURIComponent(effectiveSlug)}`)
       .then((d) => {
-        if (d.needsSetup) { router.replace(tp("/setup")); return; }
+        if (cancelled) return;
+        if (d.needsSetup) { router.replace(`/r/${effectiveSlug}/setup`); return; }
         setRestName(d.restaurantName ?? "");
         setList(d.staff);
       })
-      .catch(() => setErr("Server non raggiungibile. Riprova tra poco."));
-  }, [router, slug, tp]);
+      .catch(() => { if (!cancelled) setErr("Server non raggiungibile. Riprova tra poco."); });
+    return () => { cancelled = true; };
+  }, [slug, router]);
 
   const submitPin = async (completePin: string) => {
     if (!sel || completePin.length !== 4 || busy) return;
