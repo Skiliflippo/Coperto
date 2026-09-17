@@ -1,16 +1,23 @@
 "use client";
-// Pan & Zoom della piantina — ottimizzato per 60 FPS su tablet.
-// Trasformazione affine: schermo = mondo * zoom + pan.
-// Strategia: durante il gesto si aggiorna SOLO il DOM via requestAnimationFrame
-// (nessun setState React), il React state viene sincronizzato solo a fine gesto.
-// Questo evita centinaia di re-render al secondo su iPad/Android.
+// Pan & Zoom 60 FPS + spring + momentum ghiaccio (Google Earth)
+// - Cache viewport, grid via transform modulo
+// - Spring zoom per fit (easeOutExpo)
+// - Momentum / inertia su pan veloce: friction 0.92
+// - Zoom solo via pinch + fit/recenter, niente bottoni +/-
+// - No double-tap per evitare conflitto con tap tavoli
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { MAX_ZOOM, MIN_ZOOM, clamp, CM_PER_CELL } from "./floor";
 
 export type Viewport = { zoom: number; panX: number; panY: number };
+export type ZoomLevel = "low" | "mid" | "high";
 
-/** Calcola Zoom-to-selection/Zoom Object: mai zoom-in, solo extents visibili. */
+function getZoomLevel(zoom: number): ZoomLevel {
+  if (zoom < 0.35) return "low";
+  if (zoom < 0.75) return "mid";
+  return "high";
+}
+
 export function selectionViewport(args: {
   current: Viewport;
   box: { x: number; y: number; w: number; h: number };
@@ -49,6 +56,9 @@ export function selectionViewport(args: {
 
 type Bounds = { x1: number; y1: number; x2: number; y2: number };
 
+const easeOutCubic = (t: number) => 1 - Math.pow(1 - t, 3);
+const easeOutExpo = (t: number) => (t === 1 ? 1 : 1 - Math.pow(2, -10 * t));
+
 export function useViewport(
   roomW: number,
   roomH: number,
@@ -59,27 +69,42 @@ export function useViewport(
   const gridRef = useRef<HTMLDivElement>(null);
 
   const [vp, setVpState] = useState<Viewport>({ zoom: 0.4, panX: 0, panY: 0 });
+  const [zoomLevel, setZoomLevel] = useState<ZoomLevel>(() => getZoomLevel(0.4));
   const vpRef = useRef(vp);
+  const committedVpRef = useRef(vp);
   useEffect(() => {
     vpRef.current = vp;
+    setZoomLevel(getZoomLevel(vp.zoom));
   }, [vp]);
 
-  // rAF batching per 60fps fluidi
   const pendingVp = useRef<Viewport | null>(null);
   const rafId = useRef<number>(0);
+  const animateRaf = useRef<number>(0);
+  const momentumRaf = useRef<number>(0);
+  const lastZoomForGrid = useRef<number>(0);
+  const wheelTimeout = useRef<number | null>(null);
+
+  const sizeCache = useRef({ w: 0, h: 0, minZoom: MIN_ZOOM });
+  const rectCache = useRef<{ left: number; top: number } | null>(null);
 
   const pointers = useRef(new Map<number, { x: number; y: number }>());
   const pinch = useRef<{
     startDist: number;
     startZoom: number;
-    centerX: number;
-    centerY: number;
     startPanX: number;
     startPanY: number;
+    centerX: number;
+    centerY: number;
   } | null>(null);
   const panning = useRef<{ x: number; y: number; panX: number; panY: number } | null>(null);
   const enabled = useRef(true);
   const [isPanning, setPanning] = useState(false);
+  const [isAnimating, setAnimating] = useState(false);
+
+  // history per velocity — 100ms window
+  const moveHistory = useRef<{ x: number; y: number; t: number }[]>([]);
+  const velocity = useRef({ x: 0, y: 0 });
+
   const pad = opts?.padding ?? 40;
   const bx1 = opts?.bounds?.x1 ?? 0,
     by1 = opts?.bounds?.y1 ?? 0;
@@ -88,22 +113,40 @@ export function useViewport(
   const boundsW = Math.max(50, bx2 - bx1),
     boundsH = Math.max(50, by2 - by1);
 
-  const minZoomFor = useCallback(
-    (el: HTMLElement) =>
-      Math.max(
-        MIN_ZOOM,
-        Math.min((el.clientWidth - pad) / boundsW, (el.clientHeight - pad) / boundsH) * 0.8,
-      ),
-    [boundsW, boundsH, pad],
-  );
+  const updateSizeCache = useCallback(() => {
+    const el = ref.current;
+    if (!el) return;
+    const cw = el.clientWidth;
+    const ch = el.clientHeight;
+    if (cw < 10 || ch < 10) return;
+    const minZoom = Math.max(
+      MIN_ZOOM,
+      Math.min((cw - pad) / boundsW, (ch - pad) / boundsH) * 0.8,
+    );
+    sizeCache.current = { w: cw, h: ch, minZoom };
+  }, [boundsW, boundsH, pad]);
+
+  const minZoomForCached = useCallback(() => {
+    return sizeCache.current.minZoom || MIN_ZOOM;
+  }, []);
 
   const clampVp = useCallback(
     (v: Viewport): Viewport => {
-      const el = ref.current;
-      if (!el) return v;
-      const zoom = clamp(v.zoom, minZoomFor(el), MAX_ZOOM);
-      const vw = el.clientWidth,
-        vh = el.clientHeight;
+      const { w: vw, h: vh } = sizeCache.current;
+      if (vw < 10 || vh < 10) {
+        const el = ref.current;
+        if (!el) return v;
+        const cw = el.clientWidth;
+        const ch = el.clientHeight;
+        if (cw < 10 || ch < 10) return v;
+        sizeCache.current = {
+          w: cw,
+          h: ch,
+          minZoom: Math.max(MIN_ZOOM, Math.min((cw - pad) / boundsW, (ch - pad) / boundsH) * 0.8),
+        };
+        return clampVp(v);
+      }
+      const zoom = clamp(v.zoom, sizeCache.current.minZoom, MAX_ZOOM);
       const w = boundsW * zoom,
         h = boundsH * zoom;
       const offX = bx1 * zoom,
@@ -120,28 +163,30 @@ export function useViewport(
           : clamp(v.panY, vh - h - offY - marginY, -offY + marginY);
       return { zoom, panX, panY };
     },
-    [boundsW, boundsH, bx1, by1, minZoomFor],
+    [boundsW, boundsH, bx1, by1, pad],
   );
 
-  // Applica trasformazioni DIRETTAMENTE al DOM (GPU accelerated)
   const applyDom = useCallback((v: Viewport) => {
     vpRef.current = v;
     const content = contentRef.current;
     if (content) {
-      // translate3d forza accelerazione GPU su iOS Safari e Chrome Android
       content.style.transform = `translate3d(${v.panX}px, ${v.panY}px, 0) scale(${v.zoom})`;
     }
     const grid = gridRef.current;
     if (grid) {
       const cell = CM_PER_CELL * v.zoom;
       const major = cell * 2;
-      // Aggiornamento diretto evita re-render React di GridBackdrop
-      grid.style.backgroundPosition = `${v.panX}px ${v.panY}px`;
-      grid.style.backgroundSize = `${cell}px ${cell}px, ${cell}px ${cell}px, ${major}px ${major}px`;
+      const mod = (n: number, m: number) => ((n % m) + m) % m;
+      const gx = major > 0 ? mod(v.panX, major) - major : v.panX;
+      const gy = major > 0 ? mod(v.panY, major) - major : v.panY;
+      grid.style.transform = `translate3d(${gx}px, ${gy}px, 0)`;
+      if (Math.abs(v.zoom - lastZoomForGrid.current) > 0.001) {
+        lastZoomForGrid.current = v.zoom;
+        grid.style.backgroundSize = `${cell}px ${cell}px, ${cell}px ${cell}px, ${major}px ${major}px`;
+      }
     }
   }, []);
 
-  // Schedula update via rAF — un solo frame alla volta
   const scheduleDom = useCallback(
     (v: Viewport) => {
       pendingVp.current = v;
@@ -158,7 +203,6 @@ export function useViewport(
     [applyDom],
   );
 
-  // Commit finale: applica subito + sincronizza React state
   const commit = useCallback(
     (v: Viewport) => {
       const clamped = clampVp(v);
@@ -167,69 +211,141 @@ export function useViewport(
         rafId.current = 0;
       }
       pendingVp.current = null;
+      committedVpRef.current = clamped;
       applyDom(clamped);
       setVpState(clamped);
-      vpRef.current = clamped;
     },
     [clampVp, applyDom],
   );
 
+  const cancelAnimations = useCallback(() => {
+    if (animateRaf.current) {
+      cancelAnimationFrame(animateRaf.current);
+      animateRaf.current = 0;
+    }
+    if (momentumRaf.current) {
+      cancelAnimationFrame(momentumRaf.current);
+      momentumRaf.current = 0;
+    }
+    setAnimating(false);
+  }, []);
+
+  const animateTo = useCallback(
+    (target: Viewport, duration = 320, easing = easeOutExpo) => {
+      cancelAnimations();
+      const start = { ...vpRef.current };
+      const clampedTarget = clampVp(target);
+      const startTime = performance.now();
+      setAnimating(true);
+      setPanning(true);
+
+      const tick = (now: number) => {
+        const elapsed = now - startTime;
+        const t = Math.min(1, elapsed / duration);
+        const eased = easing(t);
+        const zoom = start.zoom + (clampedTarget.zoom - start.zoom) * eased;
+        const panX = start.panX + (clampedTarget.panX - start.panX) * eased;
+        const panY = start.panY + (clampedTarget.panY - start.panY) * eased;
+        const current = { zoom, panX, panY };
+        applyDom(current);
+        if (t < 1) {
+          animateRaf.current = requestAnimationFrame(tick);
+        } else {
+          animateRaf.current = 0;
+          committedVpRef.current = clampedTarget;
+          setVpState(clampedTarget);
+          setPanning(false);
+          setAnimating(false);
+          try {
+            if (navigator.vibrate) navigator.vibrate(5);
+          } catch {}
+        }
+      };
+      animateRaf.current = requestAnimationFrame(tick);
+    },
+    [clampVp, applyDom, cancelAnimations],
+  );
+
   const apply = useCallback(
     (fn: (v: Viewport) => Viewport) => {
-      commit(fn(vpRef.current));
+      const next = fn(vpRef.current);
+      animateTo(next, 300, easeOutCubic);
     },
-    [commit],
+    [animateTo],
   );
 
   const fitHold = useRef(false);
-  const fit = useCallback(() => {
-    if (fitHold.current) return;
-    const el = ref.current;
-    if (!el) return;
-    const vw = el.clientWidth,
-      vh = el.clientHeight;
-    const zoom = clamp(
-      Math.min((vw - pad * 2) / boundsW, (vh - pad * 2) / boundsH),
-      MIN_ZOOM,
-      MAX_ZOOM,
-    );
-    const cx = (bx1 + bx2) / 2,
-      cy = (by1 + by2) / 2;
-    commit({ zoom, panX: vw / 2 - cx * zoom, panY: vh / 2 - cy * zoom });
-  }, [bx1, by1, bx2, by2, boundsW, boundsH, pad, commit]);
+  const fit = useCallback(
+    (animated = true) => {
+      if (fitHold.current) return;
+      const el = ref.current;
+      if (!el) return;
+      const vw = el.clientWidth,
+        vh = el.clientHeight;
+      if (vw < 10 || vh < 10) return;
+      sizeCache.current = {
+        w: vw,
+        h: vh,
+        minZoom: Math.max(MIN_ZOOM, Math.min((vw - pad * 2) / boundsW, (vh - pad * 2) / boundsH) * 0.8),
+      };
+      const zoom = clamp(
+        Math.min((vw - pad * 2) / boundsW, (vh - pad * 2) / boundsH),
+        MIN_ZOOM,
+        MAX_ZOOM,
+      );
+      const cx = (bx1 + bx2) / 2,
+        cy = (by1 + by2) / 2;
+      const target = { zoom, panX: vw / 2 - cx * zoom, panY: vh / 2 - cy * zoom };
+      if (animated) {
+        animateTo(target, 380, easeOutExpo);
+      } else {
+        commit(target);
+      }
+    },
+    [bx1, by1, bx2, by2, boundsW, boundsH, pad, commit, animateTo],
+  );
 
   useEffect(() => {
     const el = ref.current;
     if (!el) return;
+    let raf = 0;
+    let lastW = el.clientWidth;
+    let lastH = el.clientHeight;
+    updateSizeCache();
     const doFit = () => {
-      if (!fitHold.current) fit();
+      if (fitHold.current) return;
+      const w = el.clientWidth;
+      const h = el.clientHeight;
+      if (Math.abs(w - lastW) < 2 && Math.abs(h - lastH) < 2) return;
+      lastW = w;
+      lastH = h;
+      sizeCache.current.w = w;
+      sizeCache.current.h = h;
+      sizeCache.current.minZoom = Math.max(
+        MIN_ZOOM,
+        Math.min((w - pad) / boundsW, (h - pad) / boundsH) * 0.8,
+      );
+      if (raf) cancelAnimationFrame(raf);
+      raf = requestAnimationFrame(() => {
+        raf = 0;
+        fit(false);
+      });
     };
     doFit();
     const ro = new ResizeObserver(doFit);
     ro.observe(el);
-    return () => ro.disconnect();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+    return () => {
+      ro.disconnect();
+      if (raf) cancelAnimationFrame(raf);
+    };
+  }, [fit, updateSizeCache, pad, boundsW, boundsH]);
 
-  const zoomAt = useCallback(
-    (factor: number, sx: number, sy: number) => {
-      apply((v) => {
-        const el = ref.current;
-        const min = el ? minZoomFor(el) : MIN_ZOOM;
-        const zoom = clamp(v.zoom * factor, min, MAX_ZOOM);
-        const k = zoom / v.zoom;
-        return { zoom, panX: sx - (sx - v.panX) * k, panY: sy - (sy - v.panY) * k };
-      });
-    },
-    [apply, minZoomFor],
-  );
-
-  // Wheel: throttled via rAF per non intasare il main thread
   useEffect(() => {
     const el = ref.current;
     if (!el) return;
     const onWheel = (e: WheelEvent) => {
       e.preventDefault();
+      cancelAnimations();
       const rect = el.getBoundingClientRect();
       const sx = e.clientX - rect.left,
         sy = e.clientY - rect.top;
@@ -239,22 +355,30 @@ export function useViewport(
         scheduleDom(clampVp({ ...v, panX: v.panX - e.deltaY }));
       } else {
         const v = vpRef.current;
-        const min = minZoomFor(el);
+        const min = minZoomForCached();
         const zoom = clamp(v.zoom * factor, min, MAX_ZOOM);
         const k = zoom / v.zoom;
         const next = { zoom, panX: sx - (sx - v.panX) * k, panY: sy - (sy - v.panY) * k };
-        scheduleDom(clampVp(next));
-        // Commit debounced a fine gesto wheel
-        clearTimeout((onWheel as any)._t);
-        (onWheel as any)._t = setTimeout(() => commit(clampVp(next)), 150);
+        const clamped = clampVp(next);
+        scheduleDom(clamped);
+        if (wheelTimeout.current) window.clearTimeout(wheelTimeout.current);
+        wheelTimeout.current = window.setTimeout(() => {
+          commit(clamped);
+          wheelTimeout.current = null;
+        }, 150) as unknown as number;
       }
     };
     el.addEventListener("wheel", onWheel, { passive: false });
-    return () => el.removeEventListener("wheel", onWheel);
-  }, [zoomAt, apply, clampVp, minZoomFor, scheduleDom, commit]);
+    return () => {
+      el.removeEventListener("wheel", onWheel);
+      if (wheelTimeout.current) {
+        clearTimeout(wheelTimeout.current);
+        wheelTimeout.current = null;
+      }
+    };
+  }, [clampVp, minZoomForCached, scheduleDom, commit, cancelAnimations]);
 
   const stopPan = useCallback(() => {
-    // Committa posizione finale se c'è un pending
     if (pendingVp.current) {
       const final = clampVp(pendingVp.current);
       if (rafId.current) {
@@ -262,64 +386,213 @@ export function useViewport(
         rafId.current = 0;
       }
       pendingVp.current = null;
+      committedVpRef.current = final;
       applyDom(final);
       setVpState(final);
-      vpRef.current = final;
     }
     pointers.current.clear();
     pinch.current = null;
     panning.current = null;
+    rectCache.current = null;
+    moveHistory.current = [];
+    velocity.current = { x: 0, y: 0 };
     setPanning(false);
   }, [clampVp, applyDom]);
 
+  // freeze: ferma tutto e committa posizione corrente — usato per tap su tavolo durante momentum
+  // così la mappa non torna indietro ma si ferma dove è
+  const freeze = useCallback(() => {
+    const wasAnimating = !!animateRaf.current || !!momentumRaf.current;
+    cancelAnimations();
+    if (rafId.current) {
+      cancelAnimationFrame(rafId.current);
+      rafId.current = 0;
+    }
+    let cur: Viewport;
+    if (pendingVp.current) {
+      cur = clampVp(pendingVp.current);
+      pendingVp.current = null;
+    } else {
+      cur = clampVp(vpRef.current);
+    }
+    committedVpRef.current = cur;
+    applyDom(cur);
+    setVpState(cur);
+    pointers.current.clear();
+    pinch.current = null;
+    panning.current = null;
+    rectCache.current = null;
+    moveHistory.current = [];
+    velocity.current = { x: 0, y: 0 };
+    setPanning(false);
+    return wasAnimating;
+  }, [clampVp, applyDom, cancelAnimations]);
+
   const cancelPan = useCallback(() => {
+    // se c'è momentum/animazione in corso, freeza alla posizione corrente, non revertare
+    // altrimenti revert per evitare jitter da 1-2px su tap tavolo
+    if (animateRaf.current || momentumRaf.current) {
+      freeze();
+      enabled.current = false;
+      setTimeout(() => {
+        enabled.current = true;
+      }, 50);
+      return;
+    }
     enabled.current = false;
+    cancelAnimations();
     if (rafId.current) {
       cancelAnimationFrame(rafId.current);
       rafId.current = 0;
     }
     pendingVp.current = null;
-    stopPan();
-    // Riabilita dopo un tick così il tap non riavvia il pan
+    // revert DOM a ultimo commit — fondamentale per tap su tavolo senza momentum
+    applyDom(committedVpRef.current);
+    pointers.current.clear();
+    pinch.current = null;
+    panning.current = null;
+    rectCache.current = null;
+    moveHistory.current = [];
+    velocity.current = { x: 0, y: 0 };
+    setPanning(false);
     setTimeout(() => {
       enabled.current = true;
     }, 50);
-  }, [stopPan]);
+  }, [applyDom, cancelAnimations, freeze]);
+
+  // MOMENTUM — effetto ghiaccio Google Earth
+  const startMomentum = useCallback(
+    (vx: number, vy: number) => {
+      cancelAnimations();
+      // se c'è un pending, partiamo da lì
+      if (pendingVp.current) {
+        vpRef.current = pendingVp.current;
+        pendingVp.current = null;
+        if (rafId.current) {
+          cancelAnimationFrame(rafId.current);
+          rafId.current = 0;
+        }
+      }
+      let curVx = vx * 0.95;
+      let curVy = vy * 0.95;
+      const friction = 0.92;
+      const minVelocity = 0.015;
+      setPanning(true);
+      setAnimating(true);
+
+      const step = () => {
+        curVx *= friction;
+        curVy *= friction;
+        const speed = Math.hypot(curVx, curVy);
+        if (speed < minVelocity) {
+          momentumRaf.current = 0;
+          const final = clampVp(vpRef.current);
+          committedVpRef.current = final;
+          applyDom(final);
+          setVpState(final);
+          setPanning(false);
+          setAnimating(false);
+          moveHistory.current = [];
+          velocity.current = { x: 0, y: 0 };
+          return;
+        }
+        // 16 = ~1 frame a 60fps, trasforma px/ms in px/frame
+        const next = clampVp({
+          zoom: vpRef.current.zoom,
+          panX: vpRef.current.panX + curVx * 16,
+          panY: vpRef.current.panY + curVy * 16,
+        });
+        // se clamp blocca un asse, azzera solo quell'asse
+        if (Math.abs(next.panX - vpRef.current.panX) < 0.05) curVx = 0;
+        if (Math.abs(next.panY - vpRef.current.panY) < 0.05) curVy = 0;
+        applyDom(next);
+        momentumRaf.current = requestAnimationFrame(step);
+      };
+      momentumRaf.current = requestAnimationFrame(step);
+    },
+    [clampVp, applyDom, cancelAnimations],
+  );
 
   const onPointerDown = useCallback(
     (e: React.PointerEvent) => {
-      // Previene scroll nativo e selezione testo su tablet
-      if (e.pointerType === "touch") {
-        e.preventDefault();
+      const target = e.target as HTMLElement;
+      const isOnButton = !!target.closest("button");
+      const isOnTable = !!target.closest("[data-table-id]");
+      const wasAnimating = !!animateRaf.current || !!momentumRaf.current;
+
+      // Se c'è momentum/animazione, fermalo subito alla posizione corrente (effetto Google Earth: tap per fermare)
+      if (wasAnimating) {
+        // committa posizione corrente
+        cancelAnimations();
+        if (rafId.current) {
+          cancelAnimationFrame(rafId.current);
+          rafId.current = 0;
+        }
+        let cur: Viewport;
+        if (pendingVp.current) {
+          cur = clampVp(pendingVp.current);
+          pendingVp.current = null;
+        } else {
+          cur = clampVp(vpRef.current);
+        }
+        committedVpRef.current = cur;
+        applyDom(cur);
+        setVpState(cur);
+        pointers.current.clear();
+        pinch.current = null;
+        panning.current = null;
+        rectCache.current = null;
+        moveHistory.current = [];
+        velocity.current = { x: 0, y: 0 };
+        setPanning(false);
+
+        // se tap su bottone o tavolo durante momentum, ferma e lascia gestire al bottone/tavolo
+        if (isOnButton || isOnTable) return;
+        // altrimenti (sfondo) continua per iniziare nuovo drag immediatamente — drag consecutivi
       }
+
+      if (isOnButton) return;
+      // se clic su tavolo senza momentum, non iniziare pan — lascia gestire a TableNode
+      if (isOnTable) return;
+
+      cancelAnimations();
+      if (e.pointerType === "touch") e.preventDefault();
       enabled.current = true;
-      const target = e.currentTarget as HTMLElement;
+      const currentTarget = e.currentTarget as HTMLElement;
       try {
-        target.setPointerCapture(e.pointerId);
+        currentTarget.setPointerCapture(e.pointerId);
       } catch {}
       pointers.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
+
+      if (pointers.current.size === 1) {
+        const el = ref.current;
+        if (el) {
+          const r = el.getBoundingClientRect();
+          rectCache.current = { left: r.left, top: r.top };
+        }
+        moveHistory.current = [{ x: e.clientX, y: e.clientY, t: performance.now() }];
+        velocity.current = { x: 0, y: 0 };
+      }
 
       if (pointers.current.size === 2) {
         const [a, b] = [...pointers.current.values()];
         const dist = Math.hypot(a.x - b.x, a.y - b.y);
-        const centerX = (a.x + b.x) / 2;
-        const centerY = (a.y + b.y) / 2;
-        const rect = ref.current?.getBoundingClientRect();
-        const sx = rect ? centerX - rect.left : centerX;
-        const sy = rect ? centerY - rect.top : centerY;
+        if (dist < 1) return;
+        const rc = rectCache.current;
+        const centerX = rc ? (a.x + b.x) / 2 - rc.left : (a.x + b.x) / 2;
+        const centerY = rc ? (a.y + b.y) / 2 - rc.top : (a.y + b.y) / 2;
         pinch.current = {
           startDist: dist,
           startZoom: vpRef.current.zoom,
-          centerX: sx,
-          centerY: sy,
           startPanX: vpRef.current.panX,
           startPanY: vpRef.current.panY,
+          centerX,
+          centerY,
         };
         panning.current = null;
         setPanning(false);
         return;
       }
-      // Pan singolo dito / mouse
       panning.current = {
         x: e.clientX,
         y: e.clientY,
@@ -328,32 +601,49 @@ export function useViewport(
       };
       setPanning(true);
     },
-    [],
+    [cancelAnimations, clampVp, applyDom],
   );
 
   const onPointerMove = useCallback(
     (e: React.PointerEvent) => {
-      if (!enabled.current || !pointers.current.has(e.pointerId)) return;
+      if (!enabled.current) return;
+      if (!pointers.current.has(e.pointerId)) return;
       pointers.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
+
+      const now = performance.now();
+      if (pointers.current.size === 1) {
+        moveHistory.current.push({ x: e.clientX, y: e.clientY, t: now });
+        // tieni solo ultimi 100ms per velocity precisa
+        const cutoff = now - 100;
+        while (moveHistory.current.length > 2 && moveHistory.current[0].t < cutoff) {
+          moveHistory.current.shift();
+        }
+        if (moveHistory.current.length >= 2) {
+          const first = moveHistory.current[0];
+          const last = moveHistory.current[moveHistory.current.length - 1];
+          const dt = last.t - first.t;
+          if (dt > 2) {
+            velocity.current = {
+              x: (last.x - first.x) / dt,
+              y: (last.y - first.y) / dt,
+            };
+          }
+        }
+      }
 
       if (pinch.current && pointers.current.size >= 2) {
         const [a, b] = [...pointers.current.values()];
         const dist = Math.hypot(a.x - b.x, a.y - b.y);
         if (dist < 1) return;
-        const rect = ref.current?.getBoundingClientRect();
-        if (!rect) return;
-        const centerX = (a.x + b.x) / 2 - rect.left;
-        const centerY = (a.y + b.y) / 2 - rect.top;
         const factor = dist / pinch.current.startDist;
-        const el = ref.current;
-        const min = el ? minZoomFor(el) : MIN_ZOOM;
+        const min = minZoomForCached();
         const newZoom = clamp(pinch.current.startZoom * factor, min, MAX_ZOOM);
         const k = newZoom / pinch.current.startZoom;
-        // Mantiene il punto sotto le dita fisso
+        const centerX = pinch.current.centerX;
+        const centerY = pinch.current.centerY;
         const newPanX = centerX - (centerX - pinch.current.startPanX) * k;
         const newPanY = centerY - (centerY - pinch.current.startPanY) * k;
-        const next = clampVp({ zoom: newZoom, panX: newPanX, panY: newPanY });
-        scheduleDom(next);
+        scheduleDom(clampVp({ zoom: newZoom, panX: newPanX, panY: newPanY }));
         return;
       }
 
@@ -361,16 +651,16 @@ export function useViewport(
       if (!p) return;
       const dx = e.clientX - p.x;
       const dy = e.clientY - p.y;
-      // Ignora micro-movimenti (<0.5px) per ridurre lavoro
-      if (Math.abs(dx) < 0.5 && Math.abs(dy) < 0.5) return;
-      const next = clampVp({
-        zoom: vpRef.current.zoom,
-        panX: p.panX + dx,
-        panY: p.panY + dy,
-      });
-      scheduleDom(next);
+      if (Math.abs(dx) < 0.3 && Math.abs(dy) < 0.3) return;
+      scheduleDom(
+        clampVp({
+          zoom: vpRef.current.zoom,
+          panX: p.panX + dx,
+          panY: p.panY + dy,
+        }),
+      );
     },
-    [clampVp, minZoomFor, scheduleDom],
+    [clampVp, minZoomForCached, scheduleDom],
   );
 
   const endPointer = useCallback(
@@ -383,7 +673,27 @@ export function useViewport(
         pinch.current = null;
       }
       if (pointers.current.size === 0) {
-        // Fine gesto: committa stato finale
+        // MOMENTUM: se drag veloce, continua a scivolare
+        if (panning.current) {
+          const dx = e.clientX - panning.current.x;
+          const dy = e.clientY - panning.current.y;
+          const dist = Math.hypot(dx, dy);
+          // soglia bassa: anche flick corto deve slittare
+          if (dist >= 3) {
+            const vx = velocity.current.x;
+            const vy = velocity.current.y;
+            const speed = Math.hypot(vx, vy);
+            // 0.1 px/ms = 100 px/s — molto sensibile, effetto ghiaccio
+            if (speed > 0.1) {
+              startMomentum(vx, vy);
+              panning.current = null;
+              rectCache.current = null;
+              return;
+            }
+          }
+        }
+
+        // commit finale se non parte momentum
         if (pendingVp.current) {
           const final = clampVp(pendingVp.current);
           if (rafId.current) {
@@ -393,138 +703,106 @@ export function useViewport(
           pendingVp.current = null;
           applyDom(final);
           setVpState(final);
-          vpRef.current = final;
         }
         panning.current = null;
+        rectCache.current = null;
+        moveHistory.current = [];
+        velocity.current = { x: 0, y: 0 };
         setPanning(false);
       }
     },
-    [clampVp, applyDom],
+    [clampVp, applyDom, startMomentum],
   );
 
-  // Gestione globale per quando il dito esce dal container
-  useEffect(() => {
-    const onGlobalMove = (e: PointerEvent) => {
-      if (!enabled.current) return;
-      if (!pointers.current.has(e.pointerId)) return;
-      pointers.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
-
-      if (pinch.current && pointers.current.size >= 2) {
-        const [a, b] = [...pointers.current.values()];
-        const dist = Math.hypot(a.x - b.x, a.y - b.y);
-        const rect = ref.current?.getBoundingClientRect();
-        if (!rect) return;
-        const centerX = (a.x + b.x) / 2 - rect.left;
-        const centerY = (a.y + b.y) / 2 - rect.top;
-        const factor = dist / pinch.current.startDist;
-        const el = ref.current;
-        const min = el ? minZoomFor(el) : MIN_ZOOM;
-        const newZoom = clamp(pinch.current.startZoom * factor, min, MAX_ZOOM);
-        const k = newZoom / pinch.current.startZoom;
-        const newPanX = centerX - (centerX - pinch.current.startPanX) * k;
-        const newPanY = centerY - (centerY - pinch.current.startPanY) * k;
-        scheduleDom(clampVp({ zoom: newZoom, panX: newPanX, panY: newPanY }));
-        return;
-      }
-
-      const p = panning.current;
-      if (!p) return;
-      const next = clampVp({
-        zoom: vpRef.current.zoom,
-        panX: p.panX + (e.clientX - p.x),
-        panY: p.panY + (e.clientY - p.y),
-      });
-      scheduleDom(next);
-    };
-
-    const onGlobalUp = (e: PointerEvent) => {
-      if (!pointers.current.has(e.pointerId)) return;
-      pointers.current.delete(e.pointerId);
-      if (pointers.current.size < 2) pinch.current = null;
-      if (pointers.current.size === 0) {
-        if (pendingVp.current) {
-          const final = clampVp(pendingVp.current);
-          if (rafId.current) {
-            cancelAnimationFrame(rafId.current);
-            rafId.current = 0;
-          }
-          pendingVp.current = null;
-          applyDom(final);
-          setVpState(final);
-          vpRef.current = final;
-        }
-        panning.current = null;
-        setPanning(false);
-      }
-    };
-
-    window.addEventListener("pointermove", onGlobalMove);
-    window.addEventListener("pointerup", onGlobalUp);
-    window.addEventListener("pointercancel", onGlobalUp);
-    return () => {
-      window.removeEventListener("pointermove", onGlobalMove);
-      window.removeEventListener("pointerup", onGlobalUp);
-      window.removeEventListener("pointercancel", onGlobalUp);
-    };
-  }, [clampVp, minZoomFor, scheduleDom, applyDom]);
-
   const toWorld = useCallback((clientX: number, clientY: number) => {
-    const rect = ref.current!.getBoundingClientRect();
+    const el = ref.current;
+    if (!el) return { x: 0, y: 0 };
+    const rc = rectCache.current;
+    let left: number, top: number;
+    if (rc) {
+      left = rc.left;
+      top = rc.top;
+    } else {
+      const rect = el.getBoundingClientRect();
+      left = rect.left;
+      top = rect.top;
+    }
     const v = vpRef.current;
-    return { x: (clientX - rect.left - v.panX) / v.zoom, y: (clientY - rect.top - v.panY) / v.zoom };
+    return { x: (clientX - left - v.panX) / v.zoom, y: (clientY - top - v.panY) / v.zoom };
   }, []);
 
   const zoomBy = useCallback(
     (f: number) => {
+      cancelAnimations();
       const el = ref.current;
       if (!el) return;
       const v = vpRef.current;
-      const min = minZoomFor(el);
+      const min = minZoomForCached();
       const zoom = clamp(v.zoom * f, min, MAX_ZOOM);
       const k = zoom / v.zoom;
-      const sx = el.clientWidth / 2,
-        sy = el.clientHeight / 2;
-      commit({ zoom, panX: sx - (sx - v.panX) * k, panY: sy - (sy - v.panY) * k });
+      const { w, h } = sizeCache.current;
+      const sx = w / 2 || el.clientWidth / 2,
+        sy = h / 2 || el.clientHeight / 2;
+      const target = { zoom, panX: sx - (sx - v.panX) * k, panY: sy - (sy - v.panY) * k };
+      animateTo(target, 320, easeOutExpo);
     },
-    [commit, minZoomFor],
+    [minZoomForCached, animateTo, cancelAnimations],
+  );
+
+  const zoomAt = useCallback(
+    (factor: number, sx: number, sy: number) => {
+      cancelAnimations();
+      const v = vpRef.current;
+      const min = minZoomForCached();
+      const zoom = clamp(v.zoom * factor, min, MAX_ZOOM);
+      const k = zoom / v.zoom;
+      const target = { zoom, panX: sx - (sx - v.panX) * k, panY: sy - (sy - v.panY) * k };
+      animateTo(target, 320, easeOutExpo);
+    },
+    [minZoomForCached, animateTo, cancelAnimations],
   );
 
   const centerOn = useCallback(
     (wx: number, wy: number, bottomInset = 0) => {
+      cancelAnimations();
       const el = ref.current;
       if (!el) return;
-      const vw = el.clientWidth,
-        vh = el.clientHeight - bottomInset;
+      const { w: vw, h: vhRaw } = sizeCache.current;
+      const vw2 = vw || el.clientWidth;
+      const vh2 = (vhRaw || el.clientHeight) - bottomInset;
       const v = vpRef.current;
-      commit({ ...v, panX: vw / 2 - wx * v.zoom, panY: vh / 2 - wy * v.zoom });
+      const target = { ...v, panX: vw2 / 2 - wx * v.zoom, panY: vh2 / 2 - wy * v.zoom };
+      animateTo(target, 340, easeOutExpo);
     },
-    [commit],
+    [animateTo, cancelAnimations],
   );
 
   const revealRect = useCallback(
     (box: { x: number; y: number; w: number; h: number }, bottomInset: number) => {
       const el = ref.current;
       if (!el) return;
+      const { w, h } = sizeCache.current;
       const next = selectionViewport({
         current: vpRef.current,
         box,
-        viewportW: el.clientWidth,
-        viewportH: el.clientHeight,
+        viewportW: w || el.clientWidth,
+        viewportH: h || el.clientHeight,
         bottomInset,
       });
-      if (next.changed) commit(next.view);
+      if (next.changed) animateTo(next.view, 360, easeOutExpo);
     },
-    [commit],
+    [animateTo],
   );
 
-  // Cleanup rAF
   useEffect(() => {
     return () => {
       if (rafId.current) cancelAnimationFrame(rafId.current);
+      if (animateRaf.current) cancelAnimationFrame(animateRaf.current);
+      if (momentumRaf.current) cancelAnimationFrame(momentumRaf.current);
+      if (wheelTimeout.current) clearTimeout(wheelTimeout.current);
     };
   }, []);
 
-  // Sincronizza DOM quando vp cambia via React (fit, zoom buttons)
   useEffect(() => {
     applyDom(vp);
   }, [vp, applyDom]);
@@ -534,14 +812,18 @@ export function useViewport(
     contentRef,
     gridRef,
     vp,
+    zoomLevel,
     setVp: apply,
     fit,
     zoomBy,
+    zoomAt,
     toWorld,
-    isPanning,
+    isPanning: isPanning || isAnimating,
+    isAnimating,
     centerOn,
     revealRect,
     cancelPan,
+    freeze,
     stopPan,
     holdFit: (hold: boolean) => {
       fitHold.current = hold;

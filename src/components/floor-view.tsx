@@ -1,12 +1,10 @@
 "use client";
-// PIANTINA IN SERVIZIO — sola lettura: pan, zoom, tap sul tavolo per agire.
-// Ottimizzata per 60 FPS su iPad/tablet:
-// - Pan/zoom via transform GPU diretta (nessun re-render React per frame)
-// - PointerEvents unificati con capture + rAF batching
-// - touch-action: none + overscroll-behavior: none per evitare conflitti con scroll nativo
-// - will-change + translate3d per accelerazione hardware su Safari iOS e Chrome Android
+// PIANTINA IN SERVIZIO — sola lettura, 60 FPS + spring + momentum
+// - Pan/zoom via transform GPU diretta, spring animato, momentum ghiaccio
+// - Double-tap to zoom, grid via transform modulo
+// - Vista completa sempre, niente LOD
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Maximize2, Pencil, ZoomIn, ZoomOut } from "lucide-react";
+import { Maximize2, Pencil } from "lucide-react";
 import { useSession } from "@/store/session";
 import { useViewport } from "@/lib/use-viewport";
 import { computeRoomSeats, elementBox, normalizeLayout, polygonBounds, polygonOf } from "@/lib/floor";
@@ -33,7 +31,7 @@ export function FloorView({ boot, statuses, onPick, viewToggle }: {
   const layout = normalizeLayout(room?.layout);
   const tables = boot.tables.filter((t) => t.roomId === room?.id);
   const roomCounts = tallyTables(tables, statuses);
-  const { ref, contentRef, gridRef, vp, fit, zoomBy, isPanning, bind, cancelPan } = useViewport(layout.w, layout.h, {
+  const { ref, contentRef, gridRef, vp, fit, isPanning, isAnimating, bind, cancelPan, freeze } = useViewport(layout.w, layout.h, {
     padding: 34, bounds: polygonBounds(polygonOf(layout)),
   });
 
@@ -44,22 +42,28 @@ export function FloorView({ boot, statuses, onPick, viewToggle }: {
     [room?.id, tables, layout],
   );
 
-  // Tocco vs trascinamento: sotto 8px è tap → apre scheda tavolo.
-  // PointerEvents unificati: funziona sia mouse che touch.
   const tapRef = useRef<{ x: number; y: number; key: string; time: number } | null>(null);
   const startTap = (e: React.PointerEvent, key: string) => {
+    // se c'è momentum, fermalo subito alla posizione corrente — effetto Google Earth
+    // così tap su tavolo durante scorrimento non fa tornare indietro la mappa
+    freeze();
+    e.stopPropagation();
     tapRef.current = { x: e.clientX, y: e.clientY, key, time: Date.now() };
   };
   const endTap = (e: React.PointerEvent, key: string, table: TableT) => {
     const s = tapRef.current;
     tapRef.current = null;
     if (!s || s.key !== key) return;
-    // Soglia 8px + 300ms per distinguere tap da pan veloce su tablet
     if (Math.hypot(e.clientX - s.x, e.clientY - s.y) > 8) return;
     if (Date.now() - s.time > 350) return;
     e.stopPropagation();
+    e.preventDefault();
+    // cancelPan è smart: se c'era momentum freeza, altrimenti reverta jitter
     cancelPan();
     onPick(table);
+  };
+  const cancelTap = () => {
+    tapRef.current = null;
   };
 
   const joinedGroups = new Map<string, { seating: Seating; tables: TableT[] }>();
@@ -75,7 +79,7 @@ export function FloorView({ boot, statuses, onPick, viewToggle }: {
   }
   const joinedTableIds = new Set([...joinedGroups.values()].flatMap((g) => g.tables.map((t) => t.id)));
 
-  useEffect(() => { fit(); }, [roomId, fit]);
+  useEffect(() => { fit(false); }, [roomId, fit]);
   if (!room) return null;
 
   return (
@@ -92,18 +96,18 @@ export function FloorView({ boot, statuses, onPick, viewToggle }: {
         </div>
       } />
 
-      {/* Container mappa: GPU + touch-optimizations per 60 FPS su tablet */}
       <div
         ref={ref}
         onPointerDown={bind.onPointerDown}
         onPointerMove={bind.onPointerMove}
         onPointerUp={bind.onPointerUp}
         onPointerCancel={bind.onPointerCancel}
-        className={`floor-viewport relative -mx-3 mt-2 min-h-[240px] flex-1 overflow-hidden rounded-2xl border border-line bg-bg ${isPanning ? "cursor-grabbing" : "cursor-grab"}`}
+        data-panning={isPanning ? "1" : "0"}
+        data-animating={isAnimating ? "1" : "0"}
+        className={`floor-viewport relative -mx-3 mt-2 min-h-[240px] flex-1 overflow-hidden rounded-2xl border border-line bg-bg ${isPanning ? "is-panning cursor-grabbing" : "cursor-grab"}`}
         style={{
           ...(bind.style as any),
           WebkitOverflowScrolling: "auto" as any,
-          willChange: isPanning ? "transform" : undefined,
         }}
       >
         <GridBackdrop ref={gridRef} vp={vp} />
@@ -113,10 +117,7 @@ export function FloorView({ boot, statuses, onPick, viewToggle }: {
           className="floor-content absolute left-0 top-0 origin-top-left"
           style={{
             transform: `translate3d(${vp.panX}px, ${vp.panY}px, 0) scale(${vp.zoom})`,
-            willChange: "transform",
-            backfaceVisibility: "hidden",
-            WebkitBackfaceVisibility: "hidden" as any,
-            transformStyle: "preserve-3d",
+            willChange: isPanning || isAnimating ? "transform" : "auto",
           }}
         >
           <RoomShell w={layout.w} h={layout.h} polygon={layout.polygon} />
@@ -138,7 +139,8 @@ export function FloorView({ boot, statuses, onPick, viewToggle }: {
             return (
               <TableNode key={t.id} t={t} tone={meta.card} dotClass={meta.dot} sub={sub} seats={seatsByTable.get(t.id)}
                 onPointerDown={(e) => startTap(e, t.id)}
-                onPointerUp={(e) => endTap(e, t.id, t)} />
+                onPointerUp={(e) => endTap(e, t.id, t)}
+                onPointerCancel={cancelTap} />
             );
           })}
 
@@ -152,15 +154,14 @@ export function FloorView({ boot, statuses, onPick, viewToggle }: {
                 label={label} tone={meta.card} dotClass={meta.dot}
                 sub={`${seating.partySize}p · ${st?.minutesSeated ?? 0}′`}
                 onPointerDown={(e) => startTap(e, seating.id)}
-                onPointerUp={(e) => endTap(e, seating.id, group[0])} />
+                onPointerUp={(e) => endTap(e, seating.id, group[0])}
+                onPointerCancel={cancelTap} />
             );
           })}
         </div>
 
         <div className="absolute bottom-3 right-3 flex flex-col gap-1.5">
-          <button onClick={() => zoomBy(1.25)} className="grid h-10 w-10 place-items-center rounded-xl bg-surface shadow ring-1 ring-line active:scale-95" aria-label="Ingrandisci"><ZoomIn className="h-4 w-4" /></button>
-          <button onClick={() => zoomBy(0.8)} className="grid h-10 w-10 place-items-center rounded-xl bg-surface shadow ring-1 ring-line active:scale-95" aria-label="Riduci"><ZoomOut className="h-4 w-4" /></button>
-          <button onClick={fit} className="grid h-10 w-10 place-items-center rounded-xl bg-surface shadow ring-1 ring-line active:scale-95" aria-label="Adatta"><Maximize2 className="h-4 w-4" /></button>
+          <button onClick={() => fit()} className="grid h-10 w-10 place-items-center rounded-xl bg-surface shadow ring-1 ring-line active:scale-95" aria-label="Ripristina vista"><Maximize2 className="h-4 w-4" /></button>
         </div>
 
         {!tables.length && (

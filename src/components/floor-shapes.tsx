@@ -80,11 +80,12 @@ export const TableNode = memo(
       seats?: Point[];
       onPointerDown?: (e: React.PointerEvent) => void;
       onPointerUp?: (e: React.PointerEvent) => void;
+      onPointerCancel?: (e: React.PointerEvent) => void;
       onClick?: (e: React.MouseEvent) => void;
       children?: React.ReactNode;
     }
   >(function TableNode(
-    { t, tone = "border-line", dotClass, sub, selected, dimmed, invalid, seats: given, onPointerDown, onPointerUp, onClick, children },
+    { t, tone = "border-line", dotClass, sub, selected, dimmed, invalid, seats: given, onPointerDown, onPointerUp, onPointerCancel, onClick, children },
     ref,
   ) {
     const seats = given ?? tableSeats(t);
@@ -95,6 +96,7 @@ export const TableNode = memo(
         ref={ref}
         onPointerDown={onPointerDown}
         onPointerUp={onPointerUp}
+        onPointerCancel={onPointerCancel}
         onClick={onClick}
         className={`absolute left-0 top-0 z-20 ${dimmed ? "opacity-40" : ""}`}
         style={{
@@ -105,7 +107,6 @@ export const TableNode = memo(
           backfaceVisibility: "hidden",
           WebkitBackfaceVisibility: "hidden" as any,
           transformStyle: "preserve-3d",
-          contain: "layout style paint",
         }}
       >
         {seats.map((s, i) => (
@@ -377,7 +378,6 @@ export const ElementNode = memo(
           willChange: "transform",
           backfaceVisibility: "hidden",
           WebkitBackfaceVisibility: "hidden" as any,
-          contain: "layout style paint",
         }}
       >
         {isWall ? (
@@ -419,6 +419,7 @@ export const JoinedNode = memo(function JoinedNode({
   dotClass,
   onPointerDown,
   onPointerUp,
+  onPointerCancel,
 }: {
   box: { x: number; y: number; w: number; h: number };
   label: string;
@@ -427,12 +428,14 @@ export const JoinedNode = memo(function JoinedNode({
   dotClass?: string;
   onPointerDown?: (e: React.PointerEvent) => void;
   onPointerUp?: (e: React.PointerEvent) => void;
+  onPointerCancel?: (e: React.PointerEvent) => void;
 }) {
   const fs = Math.max(26, Math.min(box.w, box.h) * 0.3);
   return (
     <div
       onPointerDown={onPointerDown}
       onPointerUp={onPointerUp}
+      onPointerCancel={onPointerCancel}
       className="absolute left-0 top-0 z-20 cursor-pointer"
       style={{
         width: box.w,
@@ -440,7 +443,6 @@ export const JoinedNode = memo(function JoinedNode({
         transform: `translate3d(${box.x}px, ${box.y}px, 0)`,
         willChange: "transform",
         backfaceVisibility: "hidden",
-        contain: "layout style paint",
       }}
     >
       <div className={`grid h-full w-full place-items-center rounded-[16px] border-[7px] bg-surface shadow-lg ${tone}`}>
