@@ -25,30 +25,65 @@ type SessionState = {
 
 // Storage sicuro per iOS Safari: in private mode o PWA, localStorage può lanciare SecurityError
 // e bloccare la hydration di zustand → l'app resta chiodata su "sta aprendo la sala"
+// Su iPhone proviamo in ordine: localStorage → sessionStorage → cookie → memoria
+let memoryFallback: Record<string, string> = {};
+
 const safeStorage = {
   getItem: (name: string) => {
     try {
-      if (typeof window === "undefined" || !window.localStorage) return null;
-      return window.localStorage.getItem(name);
-    } catch {
-      return null;
-    }
+      if (typeof window !== "undefined" && window.localStorage) {
+        const v = window.localStorage.getItem(name);
+        if (v !== null) return v;
+      }
+    } catch {}
+    try {
+      if (typeof window !== "undefined" && window.sessionStorage) {
+        const v = window.sessionStorage.getItem(name);
+        if (v !== null) return v;
+      }
+    } catch {}
+    try {
+      if (typeof document !== "undefined") {
+        const m = document.cookie.match(new RegExp("(?:^|; )" + name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + "=([^;]*)"));
+        if (m) return decodeURIComponent(m[1]);
+      }
+    } catch {}
+    return memoryFallback[name] ?? null;
   },
   setItem: (name: string, value: string) => {
+    let ok = false;
     try {
-      if (typeof window === "undefined" || !window.localStorage) return;
-      window.localStorage.setItem(name, value);
-    } catch {
-      // quota exceeded o SecurityError su iOS private → ignora, l'app funziona in memoria
-    }
+      if (typeof window !== "undefined" && window.localStorage) {
+        window.localStorage.setItem(name, value);
+        ok = true;
+      }
+    } catch {}
+    try {
+      if (typeof window !== "undefined" && window.sessionStorage) {
+        window.sessionStorage.setItem(name, value);
+        ok = true;
+      }
+    } catch {}
+    try {
+      if (typeof document !== "undefined") {
+        document.cookie = `${name}=${encodeURIComponent(value)}; path=/; max-age=31536000; SameSite=Lax`;
+        ok = true;
+      }
+    } catch {}
+    // Sempre salva in memoria come ultima spiaggia — così anche se storage bloccato, la sessione resta in RAM
+    memoryFallback[name] = value;
   },
   removeItem: (name: string) => {
     try {
-      if (typeof window === "undefined" || !window.localStorage) return;
-      window.localStorage.removeItem(name);
-    } catch {
-      // ignora
-    }
+      if (typeof window !== "undefined" && window.localStorage) window.localStorage.removeItem(name);
+    } catch {}
+    try {
+      if (typeof window !== "undefined" && window.sessionStorage) window.sessionStorage.removeItem(name);
+    } catch {}
+    try {
+      if (typeof document !== "undefined") document.cookie = `${name}=; path=/; max-age=0`;
+    } catch {}
+    delete memoryFallback[name];
   },
 };
 
@@ -67,11 +102,20 @@ export const useSession = create<SessionState>()(
         set({ staff });
       },
       // Cambiando ristorante la sessione precedente non vale più: si esce.
+      // Fix iPhone: non cancellare staff qui — lo fa bootstrap mismatch se davvero serve.
+      // Su iPhone la hydration lenta + setSlug da TenantProvider causava logout a loop.
       setSlug: (slug) => {
         const prev = get().slug;
         if (prev && slug && prev !== slug) {
-          setApiIdentity(null);
-          set({ slug, staff: null, roomId: null, roomOrder: [] });
+          // Se c'è già uno staff loggato, non cancellarlo qui: verifica vera in useBootstrap
+          // Altrimenti su iPhone si torna al login in loop
+          const hasStaff = !!get().staff;
+          if (!hasStaff) {
+            set({ slug, roomId: null, roomOrder: [] });
+          } else {
+            // Mantieni staff, aggiorna solo slug — bootstrap deciderà se è valido
+            set({ slug });
+          }
           return;
         }
         set({ slug });
