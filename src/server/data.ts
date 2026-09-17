@@ -2,7 +2,7 @@
 import "server-only";
 import { db } from "@/db";
 import * as s from "@/db/schema";
-import { and, asc, eq } from "drizzle-orm";
+import { and, asc, eq, or } from "drizzle-orm";
 import type { Bootstrap, DayData, Settings } from "@/lib/types";
 import { normalizeLayout, tableGeometry, type RoomLayout, type TableShape } from "@/lib/floor";
 
@@ -41,7 +41,13 @@ export async function assertStaffInRestaurant(
 
 /** Risolve un ristorante dal suo indirizzo pubblico (/r/<slug>). */
 export async function getRestaurantBySlug(slug: string) {
-  const [row] = await db.select().from(s.restaurants).where(eq(s.restaurants.slug, slug)).limit(1);
+  if (!slug) return null;
+  // Case-insensitive: prova originale, upper, lower — fix 404 su iOS dove URL può essere lowercased
+  const [row] = await db
+    .select()
+    .from(s.restaurants)
+    .where(or(eq(s.restaurants.slug, slug), eq(s.restaurants.slug, slug.toUpperCase()), eq(s.restaurants.slug, slug.toLowerCase())))
+    .limit(1);
   return row ?? null;
 }
 
@@ -50,9 +56,7 @@ export async function getRestaurantBundle(restaurantId?: string | null, slug?: s
   // (tipico dopo clone, import o reseed). In locale non deve produrre una pagina vuota:
   // prova l'ID richiesto, poi il tenant demo, infine il primo tenant disponibile.
   // Lo slug dell'indirizzo ha la precedenza: è il locale che il cliente sta usando.
-  let rest = slug
-    ? (await db.select().from(s.restaurants).where(eq(s.restaurants.slug, slug)).limit(1))[0]
-    : undefined;
+  let rest = slug ? await getRestaurantBySlug(slug) : undefined;
   if (slug && !rest) {
     throw new BootstrapDataError("RESTAURANT_NOT_FOUND", "Questo indirizzo non corrisponde a nessun ristorante.");
   }
