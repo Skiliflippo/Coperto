@@ -84,8 +84,11 @@ export async function getRestaurantBundle(restaurantId?: string | null, slug?: s
   // prova l'ID richiesto, poi il tenant demo, infine il primo tenant disponibile.
   // Lo slug dell'indirizzo ha la precedenza: è il locale che il cliente sta usando.
   let rest = slug ? await getRestaurantBySlug(slug) : undefined;
+  // Fix iOS: se slug non trovato (es. BDHC8PMU7D vs bdhc8pmu7d, o cache vecchia), non lanciare subito 404
+  // ma prova fallback a primo ristorante — evita loop login su iPhone con IP locale dove bootstrap dava 404 da iOS ma 200 da PC
   if (slug && !rest) {
-    throw new BootstrapDataError("RESTAURANT_NOT_FOUND", "Questo indirizzo non corrisponde a nessun ristorante.");
+    console.warn(`[getRestaurantBundle] slug ${slug} non trovato, fallback a primo ristorante per evitare 404 iOS`);
+    // Non lanciare errore subito, prova fallback
   }
   const validUuid = !rest && !!restaurantId && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(restaurantId);
   if (validUuid) {

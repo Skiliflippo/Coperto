@@ -36,7 +36,8 @@ export default function Home() {
   // senza chiedere di nuovo il codice.
   useEffect(() => {
     if (!hydrated || !rememberedSlug) return;
-    router.replace(`/r/${rememberedSlug}`);
+    const staff = useSession.getState().staff;
+    router.replace(`/r/${rememberedSlug}${staff ? "/sala" : "/login"}`);
   }, [hydrated, rememberedSlug, router]);
 
   const go = async () => {
