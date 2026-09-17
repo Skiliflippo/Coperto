@@ -17,6 +17,7 @@ import {
 } from "lucide-react";
 import { api } from "@/lib/api";
 import { useSession } from "@/store/session";
+import { useInteraction } from "@/store/interaction";
 import { toast } from "@/components/toast";
 import { useViewport } from "@/lib/use-viewport";
 import {
@@ -207,6 +208,7 @@ export function FloorEditor({ boot, roomId, onClose }: { boot: Bootstrap; roomId
     if (tool !== "select") return;
     e.stopPropagation();
     cancelPan();
+    useInteraction.getState().setInteracting(true);
     // Pointer capture per ricevere move anche fuori dal nodo (essenziale su touch)
     try { (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId); } catch {}
 
@@ -315,6 +317,7 @@ export function FloorEditor({ boot, roomId, onClose }: { boot: Bootstrap; roomId
       pendingBad.current = null;
       setBadIds([]);
       setLiveWalls({});
+      useInteraction.getState().setInteracting(false);
       if (!moved || (delta.x === 0 && delta.y === 0)) return;
       moveSelection(group, delta.x, delta.y);
     };
@@ -326,6 +329,7 @@ export function FloorEditor({ boot, roomId, onClose }: { boot: Bootstrap; roomId
   const resizeEl = (e: React.PointerEvent, el: FloorElement, hx: -1 | 0 | 1, hy: -1 | 0 | 1) => {
     e.stopPropagation();
     cancelPan();
+    useInteraction.getState().setInteracting(true);
     try { (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId); } catch {}
     const node = nodeRefs.current.get(el.id);
     if (!node) return;
@@ -403,6 +407,7 @@ export function FloorEditor({ boot, roomId, onClose }: { boot: Bootstrap; roomId
       if (badRaf.current) { cancelAnimationFrame(badRaf.current); badRaf.current = 0; }
       pendingBad.current = null;
       setBadIds([]);
+      useInteraction.getState().setInteracting(false);
       commit((d) => ({ ...d, layout: { ...d.layout, elements: d.layout.elements.map((x) => (x.id === el.id ? { ...x, ...box } : x)) } }));
     };
     window.addEventListener("pointermove", move, { passive: false });
@@ -413,6 +418,7 @@ export function FloorEditor({ boot, roomId, onClose }: { boot: Bootstrap; roomId
   const dragWallEndpoint = (e: React.PointerEvent, el: FloorElement, endpoint: "a" | "b") => {
     e.stopPropagation();
     cancelPan();
+    useInteraction.getState().setInteracting(true);
     try { (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId); } catch {}
     const node = nodeRefs.current.get(el.id);
     if (!node) return;
@@ -456,6 +462,7 @@ export function FloorEditor({ boot, roomId, onClose }: { boot: Bootstrap; roomId
       pendingBad.current = null;
       setBadIds([]);
       setLiveWalls({});
+      useInteraction.getState().setInteracting(false);
       patchEl(el.id, next);
     };
     window.addEventListener("pointermove", move, { passive: false });
@@ -466,6 +473,7 @@ export function FloorEditor({ boot, roomId, onClose }: { boot: Bootstrap; roomId
   const dragCorner = (e: React.PointerEvent, index: number) => {
     e.stopPropagation();
     cancelPan();
+    useInteraction.getState().setInteracting(true);
     try { (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId); } catch {}
     const before = draft;
     holdFit(true);
@@ -517,6 +525,7 @@ export function FloorEditor({ boot, roomId, onClose }: { boot: Bootstrap; roomId
       if (pending) applyPoint(pending);
       holdFit(false);
       fit();
+      useInteraction.getState().setInteracting(false);
       setPast((prev) => [...prev.slice(-40), before]);
       setFuture([]);
     };

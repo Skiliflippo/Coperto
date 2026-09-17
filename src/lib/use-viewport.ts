@@ -1,12 +1,16 @@
 "use client";
-// Pan & Zoom 60 FPS + momentum ghiaccio Google Earth
-// Base: 908d25d (60 FPS ottimizzato) + momentum leggero
-// - Durante gesto: solo DOM via rAF, no setState
-// - Momentum: friction 0.92, interrompibile, no crash
-// - Fit animato con easeOutExpo ma senza loop ResizeObserver
+// Pan & Zoom 120 FPS Local-First + momentum ghiaccio Google Earth
+// ARCHITETTURA:
+// - Navigazione spaziale (pan, zoom, momentum) 100% locale via GPU transform, rAF, no API, no setState durante gesto
+// - Durante onPointerMove: solo DOM (translate3d), nessun fetch, nessun re-render React
+// - Commit finale solo su onPointerUp (una sola setState)
+// - Momentum: friction 0.92, interrompibile, cap 90 frame per evitare loop infinito
+// - Interazione tracciata via useInteraction per non interrompere drag con SSE realtime
+// - ResizeObserver leggero: no fit durante animazione, soglia 2px
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { MAX_ZOOM, MIN_ZOOM, clamp, CM_PER_CELL } from "./floor";
+import { useInteraction } from "@/store/interaction";
 
 export type Viewport = { zoom: number; panX: number; panY: number };
 export type ZoomLevel = "low" | "mid" | "high";
@@ -161,17 +165,18 @@ export function useViewport(
     [boundsW, boundsH, bx1, by1, pad],
   );
 
+  // 120 FPS: solo transform GPU, nessuna lettura layout durante gesto
   const applyDom = useCallback((v: Viewport) => {
     vpRef.current = v;
     const content = contentRef.current;
     if (content) {
+      // translate3d forza layer GPU su iOS Safari / Android Chrome
       content.style.transform = `translate3d(${v.panX}px, ${v.panY}px, 0) scale(${v.zoom})`;
     }
     const grid = gridRef.current;
     if (grid) {
       const cell = CM_PER_CELL * v.zoom;
       const major = cell * 2;
-      // backgroundPosition è più economico di transform modulo su iOS
       grid.style.backgroundPosition = `${v.panX}px ${v.panY}px`;
       grid.style.backgroundSize = `${cell}px ${cell}px, ${cell}px ${cell}px, ${major}px ${major}px`;
     }
@@ -204,6 +209,10 @@ export function useViewport(
       committedVpRef.current = clamped;
       applyDom(clamped);
       setVpState(clamped);
+      // fine interazione
+      try {
+        useInteraction.getState().setPanning(false);
+      } catch {}
     },
     [clampVp, applyDom],
   );
@@ -245,6 +254,9 @@ export function useViewport(
           setVpState(clampedTarget);
           setAnimating(false);
           setPanning(false);
+          try {
+            useInteraction.getState().setPanning(false);
+          } catch {}
         }
       };
       animateRaf.current = requestAnimationFrame(tick);
@@ -291,7 +303,6 @@ export function useViewport(
     [bx1, by1, bx2, by2, boundsW, boundsH, pad, commit, animateTo],
   );
 
-  // ResizeObserver leggero: solo se dimensione cambia >2px, e senza animazione loop
   useEffect(() => {
     const el = ref.current;
     if (!el) return;
@@ -301,7 +312,11 @@ export function useViewport(
     updateSizeCache();
     const doFit = () => {
       if (fitHold.current) return;
-      if (isAnimating) return; // non rifittare durante animazione
+      if (isAnimating) return;
+      // non rifittare se l'utente sta interagendo (evita interruzione gesto)
+      try {
+        if (useInteraction.getState().isInteracting) return;
+      } catch {}
       const w = el.clientWidth;
       const h = el.clientHeight;
       if (Math.abs(w - lastW) < 2 && Math.abs(h - lastH) < 2) return;
@@ -347,6 +362,9 @@ export function useViewport(
     moveHistory.current = [];
     velocity.current = { x: 0, y: 0 };
     setPanning(false);
+    try {
+      useInteraction.getState().setPanning(false);
+    } catch {}
   }, [clampVp, applyDom]);
 
   const freeze = useCallback(() => {
@@ -373,6 +391,9 @@ export function useViewport(
     moveHistory.current = [];
     velocity.current = { x: 0, y: 0 };
     setPanning(false);
+    try {
+      useInteraction.getState().setPanning(false);
+    } catch {}
     return wasAnimating;
   }, [clampVp, applyDom, cancelAnimations]);
 
@@ -400,6 +421,9 @@ export function useViewport(
     moveHistory.current = [];
     velocity.current = { x: 0, y: 0 };
     setPanning(false);
+    try {
+      useInteraction.getState().setPanning(false);
+    } catch {}
     setTimeout(() => {
       enabled.current = true;
     }, 50);
@@ -419,11 +443,14 @@ export function useViewport(
       let curVx = vx * 0.92;
       let curVy = vy * 0.92;
       const friction = 0.92;
-      const minVelocity = 0.08; // più alto = si ferma prima, meno lag
+      const minVelocity = 0.08;
       let frames = 0;
-      const maxFrames = 90; // cap a 1.5s max, evita loop infinito
+      const maxFrames = 90;
       setPanning(true);
       setAnimating(true);
+      try {
+        useInteraction.getState().setPanning(true);
+      } catch {}
 
       const step = () => {
         frames++;
@@ -440,6 +467,9 @@ export function useViewport(
           setAnimating(false);
           moveHistory.current = [];
           velocity.current = { x: 0, y: 0 };
+          try {
+            useInteraction.getState().setPanning(false);
+          } catch {}
           return;
         }
         const next = clampVp({
@@ -487,6 +517,9 @@ export function useViewport(
         moveHistory.current = [];
         velocity.current = { x: 0, y: 0 };
         setPanning(false);
+        try {
+          useInteraction.getState().setPanning(false);
+        } catch {}
         if (isOnButton || isOnTable) return;
       }
 
@@ -529,6 +562,9 @@ export function useViewport(
         };
         panning.current = null;
         setPanning(false);
+        try {
+          useInteraction.getState().setPanning(false);
+        } catch {}
         return;
       }
       panning.current = {
@@ -538,6 +574,9 @@ export function useViewport(
         panY: vpRef.current.panY,
       };
       setPanning(true);
+      try {
+        useInteraction.getState().setPanning(true);
+      } catch {}
     },
     [cancelAnimations, clampVp, applyDom],
   );
@@ -641,6 +680,9 @@ export function useViewport(
         moveHistory.current = [];
         velocity.current = { x: 0, y: 0 };
         setPanning(false);
+        try {
+          useInteraction.getState().setPanning(false);
+        } catch {}
       }
     },
     [clampVp, applyDom, startMomentum],
@@ -731,6 +773,9 @@ export function useViewport(
       if (rafId.current) cancelAnimationFrame(rafId.current);
       if (animateRaf.current) cancelAnimationFrame(animateRaf.current);
       if (momentumRaf.current) cancelAnimationFrame(momentumRaf.current);
+      try {
+        useInteraction.getState().setPanning(false);
+      } catch {}
     };
   }, []);
 

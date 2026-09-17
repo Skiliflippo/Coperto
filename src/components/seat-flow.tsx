@@ -1,6 +1,7 @@
 "use client";
-// Flusso "Quanti siete?" — il cuore della velocità in sala.
-// Tap 1: quanti siete · Tap 2: tavolo suggerito → seduti. Fine.
+// Flusso "Quanti siete?" — Local-First / Optimistic UI
+// - Tap → UI aggiornata ALL'ISTANTE (seating ottimistico)
+// - API inviata in background, realtime agli altri dispositivi via /api/events
 import { useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { Users, Clock, ArrowRight, Link2, Scissors } from "lucide-react";
@@ -13,7 +14,6 @@ import { todayISO, nowMin } from "@/lib/time";
 import { toast } from "@/components/toast";
 import { Sheet } from "@/components/ui";
 
-// Griglia coperti 1–8 + 9+
 export function PartyGrid({ value, onChange }: { value: number; onChange: (v: number) => void }) {
   const [big, setBig] = useState(false);
   if (big) {
@@ -45,6 +45,7 @@ export function PartyGrid({ value, onChange }: { value: number; onChange: (v: nu
   );
 }
 
+// Optimistic seat: UI istantanea, API in background
 export function useSeat() {
   const rid = useSession((s) => s.staff?.restaurantId);
   const me = useSession((s) => s.staff?.name) ?? "";
@@ -55,16 +56,51 @@ export function useSeat() {
     const period = periodFor(nowMin(), boot.data!.periods);
     const dur = durationFor(v.partySize, period?.name ?? null, settings);
     const expectedEndAt = new Date(Date.now() + dur * 60000).toISOString();
+    const date = todayISO();
+    const tempId = `temp-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
+
+    const prevDay = qc.getQueryData<any>(["day", rid, date]);
+    if (prevDay) {
+      const optimisticSeating = {
+        id: tempId,
+        reservationId: v.reservationId ?? null,
+        tableIds: v.tableIds,
+        tableLabel: v.tableLabel,
+        name: v.name ?? "",
+        partySize: v.partySize,
+        note: v.note ?? "",
+        status: "seduto" as const,
+        seatedAt: new Date().toISOString(),
+        expectedEndAt,
+        actualEndAt: null,
+        createdBy: me,
+      };
+      qc.setQueryData(["day", rid, date], {
+        ...prevDay,
+        seatings: [...prevDay.seatings, optimisticSeating],
+      });
+    }
+    toast({ title: v.name ? `${v.name} → tavolo ${v.tableLabel}` : `Tavolo ${v.tableLabel} occupato`, tone: "ok" });
+
     try {
-      await api("/api/seatings", {
+      const res = await api<{ seating: any }>("/api/seatings", {
         method: "POST",
         body: { restaurantId: rid, ...v, expectedEndAt, createdBy: me },
       });
-      await qc.invalidateQueries({ queryKey: ["day", rid] });
-      toast({ title: v.name ? `${v.name} sedut${v.partySize > 1 ? "i" : "o"} al tavolo ${v.tableLabel}` : `Tavolo ${v.tableLabel} occupato`, tone: "ok" });
+      if (prevDay && res?.seating) {
+        qc.setQueryData(["day", rid, date], (old: any) => {
+          if (!old) return old;
+          return {
+            ...old,
+            seatings: old.seatings.map((s: any) => (s.id === tempId ? res.seating : s)),
+          };
+        });
+      }
+      qc.invalidateQueries({ queryKey: ["day", rid] });
       return true;
     } catch (e) {
       const err = e as ApiError;
+      if (prevDay) qc.setQueryData(["day", rid, date], prevDay);
       if (err.status === 409 && err.payload?.conflict) {
         toast({ title: `Tavolo appena occupato da ${err.payload.occupiedBy}`, msg: "Ho aggiornato la sala: scegli un altro tavolo.", tone: "err" });
         await qc.invalidateQueries({ queryKey: ["day", rid] });
@@ -76,9 +112,6 @@ export function useSeat() {
   };
 }
 
-// Tavoli assegnabili ADESSO. I tavoli prenotati non compaiono: se la prenotazione
-// viene cancellata o segnata no-show, il tavolo torna automaticamente disponibile.
-// Se il gruppo non entra da nessuna parte, propone di accostare due tavoli vicini.
 export function SuggestedTables({ party, onPick, excludeIds = [], compact, forReservationId }: {
   party: number;
   onPick: (v: { tableIds: string[]; tableLabel: string }) => void;
@@ -102,25 +135,19 @@ export function SuggestedTables({ party, onPick, excludeIds = [], compact, forRe
   });
   const held = tables.filter((t) => statuses.get(t.id)?.state === "prenotato" && t.capacity >= party).length;
 
-  // TAVOLI DA STACCARE: un tavolone libero che in realtà sono più tavoli accostati.
-  // Si propone quando sederci il gruppo sprecherebbe un tavolo intero: o perché
-  // non resta altro, o perché il posto migliore avanza troppi coperti.
-  // Resta una scelta: il tavolo intero compare comunque nell'elenco qui sopra.
   const stdSeats = settings.standardTableSeats ?? 4;
   const bestWaste = free.length ? free[0].waste : Infinity;
-  const wouldWasteATable = bestWaste >= stdSeats;   // sprecheremmo almeno un tavolo
+  const wouldWasteATable = bestWaste >= stdSeats;
   const splittable = wouldWasteATable
     ? tables
         .filter((t) => !excludeIds.includes(t.id))
         .filter((t) => t.splitInto >= 2 && statuses.get(t.id)?.state === "libero")
-        // il gruppo deve stare comodo in una sola parte: le altre restano libere
         .filter(() => stdSeats >= party)
         .map((t) => ({ table: t, partSeats: stdSeats, freed: t.splitInto - 1 }))
         .sort((a, b) => b.freed - a.freed || a.table.capacity - b.table.capacity)
         .slice(0, 2)
     : [];
 
-  // Accorpamenti: solo se attivi in impostazioni e solo quando servono davvero
   const joins = settings.allowTableJoin && !free.length
     ? findJoinProposals({
         party, tables: tables.filter((t) => !excludeIds.includes(t.id)), statuses,
@@ -223,15 +250,12 @@ export function SuggestedTables({ party, onPick, excludeIds = [], compact, forRe
   );
 }
 
-// Sheet completo walk-in: quanti siete → tavolo → seduti
 export function WalkInSheet({ open, onClose, defaultName = "" }: { open: boolean; onClose: () => void; defaultName?: string }) {
   const [party, setParty] = useState(2);
   const seat = useSeat();
   const [busy, setBusy] = useState(false);
   return (
     <Sheet open={open} onClose={onClose} title={<span className="flex items-center gap-2"><Users className="h-5 w-5 text-brand" /> Quanti siete?</span>}>
-      {/* Altezza stabile: cambiando coperti cambiano i suggerimenti, ma il tastierino
-          resta sempre nello stesso punto e si possono fare tap rapidi senza errori. */}
       <div className="flex h-[min(66dvh,590px)] min-h-[430px] flex-col">
         <div className="shrink-0">
           <PartyGrid value={party} onChange={setParty} />

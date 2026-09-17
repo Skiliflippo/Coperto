@@ -128,7 +128,7 @@ function Clock({ now, staff }: { now: number; staff?: string }) {
 }
 
 // Toggle mappa/lista: una sola icona, quella della vista in cui puoi passare.
-export function ViewToggle({ view, setView }: { view: "mappa" | "lista"; setView: (v: "mappa" | "lista") => void }) {
+function ViewToggle({ view, setView }: { view: "mappa" | "lista"; setView: (v: "mappa" | "lista") => void }) {
   const next = view === "mappa" ? "lista" : "mappa";
   return (
     <button onClick={() => setView(next)} aria-label={`Passa alla vista ${next}`} title={`Vista ${next}`}
