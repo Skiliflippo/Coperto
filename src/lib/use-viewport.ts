@@ -1,10 +1,9 @@
 "use client";
-// Pan & Zoom 60 FPS + spring + momentum ghiaccio (Google Earth)
-// - Cache viewport, grid via transform modulo
-// - Spring zoom per fit (easeOutExpo)
-// - Momentum / inertia su pan veloce: friction 0.92
-// - Zoom solo via pinch + fit/recenter, niente bottoni +/-
-// - No double-tap per evitare conflitto con tap tavoli
+// Pan & Zoom 60 FPS + momentum ghiaccio Google Earth
+// Base: 908d25d (60 FPS ottimizzato) + momentum leggero
+// - Durante gesto: solo DOM via rAF, no setState
+// - Momentum: friction 0.92, interrompibile, no crash
+// - Fit animato con easeOutExpo ma senza loop ResizeObserver
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { MAX_ZOOM, MIN_ZOOM, clamp, CM_PER_CELL } from "./floor";
@@ -56,7 +55,6 @@ export function selectionViewport(args: {
 
 type Bounds = { x1: number; y1: number; x2: number; y2: number };
 
-const easeOutCubic = (t: number) => 1 - Math.pow(1 - t, 3);
 const easeOutExpo = (t: number) => (t === 1 ? 1 : 1 - Math.pow(2, -10 * t));
 
 export function useViewport(
@@ -81,8 +79,6 @@ export function useViewport(
   const rafId = useRef<number>(0);
   const animateRaf = useRef<number>(0);
   const momentumRaf = useRef<number>(0);
-  const lastZoomForGrid = useRef<number>(0);
-  const wheelTimeout = useRef<number | null>(null);
 
   const sizeCache = useRef({ w: 0, h: 0, minZoom: MIN_ZOOM });
   const rectCache = useRef<{ left: number; top: number } | null>(null);
@@ -101,7 +97,6 @@ export function useViewport(
   const [isPanning, setPanning] = useState(false);
   const [isAnimating, setAnimating] = useState(false);
 
-  // history per velocity — 100ms window
   const moveHistory = useRef<{ x: number; y: number; t: number }[]>([]);
   const velocity = useRef({ x: 0, y: 0 });
 
@@ -176,14 +171,9 @@ export function useViewport(
     if (grid) {
       const cell = CM_PER_CELL * v.zoom;
       const major = cell * 2;
-      const mod = (n: number, m: number) => ((n % m) + m) % m;
-      const gx = major > 0 ? mod(v.panX, major) - major : v.panX;
-      const gy = major > 0 ? mod(v.panY, major) - major : v.panY;
-      grid.style.transform = `translate3d(${gx}px, ${gy}px, 0)`;
-      if (Math.abs(v.zoom - lastZoomForGrid.current) > 0.001) {
-        lastZoomForGrid.current = v.zoom;
-        grid.style.backgroundSize = `${cell}px ${cell}px, ${cell}px ${cell}px, ${major}px ${major}px`;
-      }
+      // backgroundPosition è più economico di transform modulo su iOS
+      grid.style.backgroundPosition = `${v.panX}px ${v.panY}px`;
+      grid.style.backgroundSize = `${cell}px ${cell}px, ${cell}px ${cell}px, ${major}px ${major}px`;
     }
   }, []);
 
@@ -231,18 +221,17 @@ export function useViewport(
   }, []);
 
   const animateTo = useCallback(
-    (target: Viewport, duration = 320, easing = easeOutExpo) => {
+    (target: Viewport, duration = 340) => {
       cancelAnimations();
       const start = { ...vpRef.current };
       const clampedTarget = clampVp(target);
       const startTime = performance.now();
       setAnimating(true);
-      setPanning(true);
 
       const tick = (now: number) => {
         const elapsed = now - startTime;
         const t = Math.min(1, elapsed / duration);
-        const eased = easing(t);
+        const eased = easeOutExpo(t);
         const zoom = start.zoom + (clampedTarget.zoom - start.zoom) * eased;
         const panX = start.panX + (clampedTarget.panX - start.panX) * eased;
         const panY = start.panY + (clampedTarget.panY - start.panY) * eased;
@@ -254,11 +243,8 @@ export function useViewport(
           animateRaf.current = 0;
           committedVpRef.current = clampedTarget;
           setVpState(clampedTarget);
-          setPanning(false);
           setAnimating(false);
-          try {
-            if (navigator.vibrate) navigator.vibrate(5);
-          } catch {}
+          setPanning(false);
         }
       };
       animateRaf.current = requestAnimationFrame(tick);
@@ -269,7 +255,7 @@ export function useViewport(
   const apply = useCallback(
     (fn: (v: Viewport) => Viewport) => {
       const next = fn(vpRef.current);
-      animateTo(next, 300, easeOutCubic);
+      animateTo(next, 300);
     },
     [animateTo],
   );
@@ -297,7 +283,7 @@ export function useViewport(
         cy = (by1 + by2) / 2;
       const target = { zoom, panX: vw / 2 - cx * zoom, panY: vh / 2 - cy * zoom };
       if (animated) {
-        animateTo(target, 380, easeOutExpo);
+        animateTo(target, 360);
       } else {
         commit(target);
       }
@@ -305,6 +291,7 @@ export function useViewport(
     [bx1, by1, bx2, by2, boundsW, boundsH, pad, commit, animateTo],
   );
 
+  // ResizeObserver leggero: solo se dimensione cambia >2px, e senza animazione loop
   useEffect(() => {
     const el = ref.current;
     if (!el) return;
@@ -314,6 +301,7 @@ export function useViewport(
     updateSizeCache();
     const doFit = () => {
       if (fitHold.current) return;
+      if (isAnimating) return; // non rifittare durante animazione
       const w = el.clientWidth;
       const h = el.clientHeight;
       if (Math.abs(w - lastW) < 2 && Math.abs(h - lastH) < 2) return;
@@ -338,45 +326,7 @@ export function useViewport(
       ro.disconnect();
       if (raf) cancelAnimationFrame(raf);
     };
-  }, [fit, updateSizeCache, pad, boundsW, boundsH]);
-
-  useEffect(() => {
-    const el = ref.current;
-    if (!el) return;
-    const onWheel = (e: WheelEvent) => {
-      e.preventDefault();
-      cancelAnimations();
-      const rect = el.getBoundingClientRect();
-      const sx = e.clientX - rect.left,
-        sy = e.clientY - rect.top;
-      const factor = e.ctrlKey || e.metaKey ? Math.exp(-e.deltaY * 0.01) : Math.exp(-e.deltaY * 0.0016);
-      if (e.shiftKey && !(e.ctrlKey || e.metaKey)) {
-        const v = vpRef.current;
-        scheduleDom(clampVp({ ...v, panX: v.panX - e.deltaY }));
-      } else {
-        const v = vpRef.current;
-        const min = minZoomForCached();
-        const zoom = clamp(v.zoom * factor, min, MAX_ZOOM);
-        const k = zoom / v.zoom;
-        const next = { zoom, panX: sx - (sx - v.panX) * k, panY: sy - (sy - v.panY) * k };
-        const clamped = clampVp(next);
-        scheduleDom(clamped);
-        if (wheelTimeout.current) window.clearTimeout(wheelTimeout.current);
-        wheelTimeout.current = window.setTimeout(() => {
-          commit(clamped);
-          wheelTimeout.current = null;
-        }, 150) as unknown as number;
-      }
-    };
-    el.addEventListener("wheel", onWheel, { passive: false });
-    return () => {
-      el.removeEventListener("wheel", onWheel);
-      if (wheelTimeout.current) {
-        clearTimeout(wheelTimeout.current);
-        wheelTimeout.current = null;
-      }
-    };
-  }, [clampVp, minZoomForCached, scheduleDom, commit, cancelAnimations]);
+  }, [fit, updateSizeCache, pad, boundsW, boundsH, isAnimating]);
 
   const stopPan = useCallback(() => {
     if (pendingVp.current) {
@@ -399,8 +349,6 @@ export function useViewport(
     setPanning(false);
   }, [clampVp, applyDom]);
 
-  // freeze: ferma tutto e committa posizione corrente — usato per tap su tavolo durante momentum
-  // così la mappa non torna indietro ma si ferma dove è
   const freeze = useCallback(() => {
     const wasAnimating = !!animateRaf.current || !!momentumRaf.current;
     cancelAnimations();
@@ -429,8 +377,6 @@ export function useViewport(
   }, [clampVp, applyDom, cancelAnimations]);
 
   const cancelPan = useCallback(() => {
-    // se c'è momentum/animazione in corso, freeza alla posizione corrente, non revertare
-    // altrimenti revert per evitare jitter da 1-2px su tap tavolo
     if (animateRaf.current || momentumRaf.current) {
       freeze();
       enabled.current = false;
@@ -446,7 +392,6 @@ export function useViewport(
       rafId.current = 0;
     }
     pendingVp.current = null;
-    // revert DOM a ultimo commit — fondamentale per tap su tavolo senza momentum
     applyDom(committedVpRef.current);
     pointers.current.clear();
     pinch.current = null;
@@ -460,11 +405,9 @@ export function useViewport(
     }, 50);
   }, [applyDom, cancelAnimations, freeze]);
 
-  // MOMENTUM — effetto ghiaccio Google Earth
   const startMomentum = useCallback(
     (vx: number, vy: number) => {
       cancelAnimations();
-      // se c'è un pending, partiamo da lì
       if (pendingVp.current) {
         vpRef.current = pendingVp.current;
         pendingVp.current = null;
@@ -473,18 +416,21 @@ export function useViewport(
           rafId.current = 0;
         }
       }
-      let curVx = vx * 0.95;
-      let curVy = vy * 0.95;
+      let curVx = vx * 0.92;
+      let curVy = vy * 0.92;
       const friction = 0.92;
-      const minVelocity = 0.015;
+      const minVelocity = 0.08; // più alto = si ferma prima, meno lag
+      let frames = 0;
+      const maxFrames = 90; // cap a 1.5s max, evita loop infinito
       setPanning(true);
       setAnimating(true);
 
       const step = () => {
+        frames++;
         curVx *= friction;
         curVy *= friction;
         const speed = Math.hypot(curVx, curVy);
-        if (speed < minVelocity) {
+        if (speed < minVelocity || frames > maxFrames) {
           momentumRaf.current = 0;
           const final = clampVp(vpRef.current);
           committedVpRef.current = final;
@@ -496,15 +442,13 @@ export function useViewport(
           velocity.current = { x: 0, y: 0 };
           return;
         }
-        // 16 = ~1 frame a 60fps, trasforma px/ms in px/frame
         const next = clampVp({
           zoom: vpRef.current.zoom,
           panX: vpRef.current.panX + curVx * 16,
           panY: vpRef.current.panY + curVy * 16,
         });
-        // se clamp blocca un asse, azzera solo quell'asse
-        if (Math.abs(next.panX - vpRef.current.panX) < 0.05) curVx = 0;
-        if (Math.abs(next.panY - vpRef.current.panY) < 0.05) curVy = 0;
+        if (Math.abs(next.panX - vpRef.current.panX) < 0.1) curVx = 0;
+        if (Math.abs(next.panY - vpRef.current.panY) < 0.1) curVy = 0;
         applyDom(next);
         momentumRaf.current = requestAnimationFrame(step);
       };
@@ -520,9 +464,7 @@ export function useViewport(
       const isOnTable = !!target.closest("[data-table-id]");
       const wasAnimating = !!animateRaf.current || !!momentumRaf.current;
 
-      // Se c'è momentum/animazione, fermalo subito alla posizione corrente (effetto Google Earth: tap per fermare)
       if (wasAnimating) {
-        // committa posizione corrente
         cancelAnimations();
         if (rafId.current) {
           cancelAnimationFrame(rafId.current);
@@ -545,14 +487,10 @@ export function useViewport(
         moveHistory.current = [];
         velocity.current = { x: 0, y: 0 };
         setPanning(false);
-
-        // se tap su bottone o tavolo durante momentum, ferma e lascia gestire al bottone/tavolo
         if (isOnButton || isOnTable) return;
-        // altrimenti (sfondo) continua per iniziare nuovo drag immediatamente — drag consecutivi
       }
 
       if (isOnButton) return;
-      // se clic su tavolo senza momentum, non iniziare pan — lascia gestire a TableNode
       if (isOnTable) return;
 
       cancelAnimations();
@@ -613,16 +551,15 @@ export function useViewport(
       const now = performance.now();
       if (pointers.current.size === 1) {
         moveHistory.current.push({ x: e.clientX, y: e.clientY, t: now });
-        // tieni solo ultimi 100ms per velocity precisa
         const cutoff = now - 100;
-        while (moveHistory.current.length > 2 && moveHistory.current[0].t < cutoff) {
+        while (moveHistory.current.length > 3 && moveHistory.current[0].t < cutoff) {
           moveHistory.current.shift();
         }
         if (moveHistory.current.length >= 2) {
           const first = moveHistory.current[0];
           const last = moveHistory.current[moveHistory.current.length - 1];
           const dt = last.t - first.t;
-          if (dt > 2) {
+          if (dt > 4) {
             velocity.current = {
               x: (last.x - first.x) / dt,
               y: (last.y - first.y) / dt,
@@ -651,7 +588,7 @@ export function useViewport(
       if (!p) return;
       const dx = e.clientX - p.x;
       const dy = e.clientY - p.y;
-      if (Math.abs(dx) < 0.3 && Math.abs(dy) < 0.3) return;
+      if (Math.abs(dx) < 0.5 && Math.abs(dy) < 0.5) return;
       scheduleDom(
         clampVp({
           zoom: vpRef.current.zoom,
@@ -673,18 +610,15 @@ export function useViewport(
         pinch.current = null;
       }
       if (pointers.current.size === 0) {
-        // MOMENTUM: se drag veloce, continua a scivolare
         if (panning.current) {
           const dx = e.clientX - panning.current.x;
           const dy = e.clientY - panning.current.y;
           const dist = Math.hypot(dx, dy);
-          // soglia bassa: anche flick corto deve slittare
-          if (dist >= 3) {
+          if (dist >= 4) {
             const vx = velocity.current.x;
             const vy = velocity.current.y;
             const speed = Math.hypot(vx, vy);
-            // 0.1 px/ms = 100 px/s — molto sensibile, effetto ghiaccio
-            if (speed > 0.1) {
+            if (speed > 0.12) {
               startMomentum(vx, vy);
               panning.current = null;
               rectCache.current = null;
@@ -692,8 +626,6 @@ export function useViewport(
             }
           }
         }
-
-        // commit finale se non parte momentum
         if (pendingVp.current) {
           const final = clampVp(pendingVp.current);
           if (rafId.current) {
@@ -744,7 +676,7 @@ export function useViewport(
       const sx = w / 2 || el.clientWidth / 2,
         sy = h / 2 || el.clientHeight / 2;
       const target = { zoom, panX: sx - (sx - v.panX) * k, panY: sy - (sy - v.panY) * k };
-      animateTo(target, 320, easeOutExpo);
+      animateTo(target, 300);
     },
     [minZoomForCached, animateTo, cancelAnimations],
   );
@@ -757,7 +689,7 @@ export function useViewport(
       const zoom = clamp(v.zoom * factor, min, MAX_ZOOM);
       const k = zoom / v.zoom;
       const target = { zoom, panX: sx - (sx - v.panX) * k, panY: sy - (sy - v.panY) * k };
-      animateTo(target, 320, easeOutExpo);
+      animateTo(target, 300);
     },
     [minZoomForCached, animateTo, cancelAnimations],
   );
@@ -772,7 +704,7 @@ export function useViewport(
       const vh2 = (vhRaw || el.clientHeight) - bottomInset;
       const v = vpRef.current;
       const target = { ...v, panX: vw2 / 2 - wx * v.zoom, panY: vh2 / 2 - wy * v.zoom };
-      animateTo(target, 340, easeOutExpo);
+      animateTo(target, 320);
     },
     [animateTo, cancelAnimations],
   );
@@ -789,7 +721,7 @@ export function useViewport(
         viewportH: h || el.clientHeight,
         bottomInset,
       });
-      if (next.changed) animateTo(next.view, 360, easeOutExpo);
+      if (next.changed) animateTo(next.view, 340);
     },
     [animateTo],
   );
@@ -799,7 +731,6 @@ export function useViewport(
       if (rafId.current) cancelAnimationFrame(rafId.current);
       if (animateRaf.current) cancelAnimationFrame(animateRaf.current);
       if (momentumRaf.current) cancelAnimationFrame(momentumRaf.current);
-      if (wheelTimeout.current) clearTimeout(wheelTimeout.current);
     };
   }, []);
 
