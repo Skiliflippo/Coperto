@@ -1,10 +1,12 @@
 "use client";
-// PIANTINA IN SERVIZIO — sola lettura, 60 FPS + spring + momentum
-// - Pan/zoom via transform GPU diretta, spring animato, momentum ghiaccio
-// - Double-tap to zoom, grid via transform modulo
-// - Vista completa sempre, niente LOD
+// PIANTINA IN SERVIZIO — sola lettura: pan, zoom, tap sul tavolo per agire.
+// Ottimizzata per 60 FPS su iPad/tablet:
+// - Pan/zoom via transform GPU diretta (nessun re-render React per frame)
+// - PointerEvents unificati con capture + rAF batching
+// - touch-action: none + overscroll-behavior: none per evitare conflitti con scroll nativo
+// - will-change + translate3d per accelerazione hardware su Safari iOS e Chrome Android
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Maximize2, Pencil } from "lucide-react";
+import { Maximize2, Pencil, ZoomIn, ZoomOut } from "lucide-react";
 import { useSession } from "@/store/session";
 import { useViewport } from "@/lib/use-viewport";
 import { computeRoomSeats, elementBox, normalizeLayout, polygonBounds, polygonOf } from "@/lib/floor";
@@ -31,7 +33,7 @@ export function FloorView({ boot, statuses, onPick, viewToggle }: {
   const layout = normalizeLayout(room?.layout);
   const tables = boot.tables.filter((t) => t.roomId === room?.id);
   const roomCounts = tallyTables(tables, statuses);
-  const { ref, contentRef, gridRef, vp, fit, isPanning, isAnimating, bind, cancelPan, freeze } = useViewport(layout.w, layout.h, {
+  const { ref, contentRef, gridRef, vp, fit, isPanning, bind, cancelPan, freeze } = useViewport(layout.w, layout.h, {
     padding: 34, bounds: polygonBounds(polygonOf(layout)),
   });
 
@@ -44,8 +46,6 @@ export function FloorView({ boot, statuses, onPick, viewToggle }: {
 
   const tapRef = useRef<{ x: number; y: number; key: string; time: number } | null>(null);
   const startTap = (e: React.PointerEvent, key: string) => {
-    // se c'è momentum, fermalo subito alla posizione corrente — effetto Google Earth
-    // così tap su tavolo durante scorrimento non fa tornare indietro la mappa
     freeze();
     e.stopPropagation();
     tapRef.current = { x: e.clientX, y: e.clientY, key, time: Date.now() };
@@ -58,7 +58,6 @@ export function FloorView({ boot, statuses, onPick, viewToggle }: {
     if (Date.now() - s.time > 350) return;
     e.stopPropagation();
     e.preventDefault();
-    // cancelPan è smart: se c'era momentum freeza, altrimenti reverta jitter
     cancelPan();
     onPick(table);
   };
@@ -79,7 +78,7 @@ export function FloorView({ boot, statuses, onPick, viewToggle }: {
   }
   const joinedTableIds = new Set([...joinedGroups.values()].flatMap((g) => g.tables.map((t) => t.id)));
 
-  useEffect(() => { fit(false); }, [roomId, fit]);
+  useEffect(() => { fit(); }, [roomId, fit]);
   if (!room) return null;
 
   return (
@@ -102,13 +101,8 @@ export function FloorView({ boot, statuses, onPick, viewToggle }: {
         onPointerMove={bind.onPointerMove}
         onPointerUp={bind.onPointerUp}
         onPointerCancel={bind.onPointerCancel}
-        data-panning={isPanning ? "1" : "0"}
-        data-animating={isAnimating ? "1" : "0"}
-        className={`floor-viewport relative -mx-3 mt-2 min-h-[240px] flex-1 overflow-hidden rounded-2xl border border-line bg-bg ${isPanning ? "is-panning cursor-grabbing" : "cursor-grab"}`}
-        style={{
-          ...(bind.style as any),
-          WebkitOverflowScrolling: "auto" as any,
-        }}
+        className={`floor-viewport relative -mx-3 mt-2 min-h-[240px] flex-1 overflow-hidden rounded-2xl border border-line bg-bg ${isPanning ? "cursor-grabbing" : "cursor-grab"}`}
+        style={bind.style as any}
       >
         <GridBackdrop ref={gridRef} vp={vp} />
 
@@ -117,7 +111,7 @@ export function FloorView({ boot, statuses, onPick, viewToggle }: {
           className="floor-content absolute left-0 top-0 origin-top-left"
           style={{
             transform: `translate3d(${vp.panX}px, ${vp.panY}px, 0) scale(${vp.zoom})`,
-            willChange: isPanning || isAnimating ? "transform" : "auto",
+            willChange: isPanning ? "transform" : "auto",
           }}
         >
           <RoomShell w={layout.w} h={layout.h} polygon={layout.polygon} />

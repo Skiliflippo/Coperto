@@ -1,10 +1,9 @@
 "use client";
-import { useEffect, useState, useRef } from "react";
+import { useEffect, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "./api";
 import { useSession } from "@/store/session";
 import { useTenant, withSlug } from "@/lib/tenant";
-import { useInteraction } from "@/store/interaction";
 import type { Bootstrap, DayData } from "./types";
 import { toast } from "@/components/toast";
 
@@ -34,14 +33,7 @@ export function useDay(date: string) {
     queryKey: ["day", rid, date],
     queryFn: () => api<DayData>(`/api/day?rid=${rid}&date=${date}`),
     enabled: !!rid,
-    // Local-First: durante interazione touch non refetchare per non interrompere gesto
-    refetchInterval: () => {
-      try {
-        if (useInteraction.getState().isInteracting) return false as any;
-      } catch {}
-      return 30_000;
-    },
-    refetchIntervalInBackground: false,
+    refetchInterval: 30_000,
   });
 }
 
@@ -54,45 +46,17 @@ export function useNow(stepMs = 15_000): number {
   return now;
 }
 
-// Realtime SSE Local-First:
-// - Aggiorna cache in background
-// - Se utente sta trascinando (isInteracting), non invalidare subito: accoda e ritenta
+// Realtime SSE - Local-First: non interrompe gesto in corso
 export function useRealtime(): "online" | "offline" | "connecting" {
   const rid = useSession((s) => s.staff?.restaurantId);
   const myName = useSession((s) => s.staff?.name);
   const qc = useQueryClient();
   const [status, setStatus] = useState<"online" | "offline" | "connecting">("connecting");
-  const pendingInvalidation = useRef(false);
 
   useEffect(() => {
     if (!rid) return;
     let es: EventSource | null = null;
     let closed = false;
-    let retryTimer: number | null = null;
-
-    const doInvalidate = () => {
-      try {
-        if (useInteraction.getState().isInteracting) {
-          pendingInvalidation.current = true;
-          if (retryTimer) window.clearTimeout(retryTimer);
-          retryTimer = window.setTimeout(() => {
-            if (!useInteraction.getState().isInteracting) {
-              pendingInvalidation.current = false;
-              qc.invalidateQueries({ queryKey: ["day", rid] });
-              qc.invalidateQueries({ queryKey: ["bootstrap"] });
-              qc.invalidateQueries({ queryKey: ["summary", rid] });
-            } else {
-              doInvalidate();
-            }
-          }, 500) as unknown as number;
-          return;
-        }
-      } catch {}
-      qc.invalidateQueries({ queryKey: ["day", rid] });
-      qc.invalidateQueries({ queryKey: ["bootstrap"] });
-      qc.invalidateQueries({ queryKey: ["summary", rid] });
-    };
-
     const connect = () => {
       if (closed) return;
       setStatus("connecting");
@@ -107,7 +71,19 @@ export function useRealtime(): "online" | "offline" | "connecting" {
         try {
           const d = JSON.parse(e.data);
           if (d.kind === "ping" || d.kind === "hello") return;
-          doInvalidate();
+          // Se utente sta pannando, accoda invalidazione dopo 600ms
+          const isPanning = typeof document !== "undefined" && !!document.querySelector('[data-panning="1"]');
+          if (isPanning) {
+            setTimeout(() => {
+              qc.invalidateQueries({ queryKey: ["day", rid] });
+              qc.invalidateQueries({ queryKey: ["bootstrap"] });
+              qc.invalidateQueries({ queryKey: ["summary", rid] });
+            }, 600);
+          } else {
+            qc.invalidateQueries({ queryKey: ["day", rid] });
+            qc.invalidateQueries({ queryKey: ["bootstrap"] });
+            qc.invalidateQueries({ queryKey: ["summary", rid] });
+          }
           if (d.msg && d.actor && d.actor !== myName) {
             toast({ title: d.msg, tone: d.kind === "seating" ? "ok" : "info" });
           }
@@ -115,28 +91,12 @@ export function useRealtime(): "online" | "offline" | "connecting" {
       };
     };
     connect();
-
-    // Quando finisce interazione, flush pending invalidations
-    let unsub: (() => void) | null = null;
-    try {
-      unsub = useInteraction.subscribe((s) => {
-        if (!s.isInteracting && pendingInvalidation.current) {
-          pendingInvalidation.current = false;
-          qc.invalidateQueries({ queryKey: ["day", rid] });
-          qc.invalidateQueries({ queryKey: ["bootstrap"] });
-          qc.invalidateQueries({ queryKey: ["summary", rid] });
-        }
-      });
-    } catch {}
-
     const onOff = () => setStatus(navigator.onLine ? "connecting" : "offline");
     window.addEventListener("offline", onOff);
     window.addEventListener("online", onOff);
     return () => {
       closed = true;
       es?.close();
-      if (retryTimer) window.clearTimeout(retryTimer);
-      if (unsub) unsub();
       window.removeEventListener("offline", onOff);
       window.removeEventListener("online", onOff);
     };

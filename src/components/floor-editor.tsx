@@ -12,12 +12,11 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import {
   Check, CircleDot, MousePointer2, RectangleHorizontal, Redo2, RotateCw,
-  Square, Trash2, Undo2, Wallpaper, X, Blocks, Spline, Maximize2,
+  Square, Trash2, Undo2, Wallpaper, X, ZoomIn, ZoomOut, Blocks, Spline, Maximize2,
   Scissors, Link2, Unlink,
 } from "lucide-react";
 import { api } from "@/lib/api";
 import { useSession } from "@/store/session";
-import { useInteraction } from "@/store/interaction";
 import { toast } from "@/components/toast";
 import { useViewport } from "@/lib/use-viewport";
 import {
@@ -102,7 +101,7 @@ export function FloorEditor({ boot, roomId, onClose }: { boot: Bootstrap; roomId
   }, []);
 
   const bounds = useMemo(() => polygonBounds(polygonOf(draft.layout)), [draft.layout]);
-  const { ref, contentRef, gridRef, vp, fit, toWorld, isPanning, isAnimating, bind, revealRect, cancelPan, holdFit } =
+  const { ref, contentRef, gridRef, vp, fit, zoomBy, toWorld, isPanning, bind, revealRect, cancelPan, holdFit } =
     useViewport(draft.layout.w, draft.layout.h, {
       padding: 90, bounds,
     });
@@ -208,7 +207,6 @@ export function FloorEditor({ boot, roomId, onClose }: { boot: Bootstrap; roomId
     if (tool !== "select") return;
     e.stopPropagation();
     cancelPan();
-    useInteraction.getState().setInteracting(true);
     // Pointer capture per ricevere move anche fuori dal nodo (essenziale su touch)
     try { (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId); } catch {}
 
@@ -317,7 +315,6 @@ export function FloorEditor({ boot, roomId, onClose }: { boot: Bootstrap; roomId
       pendingBad.current = null;
       setBadIds([]);
       setLiveWalls({});
-      useInteraction.getState().setInteracting(false);
       if (!moved || (delta.x === 0 && delta.y === 0)) return;
       moveSelection(group, delta.x, delta.y);
     };
@@ -329,7 +326,6 @@ export function FloorEditor({ boot, roomId, onClose }: { boot: Bootstrap; roomId
   const resizeEl = (e: React.PointerEvent, el: FloorElement, hx: -1 | 0 | 1, hy: -1 | 0 | 1) => {
     e.stopPropagation();
     cancelPan();
-    useInteraction.getState().setInteracting(true);
     try { (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId); } catch {}
     const node = nodeRefs.current.get(el.id);
     if (!node) return;
@@ -338,14 +334,6 @@ export function FloorEditor({ boot, roomId, onClose }: { boot: Bootstrap; roomId
     const cos = Math.cos(rad), sin = Math.sin(rad);
     const center0 = { x: el.x + el.w / 2, y: el.y + el.h / 2 };
     let box = { x: el.x, y: el.y, w: el.w, h: el.h };
-
-    // Limiti generosi ma sicuri: decor non può superare la sala, muro non può diventare gigante
-    const roomMaxW = draft.layout.w;
-    const roomMaxH = draft.layout.h;
-    const MAX_DECOR_W = Math.min(roomMaxW, MAX_ROOM_CM);
-    const MAX_DECOR_H = Math.min(roomMaxH, MAX_ROOM_CM);
-    const MAX_WALL_LEN = Math.max(roomMaxW, roomMaxH); // lunghezza max muro = lato lungo sala
-    const MAX_WALL_THICK = 300; // spessore max 3m — generoso ma non crasha
 
     const move = (ev: PointerEvent) => {
       const p = toWorld(ev.clientX, ev.clientY);
@@ -361,27 +349,8 @@ export function FloorEditor({ boot, roomId, onClose }: { boot: Bootstrap; roomId
       const verticalWall = el.kind === "wall" && el.h > el.w;
       const snapWidth = verticalWall ? (v: number) => snapTo(v, 2) : snapG;
       const snapHeight = horizontalWall ? (v: number) => snapTo(v, 2) : snapG;
-
-      let w: number, h: number;
-      if (el.kind === "wall") {
-        if (horizontalWall) {
-          // w = lunghezza, h = spessore
-          w = hx === 0 ? el.w : clamp(snapWidth(el.w + hx * dxLocal), min, MAX_WALL_LEN);
-          h = hy === 0 ? el.h : clamp(snapHeight(el.h + hy * dyLocal), min, MAX_WALL_THICK);
-        } else if (verticalWall) {
-          // w = spessore, h = lunghezza
-          w = hx === 0 ? el.w : clamp(snapWidth(el.w + hx * dxLocal), min, MAX_WALL_THICK);
-          h = hy === 0 ? el.h : clamp(snapHeight(el.h + hy * dyLocal), min, MAX_WALL_LEN);
-        } else {
-          // muro ruotato / quadrato: limita entrambe generosamente
-          w = hx === 0 ? el.w : clamp(snapWidth(el.w + hx * dxLocal), min, MAX_WALL_LEN);
-          h = hy === 0 ? el.h : clamp(snapHeight(el.h + hy * dyLocal), min, MAX_WALL_THICK);
-        }
-      } else {
-        // decor: non può superare la sala — fix crash pagina con arredi enormi
-        w = hx === 0 ? el.w : clamp(snapWidth(el.w + hx * dxLocal), min, MAX_DECOR_W);
-        h = hy === 0 ? el.h : clamp(snapHeight(el.h + hy * dyLocal), min, MAX_DECOR_H);
-      }
+      const w = hx === 0 ? el.w : Math.max(min, snapWidth(el.w + hx * dxLocal));
+      const h = hy === 0 ? el.h : Math.max(min, snapHeight(el.h + hy * dyLocal));
 
       const shiftLocalX = (hx * (w - el.w)) / 2;
       const shiftLocalY = (hy * (h - el.h)) / 2;
@@ -407,7 +376,6 @@ export function FloorEditor({ boot, roomId, onClose }: { boot: Bootstrap; roomId
       if (badRaf.current) { cancelAnimationFrame(badRaf.current); badRaf.current = 0; }
       pendingBad.current = null;
       setBadIds([]);
-      useInteraction.getState().setInteracting(false);
       commit((d) => ({ ...d, layout: { ...d.layout, elements: d.layout.elements.map((x) => (x.id === el.id ? { ...x, ...box } : x)) } }));
     };
     window.addEventListener("pointermove", move, { passive: false });
@@ -418,7 +386,6 @@ export function FloorEditor({ boot, roomId, onClose }: { boot: Bootstrap; roomId
   const dragWallEndpoint = (e: React.PointerEvent, el: FloorElement, endpoint: "a" | "b") => {
     e.stopPropagation();
     cancelPan();
-    useInteraction.getState().setInteracting(true);
     try { (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId); } catch {}
     const node = nodeRefs.current.get(el.id);
     if (!node) return;
@@ -462,7 +429,6 @@ export function FloorEditor({ boot, roomId, onClose }: { boot: Bootstrap; roomId
       pendingBad.current = null;
       setBadIds([]);
       setLiveWalls({});
-      useInteraction.getState().setInteracting(false);
       patchEl(el.id, next);
     };
     window.addEventListener("pointermove", move, { passive: false });
@@ -473,7 +439,6 @@ export function FloorEditor({ boot, roomId, onClose }: { boot: Bootstrap; roomId
   const dragCorner = (e: React.PointerEvent, index: number) => {
     e.stopPropagation();
     cancelPan();
-    useInteraction.getState().setInteracting(true);
     try { (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId); } catch {}
     const before = draft;
     holdFit(true);
@@ -525,7 +490,6 @@ export function FloorEditor({ boot, roomId, onClose }: { boot: Bootstrap; roomId
       if (pending) applyPoint(pending);
       holdFit(false);
       fit();
-      useInteraction.getState().setInteracting(false);
       setPast((prev) => [...prev.slice(-40), before]);
       setFuture([]);
     };
@@ -648,14 +612,8 @@ export function FloorEditor({ boot, roomId, onClose }: { boot: Bootstrap; roomId
     let box: FloorElement | null = null;
     const move = (ev: PointerEvent) => {
       const p = toWorld(ev.clientX, ev.clientY);
-      const rawX = Math.min(s0.x, p.x), rawY = Math.min(s0.y, p.y);
-      const rawW = Math.abs(p.x - s0.x), rawH = Math.abs(p.y - s0.y);
-      // clamp anche durante creazione: max = dimensione sala, evita crash con drag enorme
-      const maxW = draft.layout.w;
-      const maxH = draft.layout.h;
-      const x = snapG(rawX), y = snapG(rawY);
-      const w = clamp(snapG(rawW), 18, maxW);
-      const h = clamp(snapG(rawH), 18, maxH);
+      const x = snapG(Math.min(s0.x, p.x)), y = snapG(Math.min(s0.y, p.y));
+      const w = snapG(Math.abs(p.x - s0.x)), h = snapG(Math.abs(p.y - s0.y));
       box = {
         id: "rubber", kind: "decor", x, y,
         w: Math.max(w, 18), h: Math.max(h, 18), rotation: 0, label: "",
@@ -833,12 +791,10 @@ export function FloorEditor({ boot, roomId, onClose }: { boot: Bootstrap; roomId
         onPointerUp={bind.onPointerUp}
         onPointerCancel={bind.onPointerCancel}
         onPointerDown={onCanvasDown}
-        className={`floor-viewport relative flex-1 overflow-hidden bg-bg ${tool === "select" ? (isPanning ? "is-panning cursor-grabbing" : "cursor-grab") : "cursor-crosshair"} ${isPanning || isAnimating ? "is-panning" : ""}`}
-        data-panning={isPanning ? "1" : "0"}
-        data-animating={isAnimating ? "1" : "0"}
+        className={`floor-viewport relative flex-1 overflow-hidden bg-bg ${tool === "select" ? (isPanning ? "cursor-grabbing" : "cursor-grab") : "cursor-crosshair"}`}
         style={{
           ...(bind.style as any),
-          willChange: isPanning || isAnimating ? "transform" : undefined,
+          willChange: isPanning ? "transform" : undefined,
         }}
       >
         <GridBackdrop ref={gridRef} vp={vp} strong />
@@ -846,7 +802,11 @@ export function FloorEditor({ boot, roomId, onClose }: { boot: Bootstrap; roomId
           className="floor-content absolute left-0 top-0 origin-top-left"
           style={{
             transform: `translate3d(${vp.panX}px, ${vp.panY}px, 0) scale(${vp.zoom})`,
-            willChange: isPanning || isAnimating ? "transform" : "auto",
+            willChange: "transform",
+            backfaceVisibility: "hidden",
+            WebkitBackfaceVisibility: "hidden" as any,
+            transformStyle: "preserve-3d",
+            contain: "layout style paint",
           }}>
           <RoomShell w={draft.layout.w} h={draft.layout.h} polygon={draft.layout.polygon} />
           {marquee && (
@@ -934,7 +894,9 @@ export function FloorEditor({ boot, roomId, onClose }: { boot: Bootstrap; roomId
         </div>
 
         <div className="absolute bottom-4 right-3 flex flex-col gap-1.5" style={{ bottom: selIds.length ? PANEL_H + 16 : 16 }}>
-          <button onClick={() => fit()} className="grid h-11 w-11 place-items-center rounded-2xl bg-surface shadow-lg ring-1 ring-line active:scale-95" aria-label="Ripristina vista"><Maximize2 className="h-5 w-5" /></button>
+          <button onClick={() => zoomBy(1.25)} className="grid h-11 w-11 place-items-center rounded-2xl bg-surface shadow-lg ring-1 ring-line active:scale-95" aria-label="Ingrandisci"><ZoomIn className="h-5 w-5" /></button>
+          <button onClick={() => zoomBy(0.8)} className="grid h-11 w-11 place-items-center rounded-2xl bg-surface shadow-lg ring-1 ring-line active:scale-95" aria-label="Riduci"><ZoomOut className="h-5 w-5" /></button>
+          <button onClick={() => fit()} className="grid h-11 w-11 place-items-center rounded-2xl bg-surface shadow-lg ring-1 ring-line active:scale-95" aria-label="Adatta"><Maximize2 className="h-5 w-5" /></button>
         </div>
 
         {tool !== "select" && (
