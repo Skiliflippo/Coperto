@@ -4,7 +4,7 @@ import { useState } from "react";
 import Link from "next/link";
 import { useQuery } from "@tanstack/react-query";
 import {
-  Armchair, ChevronRight, Download, Hourglass, Moon, Sun, LogOut, Settings, Store, TrendingDown, TrendingUp,
+  Armchair, ChevronRight, Download, Hourglass, Moon, Sun, LogOut, Settings, TrendingDown, TrendingUp,
   UserX, Users, Footprints, Activity, Timer,
 } from "lucide-react";
 import { api } from "@/lib/api";
@@ -135,13 +135,6 @@ export default function AltroPage() {
         <button onClick={() => { setStaff(null); router.replace(tp("/login")); }}
           className="flex min-h-[60px] w-full items-center gap-3 rounded-2xl border border-line bg-surface px-4 font-semibold text-over active:scale-[0.98]">
           <LogOut className="h-5 w-5" /> Cambia utente <span className="ml-auto text-sm font-medium text-muted">{staff?.name} · {staff?.role === "titolare" ? "Titolare" : "Staff"}</span>
-        </button>
-
-        {/* Torna al portale e dimentica questo locale su questo dispositivo. */}
-        <button onClick={() => { useSession.getState().forgetLocale(); router.replace("/"); }}
-          className="flex min-h-[60px] w-full items-center gap-3 rounded-2xl border border-line bg-surface px-4 font-semibold active:scale-[0.98]">
-          <Store className="h-5 w-5" /> Cambia locale
-          <span className="ml-auto text-sm font-medium text-muted">torna al portale</span>
         </button>
       </div>
     </div>

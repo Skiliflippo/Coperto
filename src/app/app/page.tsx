@@ -13,6 +13,16 @@ export default function AppEntryPage() {
   const staff = session.staff;
   const hydrated = session.hydrated;
 
+  // Fallback iPhone: se hydration non completa, forza dopo 800ms
+  useEffect(() => {
+    if (hydrated) return;
+    const id = setTimeout(() => {
+      const s = useSession.getState();
+      if (!s.hydrated) s.setHydrated(true);
+    }, 800);
+    return () => clearTimeout(id);
+  }, [hydrated]);
+
   useEffect(() => {
     if (!hydrated) return;
     router.replace(slug ? `/r/${slug}${staff ? "/sala" : "/login"}` : "/");

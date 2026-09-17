@@ -1,6 +1,6 @@
 "use client";
 import { create } from "zustand";
-import { persist } from "zustand/middleware";
+import { persist, createJSONStorage } from "zustand/middleware";
 import { setApiIdentity } from "@/lib/api";
 import type { StaffSession } from "@/lib/types";
 
@@ -23,6 +23,70 @@ type SessionState = {
   setHydrated: (value: boolean) => void;
 };
 
+// Storage sicuro per iOS Safari: in private mode o PWA, localStorage può lanciare SecurityError
+// e bloccare la hydration di zustand → l'app resta chiodata su "sta aprendo la sala"
+// Su iPhone proviamo in ordine: localStorage → sessionStorage → cookie → memoria
+let memoryFallback: Record<string, string> = {};
+
+const safeStorage = {
+  getItem: (name: string) => {
+    try {
+      if (typeof window !== "undefined" && window.localStorage) {
+        const v = window.localStorage.getItem(name);
+        if (v !== null) return v;
+      }
+    } catch {}
+    try {
+      if (typeof window !== "undefined" && window.sessionStorage) {
+        const v = window.sessionStorage.getItem(name);
+        if (v !== null) return v;
+      }
+    } catch {}
+    try {
+      if (typeof document !== "undefined") {
+        const m = document.cookie.match(new RegExp("(?:^|; )" + name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + "=([^;]*)"));
+        if (m) return decodeURIComponent(m[1]);
+      }
+    } catch {}
+    return memoryFallback[name] ?? null;
+  },
+  setItem: (name: string, value: string) => {
+    let ok = false;
+    try {
+      if (typeof window !== "undefined" && window.localStorage) {
+        window.localStorage.setItem(name, value);
+        ok = true;
+      }
+    } catch {}
+    try {
+      if (typeof window !== "undefined" && window.sessionStorage) {
+        window.sessionStorage.setItem(name, value);
+        ok = true;
+      }
+    } catch {}
+    try {
+      if (typeof document !== "undefined") {
+        document.cookie = `${name}=${encodeURIComponent(value)}; path=/; max-age=31536000; SameSite=Lax`;
+        ok = true;
+      }
+    } catch {}
+    // Sempre salva in memoria come ultima spiaggia — così anche se storage bloccato, la sessione resta in RAM
+    memoryFallback[name] = value;
+  },
+  removeItem: (name: string) => {
+    try {
+      if (typeof window !== "undefined" && window.localStorage) window.localStorage.removeItem(name);
+    } catch {}
+    try {
+      if (typeof window !== "undefined" && window.sessionStorage) window.sessionStorage.removeItem(name);
+    } catch {}
+    try {
+      if (typeof document !== "undefined") document.cookie = `${name}=; path=/; max-age=0`;
+    } catch {}
+    delete memoryFallback[name];
+  },
+};
+
 export const useSession = create<SessionState>()(
   persist(
     (set, get) => ({
@@ -38,11 +102,20 @@ export const useSession = create<SessionState>()(
         set({ staff });
       },
       // Cambiando ristorante la sessione precedente non vale più: si esce.
+      // Fix iPhone: non cancellare staff qui — lo fa bootstrap mismatch se davvero serve.
+      // Su iPhone la hydration lenta + setSlug da TenantProvider causava logout a loop.
       setSlug: (slug) => {
         const prev = get().slug;
         if (prev && slug && prev !== slug) {
-          setApiIdentity(null);
-          set({ slug, staff: null, roomId: null, roomOrder: [] });
+          // Se c'è già uno staff loggato, non cancellarlo qui: verifica vera in useBootstrap
+          // Altrimenti su iPhone si torna al login in loop
+          const hasStaff = !!get().staff;
+          if (!hasStaff) {
+            set({ slug, roomId: null, roomOrder: [] });
+          } else {
+            // Mantieni staff, aggiorna solo slug — bootstrap deciderà se è valido
+            set({ slug });
+          }
           return;
         }
         set({ slug });
@@ -59,13 +132,46 @@ export const useSession = create<SessionState>()(
     }),
     {
       name: "coperto.session.v4",
+      storage: createJSONStorage(() => safeStorage as any),
       // Il flag è runtime-only: non deve rientrare da localStorage già impostato a true.
       partialize: ({ staff, slug, rememberedSlug, theme, roomId, roomOrder }) =>
         ({ staff, slug, rememberedSlug, theme, roomId, roomOrder }) as SessionState,
-      onRehydrateStorage: () => (state) => {
-        // Al ripristino si riallinea l'identità usata dalle chiamate al server.
-        setApiIdentity(state?.staff?.id ?? null);
+      // Fix iPhone: se l'utente fa login prima che la rehydration finisca (iOS lento),
+      // la merge di default sovrascriverebbe staff con null dal vecchio storage → torna al login.
+      merge: (persisted, current) => {
+        const p = persisted as Partial<SessionState> | undefined;
+        if (!p) return current as SessionState;
+        return {
+          ...current,
+          ...p,
+          staff: (current as SessionState).staff ?? p.staff ?? null,
+          slug: (current as SessionState).slug ?? p.slug ?? null,
+          rememberedSlug: p.rememberedSlug ?? (current as SessionState).rememberedSlug ?? null,
+          theme: p.theme ?? (current as SessionState).theme,
+          roomId: p.roomId ?? (current as SessionState).roomId ?? null,
+          roomOrder: p.roomOrder ?? (current as SessionState).roomOrder ?? [],
+          hydrated: (current as SessionState).hydrated,
+        } as SessionState;
+      },
+      onRehydrateStorage: () => (state, error) => {
+        try {
+          const currentStaff = useSession.getState().staff ?? state?.staff ?? null;
+          setApiIdentity(currentStaff?.id ?? null);
+          if (currentStaff && state && !state.staff) {
+            // preserva login avvenuto durante rehydration lenta
+            state.staff = currentStaff;
+          }
+        } catch {}
+        if (error) {
+          try {
+            safeStorage.removeItem("coperto.session.v4");
+          } catch {}
+        }
         state?.setHydrated(true);
+        try {
+          const s = useSession.getState();
+          if (!s.hydrated) s.setHydrated(true);
+        } catch {}
       },
     },
   ),

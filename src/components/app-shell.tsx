@@ -37,19 +37,51 @@ function Shell({ children }: { children: ReactNode }) {
     }
     root.classList.add(`theme-${palette}`);
   }, [theme, palette]);
+  // Fallback iPhone: se la hydration di zustand non completa (localStorage SecurityError in private/PWA),
+  // forza hydrated=true dopo 800ms per sbloccare l'app — fix "rimane chiodato su sta aprendo la sala"
+  useEffect(() => {
+    if (hydrated) return;
+    const id = setTimeout(() => {
+      const s = useSession.getState();
+      if (!s.hydrated) s.setHydrated(true);
+    }, 800);
+    return () => clearTimeout(id);
+  }, [hydrated]);
+
   useEffect(() => {
     if (hydrated && !staff) router.replace(tp("/login"));
   }, [hydrated, staff, router, tp]);
 
   // Database svuotato o non ancora configurato: la sessione salvata nel browser
   // non vale più. Si riparte dal primo avvio invece di restare a caricare.
+  // Fix iPhone: non cancellare lo staff su errori di rete (offline) — solo su DATABASE_EMPTY / RESTAURANT_NOT_FOUND
   useEffect(() => {
     if (!boot.isError) return;
-    useSession.getState().setStaff(null);
-    router.replace(tp("/setup"));
-  }, [boot.isError, router, tp]);
+    const err = boot.error as any;
+    const status = err?.status;
+    const code = err?.payload?.code;
+    // Solo 503 (DB vuoto) o 404 (slug non trovato) meritano redirect a setup
+    // Errori di rete (status 0) o 500 non devono sloggare l'utente iPhone appena loggato
+    if (status === 503 || status === 404 || code === "DATABASE_EMPTY" || code === "RESTAURANT_NOT_FOUND") {
+      useSession.getState().setStaff(null);
+      router.replace(tp("/setup"));
+    }
+  }, [boot.isError, boot.error, router, tp]);
 
-  if (!hydrated || !staff) {
+  // Fix iPhone: mostra loading solo se davvero non sappiamo nulla.
+  // Se staff esiste già in memoria (appena fatto login), mostra la sala anche se hydrated è ancora false
+  // Altrimenti su iPhone con localStorage bloccato si resta chiodati su "sta aprendo la sala"
+  if (!hydrated && !staff) {
+    return (
+      <div className="grid min-h-dvh place-items-center">
+        <div className="flex flex-col items-center gap-3">
+          <div className="grid h-16 w-16 animate-pop place-items-center rounded-[22px] bg-brand font-display text-3xl font-bold text-on-brand">C</div>
+          <p className="text-sm font-semibold text-muted">Coperto sta aprendo la sala…</p>
+        </div>
+      </div>
+    );
+  }
+  if (!staff) {
     return (
       <div className="grid min-h-dvh place-items-center">
         <div className="flex flex-col items-center gap-3">
