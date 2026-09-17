@@ -2,7 +2,7 @@
 import "server-only";
 import { db } from "@/db";
 import * as s from "@/db/schema";
-import { and, asc, eq, or } from "drizzle-orm";
+import { and, asc, eq } from "drizzle-orm";
 import type { Bootstrap, DayData, Settings } from "@/lib/types";
 import { normalizeLayout, tableGeometry, type RoomLayout, type TableShape } from "@/lib/floor";
 
@@ -42,12 +42,39 @@ export async function assertStaffInRestaurant(
 /** Risolve un ristorante dal suo indirizzo pubblico (/r/<slug>). */
 export async function getRestaurantBySlug(slug: string) {
   if (!slug) return null;
-  // Case-insensitive: prova originale, upper, lower — fix 404 su iOS dove URL può essere lowercased
-  const [row] = await db
-    .select()
-    .from(s.restaurants)
-    .where(or(eq(s.restaurants.slug, slug), eq(s.restaurants.slug, slug.toUpperCase()), eq(s.restaurants.slug, slug.toLowerCase())))
-    .limit(1);
+  const trimmed = slug.trim();
+  if (!trimmed) return null;
+  // Prova in ordine: originale, upper, lower, e anche senza spazi — robusto per iOS e 404 visti nei log
+  let row: typeof s.restaurants.$inferSelect | undefined;
+  try {
+    [row] = await db.select().from(s.restaurants).where(eq(s.restaurants.slug, trimmed)).limit(1);
+  } catch {}
+  if (!row) {
+    try {
+      const up = trimmed.toUpperCase();
+      if (up !== trimmed) {
+        [row] = await db.select().from(s.restaurants).where(eq(s.restaurants.slug, up)).limit(1);
+      }
+    } catch {}
+  }
+  if (!row) {
+    try {
+      const low = trimmed.toLowerCase();
+      if (low !== trimmed) {
+        [row] = await db.select().from(s.restaurants).where(eq(s.restaurants.slug, low)).limit(1);
+      }
+    } catch {}
+  }
+  if (!row) {
+    try {
+      // Ultima spiaggia: cerca con ILIKE via SQL raw per case-insensitive
+      const { sql } = await import("drizzle-orm");
+      const result = await db.execute(sql`SELECT * FROM restaurants WHERE LOWER(slug) = LOWER(${trimmed}) LIMIT 1`);
+      // @ts-ignore - result rows
+      const r = (result as any).rows?.[0] ?? (result as any)[0];
+      if (r) return r as typeof s.restaurants.$inferSelect;
+    } catch {}
+  }
   return row ?? null;
 }
 
