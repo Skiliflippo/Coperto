@@ -2,7 +2,7 @@
 // Le API restano network-only: i dati di sala devono essere freschi anche con
 // wifi che balla. Le pagine cadono di nuovo in cache, così l'icona sulla home
 // non mostra un 404 quando la rete manca.
-const CACHE = "coperto-v2";
+const CACHE = "coperto-v3-iphone-fix";
 const SHELL = ["/icon.svg", "/manifest.webmanifest", "/", "/app"];
 
 self.addEventListener("install", (event) => {
