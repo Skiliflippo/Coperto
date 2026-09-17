@@ -117,7 +117,6 @@ export function FloorView({ boot, statuses, onPick, viewToggle }: {
             backfaceVisibility: "hidden",
             WebkitBackfaceVisibility: "hidden" as any,
             transformStyle: "preserve-3d",
-            contain: "layout style paint",
           }}
         >
           <RoomShell w={layout.w} h={layout.h} polygon={layout.polygon} />

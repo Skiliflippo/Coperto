@@ -175,17 +175,13 @@ input, textarea { font-size: 17px; }
   backface-visibility: hidden;
   -webkit-backface-visibility: hidden;
   transform-style: preserve-3d;
-  /* Contenimento layout per ridurre reflow su tablet */
-  contain: layout style paint;
 }
 
-/* Tavoli: layer GPU separato per evitare repaint durante pan */
 .floor-table {
   will-change: transform;
   transform: translateZ(0);
   backface-visibility: hidden;
   -webkit-backface-visibility: hidden;
-  contain: layout style paint;
 }
 ::selection { background: color-mix(in srgb, var(--brand) 30%, transparent); }
 

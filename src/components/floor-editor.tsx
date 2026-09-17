@@ -806,7 +806,6 @@ export function FloorEditor({ boot, roomId, onClose }: { boot: Bootstrap; roomId
             backfaceVisibility: "hidden",
             WebkitBackfaceVisibility: "hidden" as any,
             transformStyle: "preserve-3d",
-            contain: "layout style paint",
           }}>
           <RoomShell w={draft.layout.w} h={draft.layout.h} polygon={draft.layout.polygon} />
           {marquee && (
