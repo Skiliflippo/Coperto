@@ -101,7 +101,7 @@ export function FloorEditor({ boot, roomId, onClose }: { boot: Bootstrap; roomId
   }, []);
 
   const bounds = useMemo(() => polygonBounds(polygonOf(draft.layout)), [draft.layout]);
-  const { ref, contentRef, gridRef, vp, fit, zoomBy, toWorld, isPanning, bind, revealRect, cancelPan, holdFit } =
+  const { ref, contentRef, gridRef, vp, fit, zoomBy, toWorld, isPanning, bind, revealRect, cancelPan } =
     useViewport(draft.layout.w, draft.layout.h, {
       padding: 90, bounds,
     });
@@ -441,7 +441,6 @@ export function FloorEditor({ boot, roomId, onClose }: { boot: Bootstrap; roomId
     cancelPan();
     try { (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId); } catch {}
     const before = draft;
-    holdFit(true);
     const origin = toWorld(e.clientX, e.clientY);
     const startPoint = polygonOf(draft.layout)[index];
     const DAMP = 0.28;
@@ -488,7 +487,6 @@ export function FloorEditor({ boot, roomId, onClose }: { boot: Bootstrap; roomId
       window.removeEventListener("pointercancel", up);
       if (frame) { cancelAnimationFrame(frame); frame = 0; }
       if (pending) applyPoint(pending);
-      holdFit(false);
       fit();
       setPast((prev) => [...prev.slice(-40), before]);
       setFuture([]);
@@ -541,16 +539,30 @@ export function FloorEditor({ boot, roomId, onClose }: { boot: Bootstrap; roomId
     window.addEventListener("pointercancel", up);
   };
 
-  const onCanvasDown = (e: React.PointerEvent) => {
+  const onCanvasDown = (e: any) => {
+    const cx = e.clientX ?? e.touches?.[0]?.clientX ?? 0;
+    const cy = e.clientY ?? e.touches?.[0]?.clientY ?? 0;
     if (tool === "select") {
-      if (e.ctrlKey || e.metaKey) startMarquee(e);
-      else { setSelIds([]); bind.onPointerDown(e); }
+      if (e.ctrlKey || e.metaKey) {
+        if (e.pointerId != null) startMarquee(e);
+        else {
+          setSelIds([]);
+          bind.onPointerDown(e);
+        }
+      } else {
+        setSelIds([]);
+        bind.onPointerDown(e);
+      }
       return;
     }
-    if (tool === "perimetro") { setSelIds([]); bind.onPointerDown(e); return; }
+    if (tool === "perimetro") {
+      setSelIds([]);
+      bind.onPointerDown(e);
+      return;
+    }
 
     if (tool === "table") {
-      const p = toWorld(e.clientX, e.clientY);
+      const p = toWorld(cx, cy);
       const cap = newShape === "round" ? 2 : newShape === "square" ? 4 : std * 2;
       const units = newShape === "rect" ? 2 : 1;
       const g = tableGeometry(cap, newShape, std, units);
@@ -572,7 +584,7 @@ export function FloorEditor({ boot, roomId, onClose }: { boot: Bootstrap; roomId
 
     if (tool === "wall") {
       const existingWalls = draft.layout.elements.filter((el) => el.kind === "wall");
-      const rawStart = toWorld(e.clientX, e.clientY);
+      const rawStart = toWorld(cx, cy);
       const start = snapWallEndpoint(rawStart, existingWalls, poly, STEP);
       let current: FloorElement | null = null;
       const move = (ev: PointerEvent) => {
@@ -608,7 +620,7 @@ export function FloorEditor({ boot, roomId, onClose }: { boot: Bootstrap; roomId
       return;
     }
 
-    const s0 = toWorld(e.clientX, e.clientY);
+    const s0 = toWorld(cx, cy);
     let box: FloorElement | null = null;
     const move = (ev: PointerEvent) => {
       const p = toWorld(ev.clientX, ev.clientY);
@@ -787,6 +799,20 @@ export function FloorEditor({ boot, roomId, onClose }: { boot: Bootstrap; roomId
 
       <div
         ref={ref}
+        onTouchStart={(e) => {
+          if (tool === "select" || tool === "perimetro") bind.onTouchStart(e as any);
+          else onCanvasDown(e as any);
+        }}
+        onTouchMove={bind.onTouchMove as any}
+        onTouchEnd={bind.onTouchEnd as any}
+        onMouseDown={(e) => {
+          if (tool === "select" || tool === "perimetro") bind.onMouseDown(e as any);
+          else onCanvasDown(e as any);
+        }}
+        onMouseMove={bind.onMouseMove as any}
+        onMouseUp={bind.onMouseUp as any}
+        onMouseLeave={bind.onMouseLeave as any}
+        onWheel={bind.onWheel as any}
         onPointerMove={bind.onPointerMove}
         onPointerUp={bind.onPointerUp}
         onPointerCancel={bind.onPointerCancel}

@@ -66,6 +66,7 @@ export type TableNodeData = {
 
 // Un tavolo: memoizzato per evitare re-render durante pan/zoom.
 // Hardware acceleration: translate3d + will-change + backface-visibility.
+// iOS safe: onClick + data-table-id per bloccare pan su tavolo, touchAction manipulation
 export const TableNode = memo(
   forwardRef<
     HTMLDivElement,
@@ -78,27 +79,24 @@ export const TableNode = memo(
       dimmed?: boolean;
       invalid?: boolean;
       seats?: Point[];
+      onClick?: () => void;
       onPointerDown?: (e: React.PointerEvent) => void;
-      onPointerUp?: (e: React.PointerEvent) => void;
-      onPointerCancel?: (e: React.PointerEvent) => void;
-      onClick?: (e: React.MouseEvent) => void;
       children?: React.ReactNode;
     }
-  >(function TableNode(
-    { t, tone = "border-line", dotClass, sub, selected, dimmed, invalid, seats: given, onPointerDown, onPointerUp, onPointerCancel, onClick, children },
-    ref,
-  ) {
+  >(function TableNode({ t, tone = "border-line", dotClass, sub, selected, dimmed, invalid, seats: given, onClick, onPointerDown, children }, ref) {
     const seats = given ?? tableSeats(t);
     const radius = t.shape === "round" ? "50%" : Math.max(8, Math.min(t.width, t.height) * 0.12);
     const fs = Math.max(22, Math.min(t.width, t.height) * 0.36);
     return (
       <div
         ref={ref}
+        data-table-id={t.id}
+        onClick={(e) => {
+          e.stopPropagation();
+          onClick?.();
+        }}
         onPointerDown={onPointerDown}
-        onPointerUp={onPointerUp}
-        onPointerCancel={onPointerCancel}
-        onClick={onClick}
-        className={`absolute left-0 top-0 z-20 ${dimmed ? "opacity-40" : ""}`}
+        className={`absolute left-0 top-0 z-20 cursor-pointer select-none ${dimmed ? "opacity-40" : ""}`}
         style={{
           width: t.width,
           height: t.height,
@@ -107,6 +105,7 @@ export const TableNode = memo(
           backfaceVisibility: "hidden",
           WebkitBackfaceVisibility: "hidden" as any,
           transformStyle: "preserve-3d",
+          touchAction: "manipulation",
         }}
       >
         {seats.map((s, i) => (
@@ -410,39 +409,38 @@ export const ElementNode = memo(
   }),
 );
 
-// TAVOLI ACCOSTATI — GPU accelerated
+// TAVOLI ACCOSTATI — GPU accelerated, iOS safe
 export const JoinedNode = memo(function JoinedNode({
   box,
   label,
   sub,
   tone,
   dotClass,
-  onPointerDown,
-  onPointerUp,
-  onPointerCancel,
+  onClick,
 }: {
   box: { x: number; y: number; w: number; h: number };
   label: string;
   sub?: string;
   tone: string;
   dotClass?: string;
-  onPointerDown?: (e: React.PointerEvent) => void;
-  onPointerUp?: (e: React.PointerEvent) => void;
-  onPointerCancel?: (e: React.PointerEvent) => void;
+  onClick?: () => void;
 }) {
   const fs = Math.max(26, Math.min(box.w, box.h) * 0.3);
   return (
     <div
-      onPointerDown={onPointerDown}
-      onPointerUp={onPointerUp}
-      onPointerCancel={onPointerCancel}
-      className="absolute left-0 top-0 z-20 cursor-pointer"
+      data-table-id={`joined-${box.x}-${box.y}`}
+      onClick={(e) => {
+        e.stopPropagation();
+        onClick?.();
+      }}
+      className="absolute left-0 top-0 z-20 cursor-pointer select-none"
       style={{
         width: box.w,
         height: box.h,
         transform: `translate3d(${box.x}px, ${box.y}px, 0)`,
         willChange: "transform",
         backfaceVisibility: "hidden",
+        touchAction: "manipulation",
       }}
     >
       <div className={`grid h-full w-full place-items-center rounded-[16px] border-[7px] bg-surface shadow-lg ${tone}`}>
