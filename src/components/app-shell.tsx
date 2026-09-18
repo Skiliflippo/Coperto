@@ -27,8 +27,10 @@ function Shell({ children }: { children: ReactNode }) {
   const hydrated = useSession((state) => state.hydrated);
   const conn = useRealtime();
   const boot = useBootstrap();
-  // Chiaro/scuro è una scelta del dispositivo; la palette è del locale.
-  const palette = boot.data?.settings?.theme ?? "terracotta";
+  // Chiaro/scuro E palette sono scelte del dispositivo; senza scelta si usa
+  // il tema del locale (settings.theme) come predefinito per tutti.
+  const devicePalette = useSession((s) => s.deviceTheme);
+  const palette = devicePalette ?? boot.data?.settings?.theme ?? "terracotta";
   // Salva palette e fontScale in localStorage → ThemeScript li ripesca al next boot
   // prima di React, evitando un frame con terracotta (default) su iOS lento.
   // Salva la palette del ristorante in store: ThemeScript la rilegge al bootstrap

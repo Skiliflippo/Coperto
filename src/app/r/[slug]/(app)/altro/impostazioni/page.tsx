@@ -3,7 +3,7 @@
 import { useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import Link from "next/link";
-import { ArrowLeft, Check, ShieldAlert, Moon, Sun, Type } from "lucide-react";
+import { ArrowLeft, Check, ShieldAlert } from "lucide-react";
 import { api } from "@/lib/api";
 import { useBootstrap } from "@/lib/hooks";
 import { useSession } from "@/store/session";
@@ -134,6 +134,8 @@ export default function ImpostazioniPage() {
 function SettingsForm({ staff, boot }: { staff: StaffSession; boot: Bootstrap }) {
   const tp = useTenantPath();
   const qc = useQueryClient();
+  const deviceTheme = useSession((s) => s.deviceTheme);
+  const setDeviceTheme = useSession((s) => s.setDeviceTheme);
   const [settings, setSettings] = useState<Settings>(() => structuredClone(boot.settings));
   const [periods, setPeriods] = useState<PeriodDraft[]>(() =>
     boot.periods.map(({ id, name, startTime, endTime }) => ({ id, name, startTime, endTime })),
@@ -182,8 +184,8 @@ function SettingsForm({ staff, boot }: { staff: StaffSession; boot: Bootstrap })
       <p className="mt-4 text-sm font-bold uppercase tracking-wide text-muted">Colori dell&apos;app</p>
       <div className="mt-2 grid grid-cols-2 gap-2 sm:grid-cols-3">
         {THEMES.map((t) => (
-          <button key={t.id} onClick={() => setSettings({ ...settings, theme: t.id })}
-            className={`flex items-center gap-2.5 rounded-2xl border-2 p-2.5 text-left active:scale-[0.98] ${settings.theme === t.id ? "border-brand bg-brand/10" : "border-line bg-surface"}`}>
+          <button key={t.id} onClick={() => setDeviceTheme(t.id)}
+            className={`flex items-center gap-2.5 rounded-2xl border-2 p-2.5 text-left active:scale-[0.98] ${(deviceTheme ?? settings.theme) === t.id ? "border-brand bg-brand/10" : "border-line bg-surface"}`}>
             <span className="flex shrink-0 overflow-hidden rounded-lg">
               {t.swatch.map((c) => <span key={c} className="h-9 w-3.5" style={{ background: c }} />)}
             </span>
@@ -194,7 +196,16 @@ function SettingsForm({ staff, boot }: { staff: StaffSession; boot: Bootstrap })
           </button>
         ))}
       </div>
-      <p className="mt-1.5 text-[12px] text-muted">Vale per tutti i dispositivi del locale. Il chiaro/scuro resta una scelta di ciascuno.</p>
+      <p className="mt-1.5 text-[12px] text-muted">
+        La scelta vale solo per questo dispositivo: ogni tablet, telefono o iPad della sala può avere il suo tema.
+        Il chiaro/scuro resta una scelta di ciascuno.
+      </p>
+      {deviceTheme && (
+        <button onClick={() => setDeviceTheme(undefined)}
+          className="mt-2 flex w-full items-center justify-center gap-2 rounded-2xl border border-line bg-surface px-4 py-3 text-sm font-semibold text-muted active:scale-[0.98]">
+          Torna al tema del locale
+        </button>
+      )}
 
       <RoomsManager boot={boot} />
 

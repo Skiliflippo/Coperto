@@ -335,13 +335,14 @@ export function FloorEditor({ boot, roomId, onClose }: { boot: Bootstrap; roomId
     const center0 = { x: el.x + el.w / 2, y: el.y + el.h / 2 };
     let box = { x: el.x, y: el.y, w: el.w, h: el.h };
 
-    // Limiti generosi ma sicuri: decor non può superare la sala, muro non può diventare gigante
+    // Limiti duri: un arredo al massimo grande come la sala (e comunque ≤ 30m).
+    // Oltre scoppiava il renderer: div da decine di metri = immagine gigante = tab crash.
     const roomMaxW = draft.layout.w;
     const roomMaxH = draft.layout.h;
     const MAX_DECOR_W = Math.min(roomMaxW, MAX_ROOM_CM);
     const MAX_DECOR_H = Math.min(roomMaxH, MAX_ROOM_CM);
     const MAX_WALL_LEN = Math.max(roomMaxW, roomMaxH); // lunghezza max muro = lato lungo sala
-    const MAX_WALL_THICK = 300; // spessore max 3m — generoso ma non crasha
+    const MAX_WALL_THICK = Math.min(300, Math.max(roomMaxW, roomMaxH) / 2); // spessore muro max: 3m o mezza sala
 
     const move = (ev: PointerEvent) => {
       const p = toWorld(ev.clientX, ev.clientY);
@@ -403,7 +404,24 @@ export function FloorEditor({ boot, roomId, onClose }: { boot: Bootstrap; roomId
       if (badRaf.current) { cancelAnimationFrame(badRaf.current); badRaf.current = 0; }
       pendingBad.current = null;
       setBadIds([]);
-      commit((d) => ({ ...d, layout: { ...d.layout, elements: d.layout.elements.map((x) => (x.id === el.id ? { ...x, ...box } : x)) } }));
+      // Blocco fisico: il contorno rosso non basta, se l'arredo esce dalla sala
+      // NON si salva — prima che un arredo gigante faceva impallare la mappa.
+      let fitted = { ...box };
+      const minSide = el.kind === "wall" ? 4 : 15;
+      const bbOf = (b: typeof fitted) => (el.rotation ? aabb(b.x + b.w / 2, b.y + b.h / 2, b.w, b.h, el.rotation) : b);
+      for (let i = 0; i < 60 && !boxInsideRoom(bbOf(fitted), poly); i++) {
+        fitted = { ...fitted, w: Math.max(minSide, Math.round(fitted.w * 0.95)), h: Math.max(minSide, Math.round(fitted.h * 0.95)) };
+        if (fitted.w === minSide && fitted.h === minSide) break;
+      }
+      // La forma ora ci sta: la riaggancio dentro i bordi se era scivolata fuori.
+      {
+        const bb = bbOf(fitted);
+        if (bb.x < bounds.x1) fitted.x += bounds.x1 - bb.x;
+        if (bb.y < bounds.y1) fitted.y += bounds.y1 - bb.y;
+        if (bb.x + bb.w > bounds.x2) fitted.x -= (bb.x + bb.w) - bounds.x2;
+        if (bb.y + bb.h > bounds.y2) fitted.y -= (bb.y + bb.h) - bounds.y2;
+      }
+      commit((d) => ({ ...d, layout: { ...d.layout, elements: d.layout.elements.map((x) => (x.id === el.id ? { ...x, ...fitted } : x)) } }));
     };
     window.addEventListener("pointermove", move, { passive: false });
     window.addEventListener("pointerup", up);

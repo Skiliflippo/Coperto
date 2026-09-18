@@ -10,7 +10,9 @@ type SessionState = {
   /** Locale memorizzato sul dispositivo: sopravvive al logout e riapre la sala. */
   rememberedSlug: string | null;
   theme: "light" | "dark";
-  /** Tema cromatico del ristorante attivo: serve al ThemeScript per il no-flash */
+  /** Palette scelta su QUESTO dispositivo. Se assente si usa il tema del locale. */
+  deviceTheme?: string;
+  /** Palette effettiva in uso: serve al ThemeScript per il no-flash all'apertura */
   restaurantTheme?: string;
   /** Scala font (accessibilità): 75 = molto piccolo, 100 = standard, 125 = grande */
   fontScale?: number;
@@ -22,6 +24,7 @@ type SessionState = {
   rememberLocale: (slug: string) => void;
   forgetLocale: () => void;
   toggleTheme: () => void;
+  setDeviceTheme: (theme: string | undefined) => void;
   setRestaurantTheme: (theme: string) => void;
   setFontScale: (value: number) => void;
   setRoom: (id: string) => void;
@@ -36,6 +39,7 @@ export const useSession = create<SessionState>()(
       slug: null,
       rememberedSlug: null,
       theme: "light",
+      deviceTheme: undefined,
       restaurantTheme: undefined,
       fontScale: undefined,
       roomId: null,
@@ -61,6 +65,7 @@ export const useSession = create<SessionState>()(
       // "Cambia locale": si dimentica il locale e si torna alla landing.
       forgetLocale: () => set({ rememberedSlug: null, slug: null, staff: null, restaurantTheme: undefined, roomId: null, roomOrder: [] }),
       toggleTheme: () => set({ theme: get().theme === "light" ? "dark" : "light" }),
+      setDeviceTheme: (deviceTheme) => set({ deviceTheme }),
       setRestaurantTheme: (restaurantTheme) => set({ restaurantTheme }),
       setFontScale: (fontScale) => set({ fontScale }),
       setRoom: (roomId) => set({ roomId }),
@@ -70,8 +75,8 @@ export const useSession = create<SessionState>()(
     {
       name: "coperto.session.v4",
       // Il flag è runtime-only: non deve rientrare da localStorage già impostato a true.
-      partialize: ({ staff, slug, rememberedSlug, theme, restaurantTheme, fontScale, roomId, roomOrder }) =>
-        ({ staff, slug, rememberedSlug, theme, restaurantTheme, fontScale, roomId, roomOrder }) as SessionState,
+      partialize: ({ staff, slug, rememberedSlug, theme, deviceTheme, restaurantTheme, fontScale, roomId, roomOrder }) =>
+        ({ staff, slug, rememberedSlug, theme, deviceTheme, restaurantTheme, fontScale, roomId, roomOrder }) as SessionState,
       onRehydrateStorage: () => (state) => {
         // Al ripristino si riallinea l'identità usata dalle chiamate al server.
         setApiIdentity(state?.staff?.id ?? null);
