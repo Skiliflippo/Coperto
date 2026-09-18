@@ -10,6 +10,10 @@ type SessionState = {
   /** Locale memorizzato sul dispositivo: sopravvive al logout e riapre la sala. */
   rememberedSlug: string | null;
   theme: "light" | "dark";
+  /** Tema cromatico del ristorante attivo: serve al ThemeScript per il no-flash */
+  restaurantTheme?: string;
+  /** Scala font (accessibilità): 75 = molto piccolo, 100 = standard, 125 = grande */
+  fontScale?: number;
   roomId: string | null;        // ultima sala aperta: diventa la vista predefinita
   roomOrder: string[];          // ordine scelto trascinando i nomi delle sale
   hydrated: boolean;            // true quando localStorage è stato letto sul client
@@ -18,6 +22,8 @@ type SessionState = {
   rememberLocale: (slug: string) => void;
   forgetLocale: () => void;
   toggleTheme: () => void;
+  setRestaurantTheme: (theme: string) => void;
+  setFontScale: (value: number) => void;
   setRoom: (id: string) => void;
   setRoomOrder: (ids: string[]) => void;
   setHydrated: (value: boolean) => void;
@@ -30,6 +36,8 @@ export const useSession = create<SessionState>()(
       slug: null,
       rememberedSlug: null,
       theme: "light",
+      restaurantTheme: undefined,
+      fontScale: undefined,
       roomId: null,
       roomOrder: [],
       hydrated: false,
@@ -42,7 +50,7 @@ export const useSession = create<SessionState>()(
         const prev = get().slug;
         if (prev && slug && prev !== slug) {
           setApiIdentity(null);
-          set({ slug, staff: null, roomId: null, roomOrder: [] });
+          set({ slug, staff: null, restaurantTheme: undefined, roomId: null, roomOrder: [] });
           return;
         }
         set({ slug });
@@ -51,8 +59,10 @@ export const useSession = create<SessionState>()(
       // apertura da / o dall'icona sulla home.
       rememberLocale: (slug) => set({ rememberedSlug: slug }),
       // "Cambia locale": si dimentica il locale e si torna alla landing.
-      forgetLocale: () => set({ rememberedSlug: null, slug: null, staff: null, roomId: null, roomOrder: [] }),
+      forgetLocale: () => set({ rememberedSlug: null, slug: null, staff: null, restaurantTheme: undefined, roomId: null, roomOrder: [] }),
       toggleTheme: () => set({ theme: get().theme === "light" ? "dark" : "light" }),
+      setRestaurantTheme: (restaurantTheme) => set({ restaurantTheme }),
+      setFontScale: (fontScale) => set({ fontScale }),
       setRoom: (roomId) => set({ roomId }),
       setRoomOrder: (roomOrder) => set({ roomOrder }),
       setHydrated: (hydrated) => set({ hydrated }),
@@ -60,8 +70,8 @@ export const useSession = create<SessionState>()(
     {
       name: "coperto.session.v4",
       // Il flag è runtime-only: non deve rientrare da localStorage già impostato a true.
-      partialize: ({ staff, slug, rememberedSlug, theme, roomId, roomOrder }) =>
-        ({ staff, slug, rememberedSlug, theme, roomId, roomOrder }) as SessionState,
+      partialize: ({ staff, slug, rememberedSlug, theme, restaurantTheme, fontScale, roomId, roomOrder }) =>
+        ({ staff, slug, rememberedSlug, theme, restaurantTheme, fontScale, roomId, roomOrder }) as SessionState,
       onRehydrateStorage: () => (state) => {
         // Al ripristino si riallinea l'identità usata dalle chiamate al server.
         setApiIdentity(state?.staff?.id ?? null);

@@ -3,7 +3,7 @@
 import { useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import Link from "next/link";
-import { ArrowLeft, Check, ShieldAlert } from "lucide-react";
+import { ArrowLeft, Check, ShieldAlert, Moon, Sun, Type } from "lucide-react";
 import { api } from "@/lib/api";
 import { useBootstrap } from "@/lib/hooks";
 import { useSession } from "@/store/session";
@@ -249,7 +249,7 @@ function SettingsForm({ staff, boot }: { staff: StaffSession; boot: Bootstrap })
               <Num label="Gruppi da 7 o 8 persone" value={duration.large} onChange={(value) => setBand(key, "large", value)} min={45} max={180} step={15} onInfo={() => setHelp(HELP.durata)} />
               <Num label="Tavolate da 9 in su" value={duration.xl} onChange={(value) => setBand(key, "xl", value)} min={60} max={240} step={15} onInfo={() => setHelp(HELP.durata)} />
             </div>
-            <div className="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-2">
+            <div className="mt-2 grid grid-cols-1 gap-2 sm:grid-cols-2">
               <Field label={`${period.name} inizia`}>
                 <input type="time" value={draft.startTime}
                   onChange={(event) => setPeriods(periods.map((item) => item.id === period.id ? { ...item, startTime: event.target.value } : item))}

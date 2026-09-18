@@ -29,6 +29,13 @@ function Shell({ children }: { children: ReactNode }) {
   const boot = useBootstrap();
   // Chiaro/scuro è una scelta del dispositivo; la palette è del locale.
   const palette = boot.data?.settings?.theme ?? "terracotta";
+  // Salva palette e fontScale in localStorage → ThemeScript li ripesca al next boot
+  // prima di React, evitando un frame con terracotta (default) su iOS lento.
+  // Salva la palette del ristorante in store: ThemeScript la rilegge al bootstrap
+  // prima che React attivi useEffect — evita flash di terracotta su iOS lento.
+  useEffect(() => {
+    useSession.getState().setRestaurantTheme(palette);
+  }, [palette]);
   useEffect(() => {
     const root = document.documentElement;
     root.classList.toggle("dark", theme === "dark");
