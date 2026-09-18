@@ -87,9 +87,9 @@ function Num({ label, value, onChange, min = 0, max = 60, step = 5, suffix = "mi
   onInfo?: () => void;
 }) {
   return (
-    <div className="flex items-center justify-between gap-3 rounded-2xl border border-line bg-surface px-4 py-3">
-      <p className="flex min-w-0 flex-1 items-center gap-1.5 text-[15px] font-semibold">
-        <span className="min-w-0">{label}</span>
+    <div className="flex flex-col gap-3 rounded-2xl border border-line bg-surface px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
+      <p className="flex min-w-0 items-center gap-1.5 text-[15px] font-semibold leading-snug">
+        <span className="min-w-0 flex-1">{label}</span>
         {onInfo && (
           <button onClick={onInfo} aria-label={`Cosa vuol dire: ${label}`}
             className="grid h-6 w-6 shrink-0 place-items-center rounded-full bg-muted/15 text-[12px] font-bold text-muted/70 active:scale-90">
@@ -97,7 +97,7 @@ function Num({ label, value, onChange, min = 0, max = 60, step = 5, suffix = "mi
           </button>
         )}
       </p>
-      <div className="flex items-center gap-2">
+      <div className="flex items-center justify-center gap-2">
         <button onClick={() => onChange(Math.max(min, value - step))}
           className="grid h-12 w-12 place-items-center rounded-xl bg-raised text-2xl font-bold active:scale-95">−</button>
         <p className="w-20 text-center font-display text-xl font-extrabold tabular-nums">
@@ -249,7 +249,7 @@ function SettingsForm({ staff, boot }: { staff: StaffSession; boot: Bootstrap })
               <Num label="Gruppi da 7 o 8 persone" value={duration.large} onChange={(value) => setBand(key, "large", value)} min={45} max={180} step={15} onInfo={() => setHelp(HELP.durata)} />
               <Num label="Tavolate da 9 in su" value={duration.xl} onChange={(value) => setBand(key, "xl", value)} min={60} max={240} step={15} onInfo={() => setHelp(HELP.durata)} />
             </div>
-            <div className="mt-2 grid grid-cols-2 gap-2">
+            <div className="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-2">
               <Field label={`${period.name} inizia`}>
                 <input type="time" value={draft.startTime}
                   onChange={(event) => setPeriods(periods.map((item) => item.id === period.id ? { ...item, startTime: event.target.value } : item))}

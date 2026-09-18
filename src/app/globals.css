@@ -119,9 +119,18 @@
   --animate-sheet-up: sheet-up 0.28s cubic-bezier(0.32, 0.72, 0, 1);
   --animate-pop: pop 0.18s ease-out;
   --animate-fade: fade 0.2s ease-out;
+  --animate-slide: slide 0.16s cubic-bezier(0.25, 0.46, 0.45, 0.94);
   @keyframes sheet-up { from { transform: translateY(100%); } to { transform: translateY(0); } }
   @keyframes pop { from { transform: scale(0.9); opacity: 0; } to { transform: scale(1); opacity: 1; } }
   @keyframes fade { from { opacity: 0; } to { opacity: 1; } }
+  @keyframes slide {
+    from { opacity: 0; transform: translateY(7px) scale(0.994); }
+    to { opacity: 1; transform: translateY(0) scale(1); }
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .animate-slide { animation: fade 0.12s ease-out !important; transform: none !important; }
 }
 
 /* Muri interni: colore dedicato, generato esplicitamente. La variabile @theme è

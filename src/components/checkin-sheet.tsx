@@ -139,21 +139,35 @@ export function CheckInSheet({ res, onClose }: { res: Reservation | null; onClos
         <div>
           <p className="mb-2 text-sm font-semibold text-muted">Tavolo</p>
           {!changeTable && target ? (
-            <div className="flex items-center gap-3 rounded-2xl border border-line bg-raised p-3">
-              <span className="grid h-11 w-11 place-items-center rounded-xl bg-surface font-display text-lg font-bold">{target.tableLabel}</span>
+            <div className="flex items-center gap-3 overflow-hidden rounded-2xl border border-line bg-raised p-3">
+              <span
+                className="flex h-11 min-w-11 shrink-0 items-center justify-center rounded-xl bg-surface px-2.5 font-display font-bold"
+                title={target.tableLabel}
+              >
+                {target.tableIds.length > 1 ? (
+                  <span className="flex items-center gap-1 text-sm">
+                    <span className="text-base leading-none">{target.tableIds.length}×</span>
+                    <span className="hidden text-[10px] font-semibold text-muted sm:inline">tavoli</span>
+                  </span>
+                ) : (
+                  <span className="text-lg leading-none">{target.tableLabel}</span>
+                )}
+              </span>
               <div className="min-w-0 flex-1">
-                <p className="font-bold leading-tight">Tavolo {target.tableLabel}</p>
+                <p className="break-all text-sm font-bold leading-tight sm:text-base" title={`Tavolo ${target.tableLabel}`}>
+                  Tavolo {target.tableLabel}
+                </p>
                 {assignedState && assignedState !== "libero" && (
                   <p className="text-[13px] font-semibold text-soon">Ancora occupato: siedili più tardi o cambia tavolo</p>
                 )}
               </div>
-              <button onClick={() => setChangeTable(true)} className="rounded-xl border-2 border-line bg-surface px-3 font-semibold text-muted active:scale-95" style={{ minHeight: 48 }}>Cambia</button>
+              <button onClick={() => setChangeTable(true)} className="shrink-0 rounded-xl border-2 border-line bg-surface px-3 font-semibold text-muted active:scale-95" style={{ minHeight: 48 }}>Cambia</button>
             </div>
           ) : (
             <>
               <SuggestedTables party={p} forReservationId={res.id} onPick={(t) => { setPicked(t); setChangeTable(false); }} />
               {picked && (
-                <p className="mt-2 flex items-center gap-2 text-sm font-semibold text-ok"><CheckCircle2 className="h-4 w-4" /> Scelto tavolo {picked.tableLabel}</p>
+                <p className="mt-2 flex items-center gap-2 break-all text-sm font-semibold text-ok"><CheckCircle2 className="h-4 w-4 shrink-0" /> Scelto tavolo {picked.tableLabel}</p>
               )}
             </>
           )}
@@ -161,8 +175,13 @@ export function CheckInSheet({ res, onClose }: { res: Reservation | null; onClos
 
         {res.notes && <p className="rounded-xl bg-raised px-3 py-2 text-sm text-muted">Note: {res.notes}</p>}
 
-        <Btn size="xl" disabled={!target || (targetCap != null && p > targetCap)} onClick={doSeat}>
-          <Check className="h-6 w-6" /> Siedi {p} al tavolo {target?.tableLabel ?? "—"}
+        <Btn
+          size="xl"
+          disabled={!target || (targetCap != null && p > targetCap)}
+          onClick={doSeat}
+          className="break-all text-center leading-tight"
+        >
+          <Check className="h-6 w-6 shrink-0" /> <span className="break-all">Siedi {p} al tavolo {target?.tableLabel ?? "—"}</span>
         </Btn>
         {res.guestPhone && !isLate && (
           <a href={`tel:${res.guestPhone.replace(/\s/g, "")}`} className="flex min-h-[56px] items-center justify-center gap-2 rounded-2xl bg-raised font-semibold active:scale-[0.97]">

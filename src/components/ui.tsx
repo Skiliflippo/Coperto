@@ -35,7 +35,7 @@ export function Sheet({ open, onClose, title, children, wide }: {
   }, [open, onClose]);
   if (!open) return null;
   return (
-    <div className="no-print fixed inset-0 z-[60]">
+    <div className="no-print fixed inset-0 z-[200]">
       <div className="absolute inset-0 animate-fade bg-black/45" onClick={onClose} />
       <div className={`absolute inset-x-0 bottom-0 mx-auto flex max-h-[92dvh] w-full flex-col overflow-hidden rounded-t-[28px] border-t border-line bg-surface shadow-2xl ${wide ? "sm:max-w-2xl" : "sm:max-w-lg"}`}>
         <div className="flex items-center gap-3 border-b border-line px-4 py-3">

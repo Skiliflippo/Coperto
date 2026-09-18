@@ -70,7 +70,9 @@ function Shell({ children }: { children: ReactNode }) {
       <div className="no-print pointer-events-none fixed right-3 top-[calc(env(safe-area-inset-top)+10px)] z-50">
         <ConnBadge conn={conn} />
       </div>
-      <main className="mx-auto min-h-dvh w-full max-w-5xl pb-[calc(env(safe-area-inset-bottom)+72px)]">{children}</main>
+      <main key={path} className="animate-slide mx-auto min-h-dvh w-full max-w-5xl pb-[calc(env(safe-area-inset-bottom)+72px)] motion-safe:will-change-[opacity,transform]">
+        {children}
+      </main>
       <Toaster />
       {/* Navigazione: pillola compatta, solo icone. Nessun testo da tagliare,
           l'icona attiva si accende. Occupa il minimo indispensabile. */}

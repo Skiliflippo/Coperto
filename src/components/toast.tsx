@@ -70,7 +70,7 @@ export function Toaster() {
   const dismiss = useToasts((s) => s.dismiss);
   if (!toasts.length) return null;
   return (
-    <div className="no-print fixed inset-x-3 top-[calc(env(safe-area-inset-top)+56px)] z-[130] flex flex-col gap-2 pointer-events-none sm:left-auto sm:right-4 sm:w-[380px]">
+    <div className="no-print fixed inset-x-3 top-[calc(env(safe-area-inset-top)+8px)] z-[210] flex max-h-[90dvh] flex-col gap-2 overflow-y-auto overscroll-contain pointer-events-none sm:left-auto sm:right-4 sm:w-[380px]">
       {toasts.map((t) => {
         const Icon = ICONS[t.tone];
         return (
