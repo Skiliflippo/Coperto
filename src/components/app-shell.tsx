@@ -85,7 +85,7 @@ function Shell({ children }: { children: ReactNode }) {
       <Toaster />
       {/* Navigazione: pillola compatta, solo icone. Nessun testo da tagliare,
           l'icona attiva si accende. Occupa il minimo indispensabile. */}
-      <nav className="no-print pointer-events-none fixed inset-x-0 bottom-0 z-50 flex justify-center"
+      <nav className="tabbar no-print pointer-events-none fixed inset-x-0 bottom-0 z-50 flex justify-center"
         style={{ paddingBottom: "calc(env(safe-area-inset-bottom) + 8px)" }}>
         <div className="pointer-events-auto flex items-center gap-0.5 rounded-full border border-line/60 bg-surface/75 p-1 shadow-lg backdrop-blur-xl">
           {TABS.map(({ path: tabPath, label, icon: Icon }) => {

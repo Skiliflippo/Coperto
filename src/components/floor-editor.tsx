@@ -40,6 +40,13 @@ type Sel = { kind: "table" | "element"; id: string } | null;
 type Draft = { layout: RoomLayout; tables: TableNodeData[]; deleted: string[] };
 
 export function FloorEditor({ boot, roomId, onClose }: { boot: Bootstrap; roomId: string; onClose: () => void }) {
+  // L'editor è a schermo intero: la tab bar di navigazione (Sala/Prenotazioni/Altro)
+  // e tutto ciò che è "nav" dell'app deve sparire finché modifichi la mappa,
+  // altrimenti si sovrappone ai tasti oggetti/proprietà in basso.
+  useEffect(() => {
+    document.body.classList.add("map-editing");
+    return () => { document.body.classList.remove("map-editing"); };
+  }, []);
   const staff = useSession((s) => s.staff);
   const qc = useQueryClient();
   const room: Room = boot.rooms.find((r) => r.id === roomId) ?? boot.rooms[0];

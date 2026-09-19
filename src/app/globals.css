@@ -212,6 +212,10 @@ button { touch-action: manipulation; user-select: none; -webkit-user-select: non
 }
 ::selection { background: color-mix(in srgb, var(--brand) 30%, transparent); }
 
+/* Editor mappa a schermo intero: nessuna UI dell'app sotto deve sbucare.
+   Il FloorEditor aggiunge .map-editing al body mentre è aperto. */
+body.map-editing .tabbar { display: none !important; }
+
 .no-scrollbar::-webkit-scrollbar { display: none; }
 .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
 
