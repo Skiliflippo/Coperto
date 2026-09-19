@@ -72,9 +72,9 @@ export function TableSheet({ table, onClose }: { table: TableT | null; onClose: 
         <span className="flex items-center gap-3">
           <span className="grid h-11 w-11 place-items-center rounded-xl bg-raised font-display text-xl font-bold">{table.label}</span>
           <span>
-            <span className="flex items-center gap-2">{seating && seating.tableIds.length > 1 ? `Tavoli ${seating.tableLabel}` : `Tavolo ${table.label}`} <Chip cls={meta.dot.replace("bg-", "border-").concat(" bg-raised text-inherit")}><span className={`h-2 w-2 rounded-full ${meta.dot}`} />{meta.label}</Chip></span>
+            <span className="flex items-center gap-2">{seating && (seating.tableIds ?? []).length > 1 ? `Tavoli ${seating.tableLabel}` : `Tavolo ${table.label}`} <Chip cls={meta.dot.replace("bg-", "border-").concat(" bg-raised text-inherit")}><span className={`h-2 w-2 rounded-full ${meta.dot}`} />{meta.label}</Chip></span>
             <span className="block text-sm font-medium text-muted">
-              {seating && seating.tableIds.length > 1 ? "tavoli accostati" : fmtCovers(table.capacity)}
+              {seating && (seating.tableIds ?? []).length > 1 ? "tavoli accostati" : fmtCovers(table.capacity)}
               {table.maxCapacity > table.capacity && !seating ? ` (fino a ${table.maxCapacity})` : ""}
               {" · "}{boot.data.rooms.find((r) => r.id === table.roomId)?.name}
             </span>
@@ -97,7 +97,7 @@ export function TableSheet({ table, onClose }: { table: TableT | null; onClose: 
           {seating ? (
             <>
               <Btn variant="ok" size="xl" onClick={() => {
-                const label = seating.tableIds.length > 1 ? `Tavoli ${seating.tableLabel} liberati` : `Tavolo ${table.label} liberato`;
+                const label = (seating.tableIds ?? []).length > 1 ? `Tavoli ${seating.tableLabel} liberati` : `Tavolo ${table.label} liberato`;
                 onClose();
                 runWithUndo(label,
                   () => act(`/api/seatings/${seating.id}`, { action: "libera" }),
@@ -177,7 +177,7 @@ export function TableSheet({ table, onClose }: { table: TableT | null; onClose: 
       {mode === "move" && seating && (
         <div className="grid gap-3">
           <p className="text-sm font-semibold text-muted">Sposta {seating.name || "il gruppo"} ({seating.partySize} p.) su:</p>
-          <SuggestedTables party={seating.partySize} excludeIds={seating.tableIds}
+          <SuggestedTables party={seating.partySize} excludeIds={seating.tableIds ?? []}
             onPick={(t) => act(`/api/seatings/${seating.id}`, { action: "move", ...t }).then(() => { setMode("main"); onClose(); })} />
           <Btn variant="ghost" onClick={() => setMode("main")}>Indietro</Btn>
         </div>

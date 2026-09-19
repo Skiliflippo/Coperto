@@ -10,6 +10,7 @@ import { Providers } from "@/app/providers";
 import { useBootstrap } from "@/lib/hooks";
 import { Onboarding } from "@/components/onboarding";
 import { Toaster } from "@/components/toast";
+import { ErrorBoundary } from "@/components/error-boundary";
 import { useTenantPath } from "@/lib/tenant";
 
 const TABS = [
@@ -125,5 +126,5 @@ function ConnBadge({ conn }: { conn: "online" | "offline" | "connecting" }) {
 }
 
 export default function AppShell({ children }: { children: ReactNode }) {
-  return <Providers><Shell>{children}</Shell></Providers>;
+  return <Providers><ErrorBoundary><Shell>{children}</Shell></ErrorBoundary></Providers>;
 }
