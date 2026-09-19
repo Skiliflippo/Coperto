@@ -184,6 +184,28 @@ export function FloorEditor({ boot, roomId, onClose }: { boot: Bootstrap; roomId
 
   const moveSelection = useCallback((ids: string[], dx: number, dy: number) => {
     if (!ids.length) return;
+    // Blocco di sicurezza: se il risultato finale mette ANCHE UN SOLO oggetto
+    // fuori dalla sala, l'intera mossa viene rifiutata. Prima il drag/nudge
+    // salvava oggetti fuori dai muri → pochi istanti dopo (refetch/invalidazione
+    // del bootstrap sotto l'editor) la sala andava in crash.
+    const roomPoly = polygonOf(draft.layout);
+    const endsOutside = ids.some((id) => {
+      const t = draft.tables.find((x) => x.id === id);
+      if (t) {
+        const nx = snapG(t.x + dx), ny = snapG(t.y + dy);
+        return !boxInsideRoom(aabb(nx, ny, t.width, t.height, t.rotation), roomPoly);
+      }
+      const el = draft.layout.elements.find((x) => x.id === id);
+      if (!el) return false;
+      const nx = el.kind === "wall" ? el.x + snapG(dx) : snapG(el.x + dx);
+      const ny = el.kind === "wall" ? el.y + snapG(dy) : snapG(el.y + dy);
+      const cand = { ...el, x: nx, y: ny };
+      return el.kind === "wall" ? !wallInsideRoom(cand, roomPoly) : !boxInsideRoom(elementBox(cand), roomPoly);
+    });
+    if (endsOutside) {
+      toast({ title: "Oltre i muri della sala non si può andare", tone: "warn" });
+      return;
+    }
     commit((d) => ({
       ...d,
       tables: d.tables.map((t) => (ids.includes(t.id) ? { ...t, x: snapG(t.x + dx), y: snapG(t.y + dy) } : t)),
@@ -197,7 +219,7 @@ export function FloorEditor({ boot, roomId, onClose }: { boot: Bootstrap; roomId
         }),
       },
     }));
-  }, [commit]);
+  }, [commit, draft]);
 
   const pickTool = (t: Tool) => { setTool(t); setSelIds([]); setDecorPick(false); };
 
