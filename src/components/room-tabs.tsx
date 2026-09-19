@@ -7,7 +7,8 @@ import type { Room } from "@/lib/types";
 
 export function useOrderedRooms(rooms: Room[]): Room[] {
   const order = useSession((s) => s.roomOrder);
-  if (!order.length) return rooms;
+  // order può arrivare null da un localStorage di una versione vecchia/corrotto
+  if (!order?.length) return rooms;
   const pos = new Map(order.map((id, i) => [id, i]));
   return [...rooms].sort((a, b) => (pos.get(a.id) ?? 99) - (pos.get(b.id) ?? 99));
 }

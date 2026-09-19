@@ -69,7 +69,10 @@ export function FloorView({ boot, statuses, onPick, viewToggle }: {
   const joinedGroups = new Map<string, { seating: Seating; tables: TableT[] }>();
   for (const t of tables) {
     const seat = statuses.get(t.id)?.seating;
-    if (!seat || seat.tableIds.length < 2) continue;
+    // tableIds può essere null su righe sedute salvate da versioni vecchie:
+    // seat.tableIds.length → TypeError 'length' of null → pagina bianca.
+    const seatIds = seat?.tableIds ?? [];
+    if (!seat || seatIds.length < 2) continue;
     const g = joinedGroups.get(seat.id) ?? { seating: seat, tables: [] };
     g.tables.push(t);
     joinedGroups.set(seat.id, g);

@@ -78,7 +78,7 @@ export function computeTableStatuses(args: {
 // Mappa tavolo → seating attiva
 export function activeSeatingByTable(seatings: Seating[]): Map<string, Seating> {
   const m = new Map<string, Seating>();
-  for (const s of seatings) if (s.status === "seduto") for (const id of s.tableIds) m.set(id, s);
+  for (const s of seatings) if (s.status === "seduto") for (const id of s.tableIds ?? []) m.set(id, s);
   return m;
 }
 
@@ -110,7 +110,7 @@ export function availableTargets(args: {
   }
   const byId = new Map(tables.map((table) => [table.id, table]));
   for (const c of combos) {
-    const canJoin = c.tableIds.every((id) => byId.get(id)?.isJoinable !== false);
+    const canJoin = (c.tableIds ?? []).every((id) => byId.get(id)?.isJoinable !== false);
     if (canJoin && c.capacity >= party && c.tableIds.every(usable)) {
       free.push({ kind: "combo", combo: c, waste: c.capacity - party, extraChairs: 0 });
     }

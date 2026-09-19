@@ -685,6 +685,12 @@ export function FloorEditor({ boot, roomId, onClose }: { boot: Bootstrap; roomId
       setTool("select");
       const b = box;
       if (!b || b.w * b.h < 900) return;
+      // Mai un arredo fuori dalla sala: si vede il bordo rosso mentre trascini
+      // e al rilascio NON viene creato (prima si salvava lo stesso → crash al reload).
+      if (!boxFits(elementBox(b))) {
+        toast({ title: "L'arredo deve stare tutto dentro la sala", tone: "warn" });
+        return;
+      }
       const preset = DECOR_PRESETS.find((d) => d.icon === newDecor);
       const el: FloorElement = {
         ...b, id: uid(), label: preset?.label ?? "Arredo", icon: newDecor,
