@@ -546,8 +546,14 @@ export function computeRoomSeats<T extends SeatTable & { id: string; label?: str
 export const rectPolygon = (w: number, h: number): Point[] =>
   [{ x: 0, y: 0 }, { x: w, y: 0 }, { x: w, y: h }, { x: 0, y: h }];
 
-export const polygonOf = (l: RoomLayout): Point[] =>
-  l.polygon && l.polygon.length >= 3 ? l.polygon : rectPolygon(l.w, l.h);
+export const polygonOf = (l: RoomLayout): Point[] => {
+  if (!Array.isArray(l.polygon) || l.polygon.length < 3) return rectPolygon(l.w, l.h);
+  // Filtra vertici nulli/undefined e assicura che ogni punto abbia x e y validi
+  const validPoly = l.polygon.filter((p): p is Point => 
+    p != null && typeof p.x === "number" && typeof p.y === "number"
+  );
+  return validPoly.length >= 3 ? validPoly : rectPolygon(l.w, l.h);
+};
 
 export function polygonBounds(poly: Point[]) {
   const xs = poly.map((p) => p.x), ys = poly.map((p) => p.y);
@@ -556,10 +562,13 @@ export function polygonBounds(poly: Point[]) {
 
 // Punto dentro il perimetro (ray casting) — serve per non piazzare fuori dai muri.
 export function pointInPolygon(p: Point, poly: Point[]): boolean {
+  if (!poly || poly.length < 3) return false;
   let inside = false;
   for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
     const a = poly[i], b = poly[j];
-    if ((a.y > p.y) !== (b.y > p.y) && p.x < ((b.x - a.x) * (p.y - a.y)) / (b.y - a.y) + a.x) inside = !inside;
+    if (!a || !b) continue;
+    const ay = a.y, by = b.y, ax = a.x, bx = b.x;
+    if ((ay > p.y) !== (by > p.y) && p.x < ((bx - ax) * (p.y - ay)) / (by - ay || 1) + ax) inside = !inside;
   }
   return inside;
 }
@@ -576,6 +585,7 @@ export function pointInOrOnPolygon(p: Point, poly: Point[], tolerance = 1.5): bo
  * all'ancoraggio metà spessore deve stare sotto il muro perimetrale.
  */
 export function wallInsideRoom(element: FloorElement, poly: Point[]): boolean {
+  if (!poly || poly.length < 3) return false;
   const line = wallLine(element);
   const mid = { x: (line.a.x + line.b.x) / 2, y: (line.a.y + line.b.y) / 2 };
   return pointInOrOnPolygon(line.a, poly)
@@ -587,6 +597,7 @@ export function wallInsideRoom(element: FloorElement, poly: Point[]): boolean {
 // rimpicciolito (eps) così un muro o un tavolo APPOGGIATO al perimetro è valido:
 // senza tolleranza il ray casting sul bordo esatto darebbe "fuori".
 export function rectInsideRoom(x: number, y: number, w: number, h: number, poly: Point[], eps = 2): boolean {
+  if (!poly || poly.length < 3) return false;
   const e = Math.min(eps, w / 4, h / 4);
   return [
     { x: x + e, y: y + e }, { x: x + w - e, y: y + e },
@@ -597,10 +608,12 @@ export function rectInsideRoom(x: number, y: number, w: number, h: number, poly:
 
 // Riporta un punto dentro il perimetro spostandolo al vertice più vicino del bordo.
 export function clampPointToRoom(p: Point, poly: Point[]): Point {
+  if (!poly || poly.length < 3) return { x: snapTo(p.x), y: snapTo(p.y) };
   if (pointInPolygon(p, poly)) return p;
   let best = p, bestD = Infinity;
   for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
     const a = poly[j], b = poly[i];
+    if (!a || !b) continue;
     const dx = b.x - a.x, dy = b.y - a.y;
     const len2 = dx * dx + dy * dy || 1;
     const t = clamp(((p.x - a.x) * dx + (p.y - a.y) * dy) / len2, 0, 1);
@@ -615,8 +628,12 @@ export function clampPointToRoom(p: Point, poly: Point[]): Point {
 }
 
 export function centroid(poly: Point[]): Point {
-  const n = poly.length || 1;
-  return { x: poly.reduce((a, p) => a + p.x, 0) / n, y: poly.reduce((a, p) => a + p.y, 0) / n };
+  if (!poly || poly.length === 0) return { x: 0, y: 0 };
+  const n = poly.length;
+  const validPoly = poly.filter((p): p is Point => p != null && typeof p.x === "number" && typeof p.y === "number");
+  if (validPoly.length === 0) return { x: 0, y: 0 };
+  const count = validPoly.length;
+  return { x: validPoly.reduce((a, p) => a + p.x, 0) / count, y: validPoly.reduce((a, p) => a + p.y, 0) / count };
 }
 
 export function normalizeLayout(raw: unknown): RoomLayout {
@@ -706,7 +723,10 @@ export const boxInsideRoom = (b: Box, poly: Point[]) => rectInsideRoom(b.x, b.y,
 
 // Segmenti del perimetro: servono al magnete e ai controlli di attraversamento
 export function polygonEdges(poly: Point[]): { a: Point; b: Point }[] {
-  return poly.map((p, i) => ({ a: p, b: poly[(i + 1) % poly.length] }));
+  if (!poly || poly.length < 2) return [];
+  const validPoly = poly.filter((p): p is Point => p != null && typeof p.x === "number" && typeof p.y === "number");
+  if (validPoly.length < 2) return [];
+  return validPoly.map((p, i) => ({ a: p, b: validPoly[(i + 1) % validPoly.length] }));
 }
 
 // MAGNETE: se un lato dell'oggetto passa vicino a un muro (o a un altro oggetto),

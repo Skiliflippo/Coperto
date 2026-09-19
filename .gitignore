@@ -1,26 +1,4 @@
-# Dipendenze
-node_modules/
-
-# Build Next.js
-.next/
-out/
-
-# Env: MAI committare (contiene DATABASE_URL)
-.env
-.env.local
-.env.*.local
-
-# Tipi generati
-next-env.d.ts
-
-# Log e debug
-*.log
-npm-debug.log*
-
-# Sistema
-.DS_Store
-Thumbs.db
-
-# Vercel
-.vercel
-tsconfig.tsbuildinfo
+```
+# Documentation
+*.md
+```
