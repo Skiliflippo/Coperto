@@ -180,21 +180,21 @@ button { touch-action: manipulation; user-select: none; -webkit-user-select: non
   -webkit-touch-callout: none !important;
   -webkit-tap-highlight-color: transparent !important;
   isolation: isolate;
-  /* Contenimento per ridurre paint area, ma senza clip che tagliava tavoli */
-  contain: layout style;
+  /* NIENTE contain:paint/layout qui: con un arredo nuovo che nasce sopra gli altri
+     oggetti il browser invalidava regioni sbagliate → pezzi di griglia spariti,
+     zone della sala che lampeggiavano o non si ridisegnavano. */
 }
 .floor-content {
-  /* Unico layer GPU per tutta la sala, will-change solo durante pan via JS */
+  /* Unico layer GPU per tutta la sala */
   transform: translateZ(0);
-  backface-visibility: hidden;
-  /* Evita che il browser ricalcoli layout dei figli durante pan */
-  contain: layout style;
+  /* backface-visibility + contain:layout forzavano rasterizzazioni parziali
+     su Safari/Chrome con figli grandi (arredi nuovi): tolti entrambi. */
 }
 .floor-grid {
   transform: translateZ(0);
-  backface-visibility: hidden;
-  /* Grid via transform, non backgroundPosition, per compositor-only */
-  will-change: transform;
+  /* Grid via transform, non backgroundPosition, per compositor-only.
+     NIENTE will-change:transform permanente: il layer della griglia larga
+     (viewport + 600px di buffer) restava rasterizzato a esaurire la GPU. */
 }
 /* Durante il pan: disabilita ombre e filtri costosi per 60 FPS su iPad */
 .floor-viewport.is-panning .floor-grid {

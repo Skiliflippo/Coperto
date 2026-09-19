@@ -21,6 +21,7 @@ import { toast } from "@/components/toast";
 import { useViewport } from "@/lib/use-viewport";
 import {
   DECOR_PRESETS, DECOR_TONES, MAX_ROOM_CM, aabb, boxInsideRoom, boxesOverlap, clamp, clampPointToRoom, computeRoomSeats,
+  decorMaxSize,
   suggestedSplitParts,
   polygonBounds,
   elementBox, iconFromLabel, normalizeLayout, polygonOf, rectPolygon,
@@ -335,12 +336,13 @@ export function FloorEditor({ boot, roomId, onClose }: { boot: Bootstrap; roomId
     const center0 = { x: el.x + el.w / 2, y: el.y + el.h / 2 };
     let box = { x: el.x, y: el.y, w: el.w, h: el.h };
 
-    // Limiti duri: un arredo al massimo grande come la sala (e comunque ≤ 30m).
-    // Oltre scoppiava il renderer: div da decine di metri = immagine gigante = tab crash.
+    // Limiti duri e REALISTICI: ogni arredo ha la sua dimensione massima
+    // (bancone max 6m, pianta max 1.5m…), mai più di metà sala.
+    // Un div da decine di metri = layer immenso = tab che salta.
     const roomMaxW = draft.layout.w;
     const roomMaxH = draft.layout.h;
-    const MAX_DECOR_W = Math.min(roomMaxW, MAX_ROOM_CM);
-    const MAX_DECOR_H = Math.min(roomMaxH, MAX_ROOM_CM);
+    const MAX_DECOR_W = decorMaxSize(el.icon, roomMaxW, roomMaxH).w;
+    const MAX_DECOR_H = decorMaxSize(el.icon, roomMaxW, roomMaxH).h;
     const MAX_WALL_LEN = Math.max(roomMaxW, roomMaxH); // lunghezza max muro = lato lungo sala
     const MAX_WALL_THICK = Math.min(300, Math.max(roomMaxW, roomMaxH) / 2); // spessore muro max: 3m o mezza sala
 
@@ -659,9 +661,11 @@ export function FloorEditor({ boot, roomId, onClose }: { boot: Bootstrap; roomId
       const p = toWorld(ev.clientX, ev.clientY);
       const rawX = Math.min(s0.x, p.x), rawY = Math.min(s0.y, p.y);
       const rawW = Math.abs(p.x - s0.x), rawH = Math.abs(p.y - s0.y);
-      // clamp anche durante creazione: max = dimensione sala, evita crash con drag enorme
-      const maxW = draft.layout.w;
-      const maxH = draft.layout.h;
+      // Clamp in creazione: max realistico del tipo di arredo, mai oltre metà sala.
+      // Prima si poteva disegnare un arredo grande come tutta la piantina → glitch/crash.
+      const maxD = decorMaxSize(newDecor, draft.layout.w, draft.layout.h);
+      const maxW = Math.min(draft.layout.w, maxD.w);
+      const maxH = Math.min(draft.layout.h, maxD.h);
       const x = snapG(rawX), y = snapG(rawY);
       const w = clamp(snapG(rawW), 18, maxW);
       const h = clamp(snapG(rawH), 18, maxH);

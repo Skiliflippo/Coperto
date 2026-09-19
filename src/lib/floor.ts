@@ -50,16 +50,31 @@ export const DECOR_TONES: {
   { id: "rosa", label: "Rosa", fill: "#EEDADD", border: "#B88C94", text: "#6C424A" },
 ];
 
-export const DECOR_PRESETS: { icon: DecorIcon; label: string; w: number; h: number }[] = [
-  { icon: "bancone",  label: "Bancone",  w: 240, h: 70 },
-  { icon: "cucina",   label: "Cucina",   w: 200, h: 180 },
-  { icon: "cassa",    label: "Cassa",    w: 90,  h: 70 },
-  { icon: "scala",    label: "Scala",    w: 120, h: 260 },
-  { icon: "bagno",    label: "Bagno",    w: 160, h: 160 },
-  { icon: "porta",    label: "Ingresso", w: 110, h: 30 },
-  { icon: "pilastro", label: "Pilastro", w: 45,  h: 45 },
-  { icon: "pianta",   label: "Pianta",   w: 55,  h: 55 },
+// w/h = dimensione di inserimento. maxW/maxH = dimensione MASSIMA realistica:
+// un bancone da 6 metri esiste, un bancone da 30 metri no. Oltre, il rendering
+// div disegna metri di pixel e la pagina salta. In editor si applica anche il
+// vincolo "max metà della sala", così un arredo non copre mai la piantina.
+export const DECOR_PRESETS: { icon: DecorIcon; label: string; w: number; h: number; maxW: number; maxH: number }[] = [
+  { icon: "bancone",  label: "Bancone",  w: 240, h: 70,  maxW: 600, maxH: 140 },
+  { icon: "cucina",   label: "Cucina",   w: 200, h: 180, maxW: 450, maxH: 400 },
+  { icon: "cassa",    label: "Cassa",    w: 90,  h: 70,  maxW: 200, maxH: 140 },
+  { icon: "scala",    label: "Scala",    w: 120, h: 260, maxW: 300, maxH: 600 },
+  { icon: "bagno",    label: "Bagno",    w: 160, h: 160, maxW: 350, maxH: 350 },
+  { icon: "porta",    label: "Ingresso", w: 110, h: 30,  maxW: 400, maxH: 80 },
+  { icon: "pilastro", label: "Pilastro", w: 45,  h: 45,  maxW: 120, maxH: 120 },
+  { icon: "pianta",   label: "Pianta",   w: 55,  h: 55,  maxW: 150, maxH: 150 },
 ];
+
+// Dimensione massima consentita per un arredo in una sala: il minore fra il
+// limite realistico del tipo di oggetto e la metà del lato della sala.
+// Mai più un arredo grande quanto (o più della) piantina.
+export function decorMaxSize(icon: DecorIcon | undefined, roomW: number, roomH: number): { w: number; h: number } {
+  const preset = DECOR_PRESETS.find((d) => d.icon === icon);
+  return {
+    w: Math.max(18, Math.min(preset?.maxW ?? 500, Math.floor(roomW / 2))),
+    h: Math.max(18, Math.min(preset?.maxH ?? 500, Math.floor(roomH / 2))),
+  };
+}
 
 // Il nome guida la forma: scrivi "Bancone bar" e l'oggetto prende l'aspetto giusto.
 export function iconFromLabel(label: string, fallback: DecorIcon = "generico"): DecorIcon {
@@ -646,9 +661,13 @@ export function normalizeLayout(raw: unknown): RoomLayout {
             height = clamp(height, 10, Math.max(w, h));
           }
         } else {
-          // decor: generoso ma mai più grande della sala — fix crash pagina con arredi enormi
-          width = clamp(width, 10, Math.min(w, MAX_ROOM_CM));
-          height = clamp(height, 10, Math.min(h, MAX_ROOM_CM));
+          // decor: max realistico per tipo di oggetto, mai oltre metà sala.
+          // Riporta nella legalità anche gli arredi enormi salvati con la versione buggata
+          // (senza questo, riaprire la sala con un arredo gigante faceva crashare la pagina).
+          const icon = (e.icon as DecorIcon) ?? iconFromLabel(String(e.label ?? ""));
+          const max = decorMaxSize(icon, w, h);
+          width = clamp(width, 10, max.w);
+          height = clamp(height, 10, max.h);
         }
         return {
           id: String(e.id ?? uid()),
