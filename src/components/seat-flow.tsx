@@ -79,10 +79,12 @@ export function useSeat() {
 // Tavoli assegnabili ADESSO. I tavoli prenotati non compaiono: se la prenotazione
 // viene cancellata o segnata no-show, il tavolo torna automaticamente disponibile.
 // Se il gruppo non entra da nessuna parte, propone di accostare due tavoli vicini.
-export function SuggestedTables({ party, onPick, excludeIds = [], compact, forReservationId }: {
+export function SuggestedTables({ party, onPick, excludeIds = [], compact, forReservationId, roomId }: {
   party: number;
   onPick: (v: { tableIds: string[]; tableLabel: string }) => void;
   excludeIds?: string[]; compact?: boolean; forReservationId?: string;
+  /** Filtra le proposte a una sala sola (walk-in con più ambienti) */
+  roomId?: string;
 }) {
   const boot = useBootstrap();
   const day = useDay(todayISO());
@@ -92,14 +94,24 @@ export function SuggestedTables({ party, onPick, excludeIds = [], compact, forRe
   const me = useSession((st) => st.staff?.name) ?? "";
   const [splitting, setSplitting] = useState<string | null>(null);
   if (!boot.data || !day.data) return <div className="skeleton h-24 rounded-2xl" />;
-  const { tables, combos, rooms, settings } = boot.data;
+  const { combos, rooms, settings } = boot.data;
+  // Se c'è una sala selezionata si ragiona solo dentro quella: il cameriere sa
+  // dove vuole sedere la gente, non una lista mescolata tra i piani.
+  const tables = roomId ? boot.data.tables.filter((t) => t.roomId === roomId) : boot.data.tables;
+  const combosR = roomId ? combos.filter((c) => c.roomId === roomId) : combos;
   const statuses = computeTableStatuses({
-    tables, combos, seatings: day.data.seatings, reservations: day.data.reservations,
+    tables: boot.data.tables, combos, seatings: day.data.seatings, reservations: day.data.reservations,
     settings, nowMs: now, nowMinOfDay: nowMin(),
   });
   const { free, nextFreeMin, nextFreeLabel } = availableTargets({
-    party, tables, combos, statuses, forReservationId, excludeIds,
+    party, tables, combos: combosR, statuses, forReservationId, excludeIds,
   });
+  // Ordine di sala: i numeri crescono — ci si orienta come nella piantina.
+  const labelNum = (l: string) => { const n = parseInt(l, 10); return Number.isNaN(n) ? Number.MAX_SAFE_INTEGER : n; };
+  const labelOf = (c: (typeof free)[number]) => (c.kind === "table" ? c.table.label : c.combo.label);
+  const freeSorted = [...free].sort((a, b) =>
+    labelOf(a).localeCompare(labelOf(b), "it", { numeric: true }) || labelNum(labelOf(a)) - labelNum(labelOf(b)),
+  );
   const held = tables.filter((t) => statuses.get(t.id)?.state === "prenotato" && t.capacity >= party).length;
 
   // TAVOLI DA STACCARE: un tavolone libero che in realtà sono più tavoli accostati.
@@ -144,7 +156,7 @@ export function SuggestedTables({ party, onPick, excludeIds = [], compact, forRe
 
   return (
     <div className="grid gap-2">
-      {free.slice(0, compact ? 3 : 6).map((c) => {
+      {freeSorted.slice(0, compact ? 3 : 6).map((c) => {
         const isT = c.kind === "table";
         const ids = isT ? [c.table.id] : c.combo.tableIds;
         const label = isT ? c.table.label : c.combo.label;
@@ -223,22 +235,41 @@ export function SuggestedTables({ party, onPick, excludeIds = [], compact, forRe
   );
 }
 
-// Sheet completo walk-in: quanti siete → tavolo → seduti
+// Sheet completo walk-in: quanti siete → (sala, se ce n'è più d'una) → tavolo → seduti
 export function WalkInSheet({ open, onClose, defaultName = "" }: { open: boolean; onClose: () => void; defaultName?: string }) {
   const [party, setParty] = useState(2);
   const seat = useSeat();
+  const boot = useBootstrap();
+  const activeRoomId = useSession((s) => s.roomId);
+  const [roomId, setRoomId] = useState<string | null>(activeRoomId);
+  const rooms = boot.data?.rooms ?? [];
+  // default sensato: la sala in cui stai lavorando; altrimenti la prima
+  const selRoom = roomId && rooms.some((r) => r.id === roomId) ? roomId : rooms[0]?.id;
   const [busy, setBusy] = useState(false);
   return (
     <Sheet open={open} onClose={onClose} title={<span className="flex items-center gap-2"><Users className="h-5 w-5 text-brand" /> Quanti siete?</span>}>
       {/* Altezza stabile: cambiando coperti cambiano i suggerimenti, ma il tastierino
-          resta sempre nello stesso punto e si possono fare tap rapidi senza errori. */}
+          resta sempre nello stesso punto e si possono fare tap rapidi senza errori.
+          Il "Quanti siete?" vive solo nel titolo dello sheet: dentro non si ripete. */}
       <div className="flex h-[min(66dvh,590px)] min-h-[430px] flex-col">
         <div className="shrink-0">
           <PartyGrid value={party} onChange={setParty} />
         </div>
-        <p className="mb-2 mt-3 shrink-0 text-sm font-semibold text-muted">Tavoli liberi adatti · i migliori incastri prima</p>
+        {rooms.length > 1 && (
+          <div className="no-scrollbar -mx-4 mt-3 flex shrink-0 gap-1.5 overflow-x-auto px-4">
+            {rooms.map((r) => (
+              <button key={r.id} onClick={() => setRoomId(r.id)}
+                className={`min-h-[44px] shrink-0 rounded-2xl px-4 text-[15px] font-semibold active:scale-95 ${selRoom === r.id ? "bg-brand text-on-brand shadow-sm" : "bg-raised text-muted"}`}>
+                {r.name}
+              </button>
+            ))}
+          </div>
+        )}
+        <p className="mb-2 mt-3 shrink-0 text-sm font-semibold text-muted">
+          Tavoli liberi{rooms.length > 1 && selRoom ? ` in ${rooms.find((r) => r.id === selRoom)?.name ?? "—"}` : ""} · in ordine di numero
+        </p>
         <div className="no-scrollbar min-h-0 flex-1 overflow-y-auto pb-2">
-          <SuggestedTables party={party} onPick={async (t) => {
+          <SuggestedTables party={party} roomId={rooms.length > 1 ? selRoom : undefined} onPick={async (t) => {
             if (busy) return;
             setBusy(true);
             const ok = await seat({ ...t, partySize: party, name: defaultName || "Walk-in" });

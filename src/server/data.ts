@@ -2,9 +2,10 @@
 import "server-only";
 import { db } from "@/db";
 import * as s from "@/db/schema";
-import { and, asc, eq } from "drizzle-orm";
+import { and, asc, eq, inArray } from "drizzle-orm";
 import type { Bootstrap, DayData, Settings } from "@/lib/types";
 import { normalizeLayout, tableGeometry, type RoomLayout, type TableShape } from "@/lib/floor";
+import { broadcast } from "@/server/hub";
 
 export class BootstrapDataError extends Error {
   code: "DATABASE_EMPTY" | "RESTAURANT_NOT_FOUND";
@@ -133,13 +134,76 @@ export async function getRestaurantBundle(restaurantId?: string | null, slug?: s
   };
 }
 
+// ── Libera automatica a fine servizio ──────────────────────────────────────
+// Un tavolo "seduto" non deve sopravvivere al servizio successivo né al giorno
+// dopo: a pranzo nessuno deve liberare a mano i tavoli della sera prima. La
+// regola gira qui, prima di rispondere, così chiunque apra la mappa trova solo
+// la sala vera — stessa semantica del tasto "libera": status "chiuso" + fine reale.
+const TZ_ROME = "Europe/Rome";
+
+function romeClock(at?: Date): { date: string; min: number } {
+  const p = new Intl.DateTimeFormat("it-IT", {
+    timeZone: TZ_ROME, year: "numeric", month: "2-digit", day: "2-digit",
+    hour: "2-digit", minute: "2-digit", hour12: false,
+  }).formatToParts(at ?? new Date());
+  const g = (t: string) => p.find((x) => x.type === t)?.value ?? "";
+  return { date: `${g("year")}-${g("month")}-${g("day")}`, min: Number(g("hour")) * 60 + Number(g("minute")) };
+}
+const hm2m = (v: string) => { const [h, m] = String(v).split(":").map(Number); return (Number.isFinite(h) ? h : 0) * 60 + (Number.isFinite(m) ? m : 0); };
+
+/** true se il seating appartiene a un periodo (o a un giorno) ormai concluso */
+export function isSeatingStale(seatedAtAt: Date | string, periods: { startTime: string; endTime: string }[]): boolean {
+  if (periods.length === 0) return false; // senza periodi configurati: non tocchiamo nulla
+  const seat = romeClock(new Date(seatedAtAt));
+  const now = romeClock();
+  // Seduto in un giorno diverso da oggi → é certamente di un servizio andato.
+  if (seat.date !== now.date) return true;
+  // Periodi "a cavallo di mezzanotte" (es. 18:00→01:00) trattati con scorrimento +1440.
+  for (const q of periods) {
+    const a = hm2m(q.startTime);
+    let b = hm2m(q.endTime);
+    if (b <= a) b += 1440;
+    const seatN = seat.min < a ? seat.min + 1440 : seat.min;
+    const nowN = now.min < a ? now.min + 1440 : now.min;
+    if (seatN >= a && seatN <= b) {
+      // Seduto in QUESTO periodo: resta tale fino a 60 minuti dopo la chiusura.
+      return nowN > b + 60;
+    }
+  }
+  // Seduto FUORI da ogni periodo: se oggi ne è già iniziato uno successivo,
+  // era un avanzo di prima (es. seduto alle 17 fra pranzo e cena, ora siamo a cena).
+  return periods.some((q) => {
+    const a = hm2m(q.startTime);
+    const seatN = seat.min < a ? seat.min + 1440 : seat.min;
+    return seatN < a && now.min >= a;
+  });
+}
+
 export async function getDayData(restaurantId: string, date: string): Promise<DayData> {
   const reservations = await db.select().from(s.reservations)
     .where(and(eq(s.reservations.restaurantId, restaurantId), eq(s.reservations.date, date)))
     .orderBy(asc(s.reservations.time));
-  const seatings = await db.select().from(s.seatings)
+  const allSeated = await db.select().from(s.seatings)
     .where(and(eq(s.seatings.restaurantId, restaurantId), eq(s.seatings.status, "seduto")))
     .orderBy(asc(s.seatings.seatedAt));
+  const periods = await db.select().from(s.servicePeriods)
+    .where(eq(s.servicePeriods.restaurantId, restaurantId));
+
+  // Libera i "seduto" rimasti dal servizio (o dal giorno) precedente.
+  let seatings = allSeated;
+  const stale = allSeated.filter((st) => st.seatedAt && isSeatingStale(st.seatedAt, periods));
+  if (stale.length > 0) {
+    const ids = stale.map((st) => st.id);
+    await db.update(s.seatings).set({ status: "chiuso", actualEndAt: new Date() })
+      .where(inArray(s.seatings.id, ids));
+    const labels = stale.map((st) => st.tableLabel).filter(Boolean).join(", ");
+    await logActivity(restaurantId, "Sistema", "seating_auto_close",
+      `Nuovo servizio: liberati in automatico ${stale.length} tavoli${labels ? ` (${labels})` : ""}`);
+    try { broadcast(restaurantId, { actor: "Sistema", msg: `Nuovo servizio: ${stale.length} tavoli liberati in automatico`, kind: "seating" }); } catch {}
+    const gone = new Set(ids);
+    seatings = allSeated.filter((st) => !gone.has(st.id));
+  }
+
   const map = <T extends { createdAt: Date }>(x: T) => ({ ...x, createdAt: x.createdAt.toISOString() });
   return {
     date,

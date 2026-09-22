@@ -244,8 +244,16 @@ export function FloorEditor({ boot, roomId, onClose }: { boot: Bootstrap; roomId
       setSelIds((cur) => (cur.includes(id) ? cur.filter((x) => x !== id) : [...cur, id]));
       return;
     }
-    const group = selIds.includes(id) && selIds.length > 1 ? selIds : [id];
-    setSelIds(group);
+    // Selezione prima, spostamento dopo: in editor su touch la stessa mano
+    // che trascina per CAMMINARE nella piantina non deve trascinare anche i
+    // tavoli. Primo tocco = selezione (si vedono i manici), secondo tocco+
+    // trascino = mossa. Così il pan della mappa non sposta mai niente di nascosto.
+    if (!selIds.includes(id)) {
+      setSelIds([id]);
+      return;
+    }
+    // Già selezionato: da qui in poi il gesto MUOVE (solo la selezione attiva).
+    const group = selIds.length > 1 ? selIds : [id];
 
     const start = toWorld(e.clientX, e.clientY);
     const items = group
@@ -370,8 +378,8 @@ export function FloorEditor({ boot, roomId, onClose }: { boot: Bootstrap; roomId
     // Un div da decine di metri = layer immenso = tab che salta.
     const roomMaxW = draft.layout.w;
     const roomMaxH = draft.layout.h;
-    const MAX_DECOR_W = decorMaxSize(el.icon, roomMaxW, roomMaxH).w;
-    const MAX_DECOR_H = decorMaxSize(el.icon, roomMaxW, roomMaxH).h;
+    const MAX_DECOR_W = decorMaxSize(roomMaxW, roomMaxH).w;
+    const MAX_DECOR_H = decorMaxSize(roomMaxW, roomMaxH).h;
     const MAX_WALL_LEN = Math.max(roomMaxW, roomMaxH); // lunghezza max muro = lato lungo sala
     const MAX_WALL_THICK = Math.min(300, Math.max(roomMaxW, roomMaxH) / 2); // spessore muro max: 3m o mezza sala
 
@@ -692,7 +700,7 @@ export function FloorEditor({ boot, roomId, onClose }: { boot: Bootstrap; roomId
       const rawW = Math.abs(p.x - s0.x), rawH = Math.abs(p.y - s0.y);
       // Clamp in creazione: max realistico del tipo di arredo, mai oltre metà sala.
       // Prima si poteva disegnare un arredo grande come tutta la piantina → glitch/crash.
-      const maxD = decorMaxSize(newDecor, draft.layout.w, draft.layout.h);
+      const maxD = decorMaxSize(draft.layout.w, draft.layout.h);
       const maxW = Math.min(draft.layout.w, maxD.w);
       const maxH = Math.min(draft.layout.h, maxD.h);
       const x = snapG(rawX), y = snapG(rawY);
