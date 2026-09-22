@@ -111,7 +111,7 @@ export function availableTargets(args: {
   const byId = new Map(tables.map((table) => [table.id, table]));
   for (const c of combos) {
     const canJoin = (c.tableIds ?? []).every((id) => byId.get(id)?.isJoinable !== false);
-    if (canJoin && c.capacity >= party && c.tableIds.every(usable)) {
+    if (canJoin && c.capacity >= party && (c.tableIds ?? []).every(usable)) {
       free.push({ kind: "combo", combo: c, waste: c.capacity - party, extraChairs: 0 });
     }
   }

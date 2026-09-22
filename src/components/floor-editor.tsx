@@ -443,24 +443,23 @@ export function FloorEditor({ boot, roomId, onClose }: { boot: Bootstrap; roomId
       if (badRaf.current) { cancelAnimationFrame(badRaf.current); badRaf.current = 0; }
       pendingBad.current = null;
       setBadIds([]);
-      // Blocco fisico: il contorno rosso non basta, se l'arredo esce dalla sala
-      // NON si salva — prima che un arredo gigante faceva impallare la mappa.
-      let fitted = { ...box };
-      const minSide = el.kind === "wall" ? 4 : 15;
-      const bbOf = (b: typeof fitted) => (el.rotation ? aabb(b.x + b.w / 2, b.y + b.h / 2, b.w, b.h, el.rotation) : b);
-      for (let i = 0; i < 60 && !boxInsideRoom(bbOf(fitted), poly); i++) {
-        fitted = { ...fitted, w: Math.max(minSide, Math.round(fitted.w * 0.95)), h: Math.max(minSide, Math.round(fitted.h * 0.95)) };
-        if (fitted.w === minSide && fitted.h === minSide) break;
+      // Regola secca: misura NON valida (contorno rosso) = operazione ANNULLATA.
+      // Niente sistemazioni automatiche — prima l'oggetto veniva rimpicciolito e
+      // spostato al rilascio, senza che nessuno lo avesse chiesto. Il disegno torna
+      // com'era e compare il classico avviso. Vale per arredi e muri esistenti.
+      if (box.x === el.x && box.y === el.y && box.w === el.w && box.h === el.h) return;
+      const bb = el.rotation ? aabb(box.x + box.w / 2, box.y + box.h / 2, box.w, box.h, el.rotation) : box;
+      if (!boxFits(bb, el.id)) {
+        node.style.transform = `translate3d(${el.x}px, ${el.y}px, 0) rotate(${el.rotation}deg)`;
+        node.style.width = `${el.w}px`;
+        node.style.height = `${el.h}px`;
+        toast({
+          title: el.kind === "wall" ? "Il muro deve stare tutto dentro la sala" : "L'arredo deve stare tutto dentro la sala",
+          tone: "warn",
+        });
+        return;
       }
-      // La forma ora ci sta: la riaggancio dentro i bordi se era scivolata fuori.
-      {
-        const bb = bbOf(fitted);
-        if (bb.x < bounds.x1) fitted.x += bounds.x1 - bb.x;
-        if (bb.y < bounds.y1) fitted.y += bounds.y1 - bb.y;
-        if (bb.x + bb.w > bounds.x2) fitted.x -= (bb.x + bb.w) - bounds.x2;
-        if (bb.y + bb.h > bounds.y2) fitted.y -= (bb.y + bb.h) - bounds.y2;
-      }
-      commit((d) => ({ ...d, layout: { ...d.layout, elements: d.layout.elements.map((x) => (x.id === el.id ? { ...x, ...fitted } : x)) } }));
+      commit((d) => ({ ...d, layout: { ...d.layout, elements: d.layout.elements.map((x) => (x.id === el.id ? { ...x, x: box.x, y: box.y, w: box.w, h: box.h } : x)) } }));
     };
     window.addEventListener("pointermove", move, { passive: false });
     window.addEventListener("pointerup", up);
@@ -513,6 +512,21 @@ export function FloorEditor({ boot, roomId, onClose }: { boot: Bootstrap; roomId
       pendingBad.current = null;
       setBadIds([]);
       setLiveWalls({});
+      // Stessa regola del resize: capo del muro in posizione non valida =
+      // operazione annullata (il muro torna dov'era) + avviso, non salviamo niente.
+      if (next === el || (next.x === el.x && next.y === el.y && next.w === el.w && next.h === el.h)) return;
+      const nextBox = elementBox(next);
+      const hitsTable = draft.tables.some((t) => boxesOverlap(nextBox, tableBox(t)));
+      if (!wallInsideRoom(next, poly) || hitsTable) {
+        node.style.transform = `translate3d(${el.x}px, ${el.y}px, 0) rotate(${el.rotation}deg)`;
+        node.style.width = `${el.w}px`;
+        node.style.height = `${el.h}px`;
+        toast({
+          title: hitsTable ? "Il muro non può passare sopra un tavolo" : "Il muro deve stare tutto dentro la sala",
+          tone: "warn",
+        });
+        return;
+      }
       patchEl(el.id, next);
     };
     window.addEventListener("pointermove", move, { passive: false });
@@ -682,6 +696,18 @@ export function FloorEditor({ boot, roomId, onClose }: { boot: Bootstrap; roomId
         if (!current) return;
         const line = wallLine(current);
         if (Math.hypot(line.b.x - line.a.x, line.b.y - line.a.y) < STEP) return;
+        // Anche in creazione vale la stessa regola del ridimensionamento: muro
+        // non valido (contorno rosso) = niente muro e avviso chiaro. Prima
+        // veniva salvato comunque e a ritrovarselo storto erano dolori.
+        const wallBox = elementBox(current);
+        const hitsTable = draft.tables.some((t) => boxesOverlap(wallBox, tableBox(t)));
+        if (!wallInsideRoom(current, poly) || hitsTable) {
+          toast({
+            title: hitsTable ? "Il muro non può passare sopra un tavolo" : "Il muro deve stare tutto dentro la sala",
+            tone: "warn",
+          });
+          return;
+        }
         const wall = { ...current, id: uid() };
         commit((d) => ({ ...d, layout: { ...d.layout, elements: [...d.layout.elements, wall] } }));
         setSelIds([wall.id]);

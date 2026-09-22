@@ -28,7 +28,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   // Non si stacca un tavolo con gente seduta: prima si libera.
   const active = await db.select().from(s.seatings)
     .where(and(eq(s.seatings.restaurantId, table.restaurantId), eq(s.seatings.status, "seduto")));
-  if (active.some((x) => x.tableIds.includes(id))) {
+  if (active.some((x) => (x.tableIds ?? []).includes(id))) {
     return NextResponse.json({ error: `C'è gente seduta al tavolo ${table.label}` }, { status: 409 });
   }
 
@@ -88,7 +88,7 @@ export async function DELETE(req: Request, { params }: { params: Promise<{ id: s
 
   const active = await db.select().from(s.seatings)
     .where(and(eq(s.seatings.restaurantId, parent.restaurantId), eq(s.seatings.status, "seduto")));
-  const busy = children.filter((c) => active.some((x) => x.tableIds.includes(c.id)));
+  const busy = children.filter((c) => active.some((x) => (x.tableIds ?? []).includes(c.id)));
   if (busy.length) {
     return NextResponse.json(
       { error: `C'è gente seduta al tavolo ${busy.map((c) => c.label).join(", ")}` },

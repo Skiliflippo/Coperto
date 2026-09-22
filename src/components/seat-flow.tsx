@@ -156,7 +156,7 @@ export function SuggestedTables({ party, onPick, excludeIds = [], compact, forRe
 
   return (
     <div className="grid gap-2">
-      {freeSorted.slice(0, compact ? 3 : 6).map((c) => {
+      {(compact ? freeSorted.slice(0, 3) : freeSorted).map((c) => {
         const isT = c.kind === "table";
         const ids = isT ? [c.table.id] : c.combo.tableIds;
         const label = isT ? c.table.label : c.combo.label;

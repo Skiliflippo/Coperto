@@ -40,7 +40,7 @@ export async function DELETE(req: Request) {
   if (tableIds.length) {
     const active = await db.select().from(s.seatings)
       .where(and(eq(s.seatings.restaurantId, restaurantId), eq(s.seatings.status, "seduto")));
-    if (active.some((x) => x.tableIds.some((id: string) => tableIds.includes(id)))) {
+    if (active.some((x) => (x.tableIds ?? []).some((id: string) => tableIds.includes(id)))) {
       return NextResponse.json({ error: "C'è gente seduta in questa sala: libera i tavoli prima" }, { status: 409 });
     }
   }

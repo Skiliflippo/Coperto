@@ -80,7 +80,7 @@ export function autoAssign(params: {
     }
     for (const c of combos) {
       if (c.capacity < r.partySize) continue;
-      if (c.tableIds.some((id) => tables.find((table) => table.id === id)?.isJoinable === false)) continue;
+      if ((c.tableIds ?? []).some((id) => tables.find((table) => table.id === id)?.isJoinable === false)) continue;
       if (c.tableIds.every((id) => freeAt(id, s, e))) {
         cands.push({ kind: "combo", c, waste: c.capacity - r.partySize, pref: !!wanted && c.roomId === wanted });
       }

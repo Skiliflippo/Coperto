@@ -26,7 +26,7 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
     // annulla una liberazione: il gruppo torna seduto dov'era
     const clash = await db.select().from(s.seatings)
       .where(and(eq(s.seatings.restaurantId, restaurantId), eq(s.seatings.status, "seduto")));
-    if (clash.some((x) => x.tableIds.some((id: string) => cur.tableIds.includes(id)))) {
+    if (clash.some((x) => (x.tableIds ?? []).some((id: string) => (cur.tableIds ?? []).includes(id)))) {
       return NextResponse.json({ error: `Tavolo ${cur.tableLabel} nel frattempo è stato occupato` }, { status: 409 });
     }
     await db.update(s.seatings).set({ status: "seduto", actualEndAt: null }).where(eq(s.seatings.id, id));
@@ -46,7 +46,7 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
     const tableIds: string[] = b.tableIds;
     const active = await db.select().from(s.seatings)
       .where(and(eq(s.seatings.restaurantId, restaurantId), eq(s.seatings.status, "seduto")));
-    const clash = active.find((x) => x.id !== id && x.tableIds.some((tid: string) => tableIds.includes(tid)));
+    const clash = active.find((x) => x.id !== id && (x.tableIds ?? []).some((tid: string) => tableIds.includes(tid)));
     if (clash) return NextResponse.json({ conflict: true, tableLabel: clash.tableLabel }, { status: 409 });
     await db.update(s.seatings).set({ tableIds, tableLabel: b.tableLabel }).where(eq(s.seatings.id, id));
     msg = `${staffName} ha spostato ${cur.name || "tavolo"} su ${b.tableLabel}`;

@@ -207,10 +207,16 @@ export async function getDayData(restaurantId: string, date: string): Promise<Da
   const map = <T extends { createdAt: Date }>(x: T) => ({ ...x, createdAt: x.createdAt.toISOString() });
   return {
     date,
-    reservations: reservations.map((r) => ({ ...map(r), createdAt: r.createdAt.toISOString() })),
+    // Le colonne jsonb delle righe vecchie possono contenere null: qui escono
+    // SEMPRE array veri, così nessuna pagina deve più difendersi da ".length di null".
+    reservations: reservations.map((r) => ({
+      ...map(r), createdAt: r.createdAt.toISOString(),
+      joinedTableIds: Array.isArray(r.joinedTableIds) ? r.joinedTableIds : [],
+    })),
     seatings: seatings.map((x) => ({
       ...map(x), id: x.id, seatedAt: x.seatedAt.toISOString(),
       expectedEndAt: x.expectedEndAt.toISOString(), actualEndAt: x.actualEndAt?.toISOString() ?? null,
+      tableIds: Array.isArray(x.tableIds) ? x.tableIds : [],
     })),
   } as DayData;
 }

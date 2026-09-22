@@ -61,7 +61,7 @@ export function CheckInSheet({ res, onClose }: { res: Reservation | null; onClos
         tableIds: [info.table.id, ...joinedTables.map((t) => t.id)],
         tableLabel: [info.table.label, ...joinedTables.map((t) => t.label)].join("+"),
       }
-    : info?.combo ? { tableIds: info.combo.tableIds, tableLabel: info.combo.label } : null);
+    : info?.combo ? { tableIds: info.combo.tableIds ?? [], tableLabel: info.combo.label } : null);
   const targetCap = picked ? null
     : info?.table
       ? [info.table, ...joinedTables].reduce((sum, t) => sum + Math.max(t.capacity, t.maxCapacity), 0)

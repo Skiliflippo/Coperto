@@ -2,6 +2,7 @@
 // Primitive UI da sala: target ≥56px, icone SEMPRE con etichetta, feedback a pressione.
 import { X } from "lucide-react";
 import { useEffect, type ReactNode } from "react";
+import { createPortal } from "react-dom";
 
 type BtnVariant = "primary" | "soft" | "danger" | "ok" | "ghost";
 const VARIANTS: Record<BtnVariant, string> = {
@@ -34,7 +35,12 @@ export function Sheet({ open, onClose, title, children, wide }: {
     return () => window.removeEventListener("keydown", h);
   }, [open, onClose]);
   if (!open) return null;
-  return (
+  // PORTAL su <body>: <main> ha will-change/transform e ingabbia gli stacking
+  // context dei figli — senza portal la bottom sheet con z-200 passava comunque
+  // SOTTO la barra tab (z-50) che vive a livello radice. Uscendo dal main lo
+  // z-index torna a valere davvero su tutte le pagine.
+  if (typeof document === "undefined") return null;
+  return createPortal(
     <div className="no-print fixed inset-0 z-[200]">
       <div className="absolute inset-0 animate-fade bg-black/45" onClick={onClose} />
       <div className={`absolute inset-x-0 bottom-0 mx-auto flex max-h-[92dvh] w-full flex-col overflow-hidden rounded-t-[28px] border-t border-line bg-surface shadow-2xl ${wide ? "sm:max-w-2xl" : "sm:max-w-lg"}`}>
@@ -47,7 +53,8 @@ export function Sheet({ open, onClose, title, children, wide }: {
         </div>
         <div className="min-w-0 flex-1 overflow-y-auto overflow-x-hidden px-4 py-3.5 pb-[calc(env(safe-area-inset-bottom)+16px)]">{children}</div>
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 }
 

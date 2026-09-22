@@ -35,7 +35,7 @@ export async function PUT(req: Request, { params }: { params: Promise<{ id: stri
   // Un tavolo con gente seduta non si può eliminare: il servizio viene prima dell'estetica.
   const active = await db.select().from(s.seatings)
     .where(and(eq(s.seatings.restaurantId, rid), eq(s.seatings.status, "seduto")));
-  const occupied = new Set(active.flatMap((x) => x.tableIds));
+  const occupied = new Set(active.flatMap((x) => x.tableIds ?? []));
   const blocked = deleted.filter((tid) => occupied.has(tid));
   if (blocked.length) {
     const labels = (await db.select().from(s.tables).where(inArray(s.tables.id, blocked))).map((t) => t.label);

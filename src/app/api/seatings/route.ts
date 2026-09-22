@@ -19,7 +19,7 @@ export async function POST(req: Request) {
   // Conflitto multi-dispositivo: il tavolo è appena stato occupato da qualcun altro?
   const active = await db.select().from(s.seatings)
     .where(and(eq(s.seatings.restaurantId, restaurantId), eq(s.seatings.status, "seduto")));
-  const clash = active.find((x) => x.tableIds.some((id: string) => tableIds.includes(id)));
+  const clash = active.find((x) => (x.tableIds ?? []).some((id: string) => tableIds.includes(id)));
   if (clash) {
     return NextResponse.json({ conflict: true, occupiedBy: clash.createdBy || "un collega", tableLabel: clash.tableLabel },
       { status: 409 });
